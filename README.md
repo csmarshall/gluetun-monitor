@@ -1,6 +1,6 @@
 # Gluetun Monitor
 
-[![CI](https://github.com/OWNER/gluetun-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/gluetun-monitor/actions/workflows/ci.yml)
+[![CI](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
