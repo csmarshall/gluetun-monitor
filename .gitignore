@@ -1,0 +1,17 @@
+# Logs
+logs/
+*.log
+
+# Local config (copy from .example files)
+sites.conf
+docker-compose.yml
+
+# Local overrides
+docker-compose.override.yml
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

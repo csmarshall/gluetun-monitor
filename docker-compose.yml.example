@@ -1,0 +1,30 @@
+---
+services:
+  gluetun-monitor:
+    build: .
+    image: gluetun-monitor:latest
+    container_name: gluetun-monitor
+    restart: unless-stopped
+    network_mode: none  # No network needed - communicates via Docker socket only
+    environment:
+      - TZ=UTC
+      # Name of the gluetun container to monitor
+      - GLUETUN_CONTAINER=gluetun
+      # Dependent containers: "auto" to discover dynamically, or comma-separated list
+      # Auto-discovery finds all containers using network_mode: container:<GLUETUN_CONTAINER>
+      - DEPENDENT_CONTAINERS=auto
+      # Check interval in seconds
+      - CHECK_INTERVAL=30
+      # Timeout for each site test (seconds)
+      - TIMEOUT=10
+      # Number of consecutive failures before triggering restart
+      - FAIL_THRESHOLD=2
+      # Max seconds to wait for gluetun to become healthy after restart
+      - HEALTHY_WAIT_TIMEOUT=120
+    volumes:
+      # Docker socket to control containers
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Sites configuration file
+      - ./sites.conf:/config/sites.conf:ro
+      # Persistent logs
+      - ./logs:/logs

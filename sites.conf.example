@@ -1,0 +1,21 @@
+# Gluetun Monitor - Sites to test for VPN connectivity
+# Add one URL per line
+# Lines starting with # are comments
+#
+# All sites are tested in parallel. If any site fails consecutively
+# (based on FAIL_THRESHOLD), Gluetun will be restarted.
+#
+# Tips:
+# - Use HTTPS sites for reliable connectivity testing
+# - Include sites you actually need to reach through the VPN
+# - Mix general sites with service-specific endpoints
+# - More sites = more comprehensive testing (minimal overhead due to parallel execution)
+
+# General connectivity tests
+https://www.google.com
+https://cloudflare.com
+https://1.1.1.1
+
+# Add your custom sites below
+# https://your-service.com
+# https://api.example.com
