@@ -1,9 +1,17 @@
 # Gluetun Monitor
 
 [![CI](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/csmarshall/gluetun-monitor)](https://github.com/csmarshall/gluetun-monitor/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
+
+## Links
+
+- **GitHub Repository**: https://github.com/csmarshall/gluetun-monitor
+- **Docker Image**: `ghcr.io/csmarshall/gluetun-monitor`
+- **Container Registry**: https://github.com/csmarshall/gluetun-monitor/pkgs/container/gluetun-monitor
+- **Releases**: https://github.com/csmarshall/gluetun-monitor/releases
 
 ## Features
 
@@ -34,14 +42,21 @@ A lightweight Docker container that monitors VPN connectivity through [Gluetun](
 
 ## Quick Start
 
-### 1. Copy example configs
+### 1. Pull the image
 
 ```bash
+docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+```
+
+### 2. Copy example configs
+
+```bash
+# If cloning the repo:
 cp docker-compose.yml.example docker-compose.yml
 cp sites.conf.example sites.conf
 ```
 
-### 2. Configure
+### 3. Configure
 
 Edit `docker-compose.yml`:
 - Set `GLUETUN_CONTAINER` to your gluetun container name
@@ -57,7 +72,7 @@ https://1.1.1.1
 # Add sites you need to reach through VPN
 ```
 
-### 3. Deploy
+### 4. Deploy
 
 ```bash
 docker compose up -d

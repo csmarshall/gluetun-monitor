@@ -1,8 +1,10 @@
 ---
 services:
   gluetun-monitor:
-    build: .
-    image: gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    # Or build locally:
+    # build: .
+    # image: gluetun-monitor:latest
     container_name: gluetun-monitor
     restart: unless-stopped
     network_mode: none  # No network needed - communicates via Docker socket only
