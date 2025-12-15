@@ -1,4 +1,4 @@
-FROM docker:24-cli
+FROM docker:29-cli
 
 # Install bash and other utilities
 RUN apk add --no-cache bash coreutils grep
