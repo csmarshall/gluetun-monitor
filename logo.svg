@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#1a1a2e" stroke="#16213e" stroke-width="4"/>
+
+  <!-- VPN Shield shape -->
+  <path d="M100 30 L160 60 L160 110 C160 150 100 175 100 175 C100 175 40 150 40 110 L40 60 Z"
+        fill="#0f3460" stroke="#e94560" stroke-width="3"/>
+
+  <!-- Heartbeat/monitor line -->
+  <polyline points="55,105 75,105 85,85 95,125 105,95 115,115 125,105 145,105"
+            fill="none" stroke="#00ff88" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Connection dots -->
+  <circle cx="55" cy="105" r="5" fill="#00ff88"/>
+  <circle cx="145" cy="105" r="5" fill="#00ff88"/>
+
+  <!-- Lock icon at top of shield -->
+  <rect x="90" y="45" width="20" height="15" rx="2" fill="#e94560"/>
+  <path d="M93 45 L93 40 C93 35 97 32 100 32 C103 32 107 35 107 40 L107 45"
+        fill="none" stroke="#e94560" stroke-width="3" stroke-linecap="round"/>
+</svg>

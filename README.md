@@ -1,17 +1,33 @@
 # Gluetun Monitor
 
-[![CI](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml)
-[![GitHub release](https://img.shields.io/github/v/release/csmarshall/gluetun-monitor)](https://github.com/csmarshall/gluetun-monitor/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <img src="logo.svg" alt="Gluetun Monitor Logo" width="150" height="150">
+</p>
+
+<p align="center">
+  <a href="https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml"><img src="https://github.com/csmarshall/gluetun-monitor/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/csmarshall/gluetun-monitor/releases"><img src="https://img.shields.io/github/v/release/csmarshall/gluetun-monitor" alt="GitHub release"></a>
+  <a href="https://hub.docker.com/r/chasmarshall/gluetun-monitor"><img src="https://img.shields.io/docker/pulls/chasmarshall/gluetun-monitor" alt="Docker Pulls"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
 A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
 
 ## Links
 
 - **GitHub Repository**: https://github.com/csmarshall/gluetun-monitor
-- **Docker Image**: `ghcr.io/csmarshall/gluetun-monitor`
-- **Container Registry**: https://github.com/csmarshall/gluetun-monitor/pkgs/container/gluetun-monitor
+- **Docker Hub**: https://hub.docker.com/r/chasmarshall/gluetun-monitor
+- **GitHub Container Registry**: https://github.com/csmarshall/gluetun-monitor/pkgs/container/gluetun-monitor
 - **Releases**: https://github.com/csmarshall/gluetun-monitor/releases
+
+**Pull the image:**
+```bash
+# From Docker Hub
+docker pull chasmarshall/gluetun-monitor:latest
+
+# From GitHub Container Registry
+docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+```
 
 ## Features
 
