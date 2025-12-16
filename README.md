@@ -190,7 +190,8 @@ environment:
 ```yaml
 services:
   gluetun-monitor:
-    build: .
+    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
     container_name: gluetun-monitor
     restart: unless-stopped
     environment:
@@ -208,7 +209,8 @@ That's it! The monitor will automatically discover dependent containers and use 
 ```yaml
 services:
   gluetun-monitor:
-    build: .
+    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
     container_name: gluetun-monitor
     restart: unless-stopped
     environment:
