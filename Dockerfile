@@ -1,7 +1,7 @@
 FROM docker:29-cli
 
 # Install bash and other utilities
-RUN apk add --no-cache bash coreutils grep
+RUN apk add --no-cache bash coreutils grep tzdata
 
 # Create directories
 RUN mkdir -p /app /config /logs
