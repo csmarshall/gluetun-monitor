@@ -455,8 +455,9 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Check if docker is accessible
-    if ! docker info >/dev/null 2>&1; then
+    # Check if docker is accessible (use 'docker ps' instead of 'docker info'
+    # for compatibility with socket proxies that restrict the /info endpoint)
+    if ! docker ps -q --no-trunc >/dev/null 2>&1; then
         log "ERROR" "Cannot connect to Docker daemon"
         exit 1
     fi
@@ -479,6 +480,12 @@ main() {
     log "INFO" "Monitoring container: $GLUETUN_CONTAINER"
 
     check_prerequisites
+
+    if [[ -n "${DOCKER_HOST:-}" ]]; then
+        log "INFO" "Docker connection: socket proxy ($DOCKER_HOST)"
+    else
+        log "INFO" "Docker connection: local socket"
+    fi
 
     # Show dependent containers at startup (for visibility)
     if [[ "$DEPENDENT_CONTAINERS" == "auto" ]]; then

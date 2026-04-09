@@ -70,6 +70,24 @@ teardown() {
     grep -q "docker.sock" docker-compose.yml.example
 }
 
+@test "docker-compose.yml.example defaults to socket proxy" {
+    [ -f "docker-compose.yml.example" ]
+    # Socket proxy service should be uncommented (default)
+    grep -v '^#' docker-compose.yml.example | grep -q "docker-socket-proxy:"
+    grep -v '^#' docker-compose.yml.example | grep -q "tecnativa/docker-socket-proxy"
+    grep -v '^#' docker-compose.yml.example | grep -q "DOCKER_HOST=tcp://docker-socket-proxy:2375"
+    # Required proxy permissions should be set
+    grep -v '^#' docker-compose.yml.example | grep -q "CONTAINERS=1"
+    grep -v '^#' docker-compose.yml.example | grep -q "POST=1"
+    grep -v '^#' docker-compose.yml.example | grep -q "EXEC=1"
+}
+
+@test "docker-compose.yml.example includes direct socket alternative" {
+    [ -f "docker-compose.yml.example" ]
+    # Direct socket mount should be present as commented alternative
+    grep -q "Alternative: Direct Docker socket mount" docker-compose.yml.example
+}
+
 @test "script has no shellcheck errors" {
     run shellcheck gluetun-monitor.sh
     [ "$status" -eq 0 ]
