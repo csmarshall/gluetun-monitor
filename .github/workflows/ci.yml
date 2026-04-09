@@ -60,7 +60,7 @@ jobs:
       - name: Build image
         run: docker build -t gluetun-monitor:test .
 
-      - name: Test container starts
+      - name: Test container starts (direct socket)
         run: |
           # Create minimal config
           echo "https://www.google.com" > sites.conf
@@ -77,7 +77,43 @@ jobs:
 
           # Check logs for expected startup message
           docker logs test-monitor 2>&1 | grep -q "Gluetun Monitor starting"
+          docker logs test-monitor 2>&1 | grep -q "Docker connection: local socket"
 
           # Cleanup
           docker stop test-monitor || true
           docker rm test-monitor || true
+
+      - name: Test container starts (socket proxy)
+        run: |
+          # Create an isolated network for the proxy
+          docker network create test-docker-proxy
+
+          # Start socket proxy with required permissions
+          docker run -d --name test-socket-proxy \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e CONTAINERS=1 -e POST=1 -e EXEC=1 \
+            --network test-docker-proxy \
+            tecnativa/docker-socket-proxy
+
+          # Wait for proxy to be ready
+          sleep 3
+
+          # Start monitor using socket proxy
+          docker run -d --name test-monitor-proxy \
+            -v $(pwd)/sites.conf:/config/sites.conf:ro \
+            -e DOCKER_HOST=tcp://test-socket-proxy:2375 \
+            -e GLUETUN_CONTAINER=nonexistent \
+            --network test-docker-proxy \
+            gluetun-monitor:test || true
+
+          # Give it a moment to start
+          sleep 3
+
+          # Check logs for expected startup via proxy
+          docker logs test-monitor-proxy 2>&1 | grep -q "Gluetun Monitor starting"
+          docker logs test-monitor-proxy 2>&1 | grep -q "Docker connection: socket proxy"
+
+          # Cleanup
+          docker stop test-monitor-proxy test-socket-proxy || true
+          docker rm test-monitor-proxy test-socket-proxy || true
+          docker network rm test-docker-proxy || true
