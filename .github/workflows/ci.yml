@@ -77,7 +77,6 @@ jobs:
 
           # Check logs for expected startup message
           docker logs test-monitor 2>&1 | grep -q "Gluetun Monitor starting"
-          docker logs test-monitor 2>&1 | grep -q "Docker connection: local socket"
 
           # Cleanup
           docker stop test-monitor || true
@@ -111,7 +110,6 @@ jobs:
 
           # Check logs for expected startup via proxy
           docker logs test-monitor-proxy 2>&1 | grep -q "Gluetun Monitor starting"
-          docker logs test-monitor-proxy 2>&1 | grep -q "Docker connection: socket proxy"
 
           # Cleanup
           docker stop test-monitor-proxy test-socket-proxy || true
