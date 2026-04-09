@@ -1,0 +1,41 @@
+name: Dependabot Rebase
+
+on:
+  schedule:
+    # Run weekly on Mondays at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  rebase:
+    name: Rebase Dependabot PRs
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Rebase open Dependabot PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pulls = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+            });
+
+            const dependabotPRs = pulls.data.filter(
+              pr => pr.user.login === 'dependabot[bot]'
+            );
+
+            for (const pr of dependabotPRs) {
+              console.log(`Requesting rebase for PR #${pr.number}: ${pr.title}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: '@dependabot rebase',
+              });
+            }
+
+            console.log(`Rebased ${dependabotPRs.length} Dependabot PRs`);
