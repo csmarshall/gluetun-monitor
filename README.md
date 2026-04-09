@@ -100,6 +100,7 @@ docker compose up -d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `DOCKER_HOST` | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
 | `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor |
 | `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
@@ -109,6 +110,9 @@ docker compose up -d
 | `TZ` | `UTC` | Timezone for log timestamps |
 
 ### Variable Details
+
+#### `DOCKER_HOST`
+When unset, the Docker CLI connects via the local socket (`/var/run/docker.sock`). Set this to `tcp://<proxy-host>:2375` to connect through a [Docker socket proxy](#docker-socket-proxy) instead of mounting the socket directly. See the [Docker Socket Proxy](#docker-socket-proxy) section for setup details.
 
 #### `GLUETUN_CONTAINER`
 The name of your Gluetun container as shown in `docker ps`. This is the container that will be:
@@ -185,36 +189,73 @@ environment:
 
 ## Docker Compose Example
 
-### Minimal Configuration
+### Minimal Configuration (with socket proxy)
 
 ```yaml
 services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: gluetun-monitor-socket-proxy
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - POST=1
+      - EXEC=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
+
   gluetun-monitor:
     image: ghcr.io/csmarshall/gluetun-monitor:latest
     # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
     container_name: gluetun-monitor
     restart: unless-stopped
+    depends_on:
+      - docker-socket-proxy
     environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - GLUETUN_CONTAINER=gluetun  # Name of your Gluetun container
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./sites.conf:/config/sites.conf:ro
       - ./logs:/logs
+    networks:
+      - docker-proxy
+
+networks:
+  docker-proxy:
+    driver: bridge
 ```
 
-That's it! The monitor will automatically discover dependent containers and use sensible defaults.
+The monitor will automatically discover dependent containers and use sensible defaults. The socket proxy restricts Docker API access to only the endpoints gluetun-monitor needs.
 
 ### Full Configuration (all options)
 
 ```yaml
 services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: gluetun-monitor-socket-proxy
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - POST=1
+      - EXEC=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
+
   gluetun-monitor:
     image: ghcr.io/csmarshall/gluetun-monitor:latest
     # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
     container_name: gluetun-monitor
     restart: unless-stopped
+    depends_on:
+      - docker-socket-proxy
     environment:
       - TZ=UTC
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - GLUETUN_CONTAINER=gluetun
       - DEPENDENT_CONTAINERS=auto      # auto-discovery (default)
       - CHECK_INTERVAL=30              # seconds between checks
@@ -222,10 +263,36 @@ services:
       - FAIL_THRESHOLD=2               # consecutive failures to trigger restart
       - HEALTHY_WAIT_TIMEOUT=120       # seconds to wait for healthy status
     volumes:
+      - ./sites.conf:/config/sites.conf:ro
+      - ./logs:/logs
+    networks:
+      - docker-proxy
+
+networks:
+  docker-proxy:
+    driver: bridge
+```
+
+### Alternative: Direct Socket Mount
+
+If you prefer a simpler setup without the socket proxy, you can mount the Docker socket directly:
+
+```yaml
+services:
+  gluetun-monitor:
+    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    container_name: gluetun-monitor
+    restart: unless-stopped
+    network_mode: none
+    environment:
+      - GLUETUN_CONTAINER=gluetun
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./sites.conf:/config/sites.conf:ro
       - ./logs:/logs
 ```
+
+Note: This gives the container full read access to the Docker API. The socket proxy approach above is recommended for production use.
 
 ## Log Output
 
@@ -234,6 +301,8 @@ services:
 [2025-01-15 10:00:00] [INFO] Gluetun Monitor starting...
 [2025-01-15 10:00:00] [INFO] Config: CHECK_INTERVAL=30s, TIMEOUT=10s, FAIL_THRESHOLD=2
 [2025-01-15 10:00:00] [INFO] Monitoring container: gluetun
+[2025-01-15 10:00:00] [INFO] Prerequisites check passed
+[2025-01-15 10:00:00] [INFO] Docker connection: socket proxy (tcp://docker-socket-proxy:2375)
 [2025-01-15 10:00:00] [INFO] Dependent containers (auto-discovery): app1,app2,app3
 [2025-01-15 10:00:00] [ENDPOINT] Status: STARTUP | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Monitor starting
 ```
@@ -259,7 +328,7 @@ services:
 
 ## Requirements
 
-- Docker with API access (via socket mount)
+- Docker with API access (via [socket proxy](#docker-socket-proxy) or direct socket mount)
 - Gluetun container with a healthcheck configured
 - Dependent containers using `network_mode: "container:<gluetun>"`
 
@@ -290,18 +359,22 @@ When Gluetun restarts, containers using its network lose connectivity and typica
 
 ## How Auto-Discovery Works
 
-The monitor automatically discovers dependent containers by communicating with the Docker daemon through the [Docker socket](https://docs.docker.com/engine/reference/commandline/dockerd/#daemon-socket-option).
+The monitor automatically discovers dependent containers by communicating with the Docker daemon — either through a [socket proxy](#docker-socket-proxy) (recommended) or a direct [Docker socket](https://docs.docker.com/engine/reference/commandline/dockerd/#daemon-socket-option) mount.
 
-### The Docker Socket
+### Docker API Access
 
-The Docker socket (`/var/run/docker.sock`) is the Unix socket that the Docker daemon listens on. By mounting this socket into a container, that container gains the ability to:
+The monitor needs access to the Docker API to list, inspect, restart, and exec into containers. There are two ways to provide this:
 
-- List all running containers
-- Inspect container configuration
-- Start, stop, and restart containers
-- Read container logs
+**Socket proxy (recommended):** Set `DOCKER_HOST=tcp://socket-proxy:2375` and connect through an isolated network. The proxy limits API access to only the endpoints needed. See [Docker Socket Proxy](#docker-socket-proxy).
+
+**Direct socket mount:** Mount `/var/run/docker.sock` into the container. Simpler but grants full Docker API access.
 
 ```yaml
+# Socket proxy (recommended)
+environment:
+  - DOCKER_HOST=tcp://docker-socket-proxy:2375
+
+# Or direct mount (simpler, less secure)
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
@@ -332,10 +405,22 @@ This approach means no configuration is needed - containers are discovered dynam
 
 For more details on the Docker Engine API, see the [official documentation](https://docs.docker.com/engine/api/).
 
+## Docker Socket Proxy
+
+The recommended deployment uses a [Docker socket proxy](https://github.com/Tecnativa/docker-socket-proxy) to restrict which Docker API endpoints gluetun-monitor can access. Instead of mounting the Docker socket directly (which grants full API access), the proxy exposes only the specific capabilities needed:
+
+| Proxy Setting | Required For |
+|---------------|-------------|
+| `CONTAINERS=1` | Listing, inspecting, and reading logs of containers |
+| `POST=1` | Restarting containers (also enables other POST operations like stop/kill on any container) |
+| `EXEC=1` | Running connectivity tests inside the Gluetun container |
+
+The proxy and gluetun-monitor communicate over an isolated Docker network (`docker-proxy`). Only the proxy container has access to the Docker socket.
+
 ## Security Considerations
 
-- The Docker socket is mounted read-only (`:ro`), but socket operations still function
-- The monitor can restart any container it discovers - ensure your Docker environment is trusted
+- **Socket proxy (recommended):** Limits Docker API access to container operations (list, inspect, logs, restart, stop, exec). The monitor cannot pull images, build images, access volumes, manage networks, or perform other Docker operations. Note that `POST=1` enables all POST actions on allowed endpoints, not just restart.
+- **Direct socket mount:** The Docker socket is mounted read-only (`:ro`), but socket operations (restart, exec) still function. The monitor can interact with any container — ensure your Docker environment is trusted.
 - No credentials or sensitive data are logged
 - Site test responses are discarded (headers only, no body)
 

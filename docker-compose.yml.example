@@ -1,5 +1,22 @@
 ---
+# Recommended: Docker socket proxy (limits Docker API access)
+# See: https://github.com/Tecnativa/docker-socket-proxy
 services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: gluetun-monitor-socket-proxy
+    restart: unless-stopped
+    # On hardened hosts with restricted seccomp profiles, you may need:
+    # privileged: true
+    environment:
+      - CONTAINERS=1  # Allow container list/inspect/logs
+      - POST=1        # Allow container restart
+      - EXEC=1        # Allow exec into gluetun for site tests
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
+
   gluetun-monitor:
     image: ghcr.io/csmarshall/gluetun-monitor:latest
     # Or from Docker Hub:
@@ -8,9 +25,11 @@ services:
     # build: .
     container_name: gluetun-monitor
     restart: unless-stopped
-    network_mode: none  # No network needed - communicates via Docker socket only
+    depends_on:
+      - docker-socket-proxy
     environment:
       - TZ=UTC
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
       # Name of the gluetun container to monitor
       - GLUETUN_CONTAINER=gluetun
       # Dependent containers: "auto" to discover dynamically, or comma-separated list
@@ -25,9 +44,37 @@ services:
       # Max seconds to wait for gluetun to become healthy after restart
       - HEALTHY_WAIT_TIMEOUT=120
     volumes:
-      # Docker socket to control containers
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
       # Persistent logs
       - ./logs:/logs
+    networks:
+      - docker-proxy
+
+networks:
+  docker-proxy:
+    driver: bridge
+
+# ---
+
+# Alternative: Direct Docker socket mount (simpler, less secure)
+# Replace the services above with this if you prefer not to use a socket proxy.
+#
+# services:
+#   gluetun-monitor:
+#     image: ghcr.io/csmarshall/gluetun-monitor:latest
+#     container_name: gluetun-monitor
+#     restart: unless-stopped
+#     network_mode: none  # No network needed - communicates via Docker socket only
+#     environment:
+#       - TZ=UTC
+#       - GLUETUN_CONTAINER=gluetun
+#       - DEPENDENT_CONTAINERS=auto
+#       - CHECK_INTERVAL=30
+#       - TIMEOUT=10
+#       - FAIL_THRESHOLD=2
+#       - HEALTHY_WAIT_TIMEOUT=120
+#     volumes:
+#       - /var/run/docker.sock:/var/run/docker.sock:ro
+#       - ./sites.conf:/config/sites.conf:ro
+#       - ./logs:/logs
