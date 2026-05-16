@@ -1,0 +1,35 @@
+name: Auto-assign PRs
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  assign:
+    name: Assign csmarshall
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Add csmarshall as assignee
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const assignee = 'csmarshall';
+
+            // Skip if already assigned (e.g. dependabot PRs already assign via dependabot.yml)
+            const existing = context.payload.pull_request.assignees || [];
+            if (existing.some(a => a.login === assignee)) {
+              console.log(`PR #${context.issue.number} already assigned to ${assignee}`);
+              return;
+            }
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [assignee],
+            });
+
+            console.log(`Assigned PR #${context.issue.number} to ${assignee}`);

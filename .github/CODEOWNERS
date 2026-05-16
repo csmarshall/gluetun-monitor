@@ -1,0 +1,4 @@
+# Default reviewer for every pull request.
+# GitHub will not request review from the PR author, so this only applies to
+# contributor PRs — your own PRs need the auto-assign workflow instead.
+* @csmarshall
