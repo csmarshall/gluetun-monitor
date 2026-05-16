@@ -33,6 +33,17 @@ log() {
     echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE" >&2
 }
 
+# Trim leading/trailing whitespace. Safer than `xargs` for arbitrary input
+# because xargs treats single/double quotes as shell quoting (issue #17:
+# locations like "Provence-Alpes-Cote-d'Azur" caused "xargs: unmatched single
+# quote" and crashed the monitor).
+trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 log_endpoint_info() {
     local status="$1"
     local reason="${2:-}"
@@ -54,8 +65,8 @@ log_endpoint_info() {
         local location
         location=$(echo "$ip_getter_line" | grep -oP '\(\K[^)]+' | sed 's/ - source:.*//')
         if [[ -n "$location" ]]; then
-            country=$(echo "$location" | cut -d',' -f1 | xargs)
-            city=$(echo "$location" | cut -d',' -f2 | xargs)
+            country=$(trim "$(echo "$location" | cut -d',' -f1)")
+            city=$(trim "$(echo "$location" | cut -d',' -f2)")
         fi
     fi
 
@@ -281,7 +292,7 @@ test_all_sites() {
         [[ -z "$site" || "$site" =~ ^[[:space:]]*# ]] && continue
 
         # Trim whitespace
-        site=$(echo "$site" | xargs)
+        site=$(trim "$site")
         [[ -z "$site" ]] && continue
 
         sites+=("$site")
@@ -396,7 +407,7 @@ restart_dependent_containers() {
     IFS=',' read -ra containers <<< "$containers_to_restart"
 
     for container in "${containers[@]}"; do
-        container=$(echo "$container" | xargs)  # Trim whitespace
+        container=$(trim "$container")  # Trim whitespace
 
         if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
             log "INFO" "Restarting $container..."

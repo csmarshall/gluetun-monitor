@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-16
+
+### Fixed
+- Quotes in VPN endpoint location strings no longer crash the monitor
+  (`xargs: unmatched single quote`). Whitespace trimming now uses a pure-bash
+  `trim` helper instead of `xargs`, which interprets quotes as shell quoting.
+  Affects any region containing an apostrophe, e.g.
+  `Provence-Alpes-Cote-d'Azur`. (#17)
+
 ## [1.0.0] - 2025-12-12
 
 ### Added

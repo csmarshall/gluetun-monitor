@@ -110,3 +110,61 @@ teardown() {
     source <(grep "^DEPENDENT_CONTAINERS=" gluetun-monitor.sh)
     [ "$DEPENDENT_CONTAINERS" = "auto" ]
 }
+
+@test "trim removes leading and trailing whitespace" {
+    result=$(trim "   hello world   ")
+    [ "$result" = "hello world" ]
+}
+
+@test "trim handles tabs and mixed whitespace" {
+    result=$(trim $'\t  hello\t')
+    [ "$result" = "hello" ]
+}
+
+@test "trim preserves single quotes (issue #17)" {
+    # Regression: xargs would crash with "unmatched single quote" on input
+    # like "Provence-Alpes-Cote-d'Azur".
+    result=$(trim " Provence-Alpes-Cote-d'Azur ")
+    [ "$result" = "Provence-Alpes-Cote-d'Azur" ]
+}
+
+@test "trim preserves double quotes" {
+    result=$(trim ' say "hi" ')
+    [ "$result" = 'say "hi"' ]
+}
+
+@test "trim of empty string returns empty" {
+    result=$(trim "")
+    [ "$result" = "" ]
+}
+
+@test "trim of whitespace-only string returns empty" {
+    result=$(trim "     ")
+    [ "$result" = "" ]
+}
+
+@test "log_endpoint_info parses location with apostrophe (issue #17)" {
+    # Regression for issue #17: a gluetun log line containing a region with
+    # an apostrophe (e.g. "Provence-Alpes-Cote-d'Azur") must not crash the
+    # monitor, and the city/country must still parse cleanly.
+    mkdir -p /tmp/mockbin
+    cat > /tmp/mockbin/docker << 'EOF'
+#!/bin/bash
+if [[ "$1" == "logs" ]]; then
+    echo "2026-05-10T12:31:08+02:00 INFO [ip getter] Public IP address is 159.26.112.51 (France, Provence-Alpes-Cote-d'Azur, Marseille - source: ifconfig.co+ip2location+cloudflare)"
+fi
+EOF
+    chmod +x /tmp/mockbin/docker
+    PATH="/tmp/mockbin:$PATH"
+    export GLUETUN_CONTAINER="gluetun"
+
+    run log_endpoint_info "connected" "test"
+    [ "$status" -eq 0 ]
+    # log() writes ENDPOINT lines to stderr; bats captures both in $output
+    [[ "$output" == *"IP: 159.26.112.51"* ]]
+    [[ "$output" == *"Country: France"* ]]
+    [[ "$output" == *"City: Provence-Alpes-Cote-d'Azur"* ]]
+    [[ "$output" != *"unmatched single quote"* ]]
+
+    rm -rf /tmp/mockbin
+}
