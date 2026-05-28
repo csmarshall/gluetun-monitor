@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-28
+
+### Changed
+- **Reimplemented in Python** (docker-py SDK) — see
+  [ADR-0007](docs/adr/0007-reimplement-in-python.md). The connectivity test is
+  unchanged in behavior (still `wget --spider` from inside gluetun's netns, same
+  exit-code map); the rewrite is about making the now-complex orchestration
+  testable. A characterization/differential suite pins the v1.x bash contract and
+  the Python port matches it green.
+- Image base is now `python:3.13-slim` (docker-py talks the Docker API directly;
+  the `docker` CLI is no longer needed in the image). The socket-proxy
+  permissions are unchanged (`CONTAINERS`/`POST`/`EXEC`).
+- DEBUG logs are now gated behind `LOG_LEVEL` (default `INFO`); the v1.x log
+  format is otherwise byte-for-byte preserved.
+
+### Added
+- **Dependent-aware health (issue #20).** The monitor no longer reports healthy
+  when dependents (`network_mode: service:gluetun`) are stranded loopback-only
+  after a gluetun restart/recreate. Each loop it interface-checks every dependent
+  and runs a per-dependent connectivity + DNS viability probe (one shuffled
+  resolvable name per dependent). See ADR-0004 / ADR-0006.
+- **Self-healing for stranded dependents.** Same-instance strand → `docker
+  restart`; gluetun recreated under it (id changed) → **non-destructive
+  recreate** (volumes preserved, including anonymous volumes). See ADR-0005.
+- New env vars: `DEPENDENT_CONTAINER_FAILURES` (default = `FAIL_THRESHOLD`),
+  `MAX_PARALLEL_CHECKS` (default 6), `AUTO_RECREATE` (default on),
+  `DNS_WAIT_TIMEOUT` (default 30), `LOG_LEVEL` (default `INFO`).
+
+### Migration
+- Pull `:2` / `2.0.0`. Existing env / `sites.conf` / compose work unchanged. To
+  roll back, repin the v1.x image (`:1` / `1.1.1`). The bash implementation
+  remains in the repo as the differential oracle and rollback anchor.
+
 ## [1.1.1] - 2026-05-16
 
 ### Fixed

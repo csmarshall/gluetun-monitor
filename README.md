@@ -12,7 +12,15 @@
   <a href="https://buymeacoffee.com/cs_marshall"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
-A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
+A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures — restarting Gluetun **and** healing dependent containers that get stranded when Gluetun's network namespace is rebuilt.
+
+> **v2.0.0** is a Python reimplementation that adds **dependent-aware health**:
+> the monitor now measures each dependent directly instead of inferring stack
+> health from the gateway, and self-heals a dependent that is stranded
+> loopback-only after a Gluetun restart/recreate (issue #20). Behavior and
+> configuration are backward compatible; see the [CHANGELOG](CHANGELOG.md) and
+> [ADR-0007](docs/adr/0007-reimplement-in-python.md). The design record lives in
+> [`docs/`](docs/) (tenets + ADRs + the per-loop state machine).
 
 ## Links
 
@@ -34,28 +42,38 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:latest
 
 - **Multi-site health checking** - Tests connectivity to multiple endpoints simultaneously
 - **Parallel testing** - All sites tested concurrently for fast detection (bounded by single timeout)
-- **Auto-discovery** - Automatically finds containers using Gluetun's network
-- **Automatic recovery** - Restarts Gluetun and dependent containers on failure
+- **Dependent-aware health (#20)** - Measures each dependent directly (interface check + a per-container DNS/connectivity probe) instead of trusting the gateway; stops reporting healthy when a dependent is stranded
+- **Self-healing dependents** - Restarts a dependent that shares Gluetun's current namespace; **non-destructively recreates** (volumes preserved) one stranded by a Gluetun *recreate* (new container id)
+- **Auto-discovery** - Automatically finds containers using Gluetun's network, and remembers them across cycles so a dependent isn't lost when Gluetun's id changes
+- **Automatic recovery** - Restarts Gluetun on connectivity failure and re-verifies before touching dependents
 - **Endpoint logging** - Logs VPN server details (server, country, city, IP) on failures and recoveries
-- **Change detection** - Logs when dependent containers are added or removed
-- **Configurable thresholds** - Consecutive failure count before triggering restart
-- **Low resource usage** - Uses `wget --spider` (headers only, no body download)
+- **Configurable thresholds** - Consecutive failure counts, independently tunable for Gluetun and for dependents
+- **Low resource usage** - Uses `wget --spider` (headers only, no body download), bounded dependent fan-out
 
 ## How It Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       Gluetun Monitor                           │
+│                       Gluetun Monitor (each loop)               │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Test sites through Gluetun's network (parallel)             │
-│  2. If failures exceed threshold:                               │
-│     a. Log current VPN endpoint info                            │
-│     b. Restart Gluetun                                          │
-│     c. Wait for Gluetun to become healthy                       │
-│     d. Log new VPN endpoint info                                │
-│     e. Auto-discover and restart dependent containers           │
+│  1. Test sites through Gluetun's network (the root signal)      │
+│  2. If site failures exceed FAIL_THRESHOLD:                     │
+│       restart Gluetun, wait healthy + DNS, re-verify the set    │
+│       (only proceed if the tunnel is actually restored)         │
+│  3. For each dependent (every loop — the #20 fix):              │
+│       a. Interface check: stranded loopback-only?               │
+│       b. Else probe one shuffled name (DNS + connectivity)      │
+│       c. On confirmed failure, remediate:                       │
+│            • shares Gluetun's current id → docker restart       │
+│            • Gluetun recreated (id moved) → recreate (volumes    │
+│              preserved); disabled/denied → report FAILED        │
+│       d. Verify (running + non-loopback interface)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The full per-loop state machine (22 nodes) is in
+[ADR-0006](docs/adr/0006-per-dependent-viability-testing.md); the
+restart-vs-recreate decision is [ADR-0004](docs/adr/0004-dependent-aware-health.md).
 
 ## Quick Start
 
@@ -106,8 +124,13 @@ docker compose up -d
 | `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
 | `TIMEOUT` | `10` | Seconds to wait for each site test |
-| `FAIL_THRESHOLD` | `2` | Consecutive failures before triggering restart |
+| `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
 | `HEALTHY_WAIT_TIMEOUT` | `120` | Max seconds to wait for Gluetun to become healthy after restart |
+| `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
+| `MAX_PARALLEL_CHECKS` | `6` | Cap on concurrent `docker exec` probes across dependents per loop |
+| `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
+| `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
+| `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
 ### Variable Details
@@ -188,6 +211,51 @@ environment:
   - DEPENDENT_CONTAINERS=container1,container2,container3
 ```
 
+## Dependent-Aware Health (issue #20)
+
+Dependents that use `network_mode: "service:gluetun"` (or `container:gluetun`)
+share Gluetun's **network namespace**, and that share is bound to a specific
+container **instance**. When Gluetun is restarted or recreated (e.g. a Watchtower
+image update), those dependents are left **stranded loopback-only** — `Running`,
+but with only the `lo` interface and no route to the internet. Because v1.x
+tested connectivity *only from inside Gluetun*, every check passed and the
+monitor reported healthy while the stack was broken.
+
+v2 closes that blind spot by measuring each dependent directly, every loop:
+
+1. **Interface check** — `ls /sys/class/net` inside the dependent. Only `lo` ⇒
+   stranded (a hard failure; re-checked once because it won't self-heal).
+2. **Viability probe** — for a live dependent, one **shuffled** resolvable name
+   from your `sites.conf` is fetched *from inside that container*, proving its own
+   DNS + connectivity. A different name each loop means
+   `DEPENDENT_CONTAINER_FAILURES` consecutive failures = "this container can't
+   reach N *different* names" (a container fault), not "one URL was down". If
+   `sites.conf` has only IP literals, the monitor warns that dependent DNS can't
+   be validated and falls back to a connectivity-only IP probe.
+3. **Remediation** — keyed on the dependent's `NetworkMode` target vs Gluetun's
+   current container id:
+   - **same id** (incl. the monitor's own Gluetun restart) → `docker restart` the
+     dependent — it rejoins the rebuilt namespace. Cheap, no new permissions.
+   - **id changed** (Gluetun was replaced) → **recreate** the dependent.
+     `NetworkMode` is immutable, so there is no in-place fix. The recreate is
+     **non-destructive**: all mounts — named, bind, and **anonymous** volumes —
+     are carried forward by source and the old container is removed *without*
+     `-v`, so only the ephemeral writable layer is lost.
+   - recreate **disabled** (`AUTO_RECREATE=0`) or denied → the dependent is
+     reported **FAILED** loudly rather than papered over.
+
+A dependent that fails counts up per-container and resets on any passing loop —
+counters are in-memory with no backoff (recovery is cheap and non-destructive, so
+the monitor simply re-acts each cycle). distroless/scratch dependents with no
+shell can't be exec-probed and fall back to the inspect-based signals.
+
+> **Note on discovery + recreate:** a dependent stranded by a Gluetun *recreate*
+> still points at the dead old id, so auto-discovery (which matches Gluetun's
+> *current* id/name) no longer recognizes it. A running monitor remembers
+> dependents across cycles and handles this automatically. If you start the
+> monitor *after* such a strand already exists, name the dependents explicitly
+> via `DEPENDENT_CONTAINERS` so they're tracked from the first loop.
+
 ## Docker Compose Example
 
 ### Minimal Configuration (with socket proxy)
@@ -261,8 +329,14 @@ services:
       - DEPENDENT_CONTAINERS=auto      # auto-discovery (default)
       - CHECK_INTERVAL=30              # seconds between checks
       - TIMEOUT=10                     # seconds per site test
-      - FAIL_THRESHOLD=2               # consecutive failures to trigger restart
+      - FAIL_THRESHOLD=2               # consecutive site failures to restart gluetun
       - HEALTHY_WAIT_TIMEOUT=120       # seconds to wait for healthy status
+      # --- v2 dependent-aware knobs (all optional) ---
+      - DEPENDENT_CONTAINER_FAILURES=2 # consecutive per-dependent failures to remediate (default = FAIL_THRESHOLD)
+      - MAX_PARALLEL_CHECKS=6          # cap on concurrent dependent probes
+      - AUTO_RECREATE=1                # recreate a dependent stranded by a gluetun recreate (0 to disable)
+      - DNS_WAIT_TIMEOUT=30            # seconds to wait for gluetun DNS after restart
+      - LOG_LEVEL=INFO                 # DEBUG for per-site/per-dependent detail
     volumes:
       - ./sites.conf:/config/sites.conf:ro
       - ./logs:/logs
@@ -300,7 +374,7 @@ Note: This gives the container full read access to the Docker API. The socket pr
 ### Startup
 ```
 [2025-01-15 10:00:00] [INFO] Gluetun Monitor starting...
-[2025-01-15 10:00:00] [INFO] Config: CHECK_INTERVAL=30s, TIMEOUT=10s, FAIL_THRESHOLD=2
+[2025-01-15 10:00:00] [INFO] Config: CHECK_INTERVAL=30s, TIMEOUT=10s, FAIL_THRESHOLD=2, DEPENDENT_CONTAINER_FAILURES=2, AUTO_RECREATE=1
 [2025-01-15 10:00:00] [INFO] Monitoring container: gluetun
 [2025-01-15 10:00:00] [INFO] Prerequisites check passed
 [2025-01-15 10:00:00] [INFO] Docker connection: socket proxy (tcp://docker-socket-proxy:2375)
@@ -308,23 +382,26 @@ Note: This gives the container full read access to the Docker API. The socket pr
 [2025-01-15 10:00:00] [ENDPOINT] Status: STARTUP | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Monitor starting
 ```
 
-### Failure and Recovery
+### Gluetun connectivity failure + recovery
 ```
 [2025-01-15 10:10:00] [WARN] Site https://example.com failed 2 consecutive times - THRESHOLD REACHED - Network failure (DNS or connection)
 [2025-01-15 10:10:00] [ERROR] Failed sites (exceeded threshold): https://example.com
 [2025-01-15 10:10:00] [WARN] Health check failed, initiating recovery...
 [2025-01-15 10:10:00] [ENDPOINT] Status: FAILING | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Site connectivity test failed
-[2025-01-15 10:10:05] [INFO] Restarting gluetun-nordvpn-wg to force new endpoint...
-[2025-01-15 10:10:35] [INFO] gluetun-nordvpn-wg is healthy after 30s
+[2025-01-15 10:10:05] [INFO] Restarting gluetun to force new endpoint...
+[2025-01-15 10:10:35] [INFO] gluetun is healthy after 30s
+[2025-01-15 10:10:38] [INFO] DNS and connectivity verified after 3s
 [2025-01-15 10:10:40] [ENDPOINT] Status: NEW | IP: 89.x.x.x | Country: Germany | City: Frankfurt | VPN Server: de456.vpn.com | Reason: After restart
-[2025-01-15 10:10:40] [INFO] Discovering and restarting dependent containers...
-[2025-01-15 10:10:41] [INFO] Discovered dependent containers: app1,app2
-[2025-01-15 10:10:42] [INFO] Restarting app1...
-[2025-01-15 10:10:44] [INFO] app1 restarted successfully
-[2025-01-15 10:10:46] [INFO] Restarting app2...
-[2025-01-15 10:10:48] [INFO] app2 restarted successfully
-[2025-01-15 10:10:48] [INFO] Dependent container restart complete
-[2025-01-15 10:10:48] [INFO] Recovery complete
+[2025-01-15 10:10:40] [INFO] Connectivity verified after restart
+```
+
+### Dependent stranded by a Gluetun recreate (self-healed)
+```
+[2025-01-15 11:00:00] [WARN] Remediating dependent qbittorrent: stranded loopback-only
+[2025-01-15 11:00:00] [WARN] qbittorrent netns target moved (gluetun recreated) — recreate required
+[2025-01-15 11:00:00] [WARN] Recreating qbittorrent (re-homing netns onto gluetun 9f3c1a2b4d5e)
+[2025-01-15 11:00:02] [INFO] qbittorrent recreated as 7a1b2c3d4e5f and started
+[2025-01-15 11:00:04] [INFO] qbittorrent verified healthy after remediation
 ```
 
 ## Requirements
@@ -400,7 +477,10 @@ docker inspect --format='{{.HostConfig.NetworkMode}}' <container_id>
 ### When Discovery Runs
 
 - **At startup** - For logging which containers will be managed
-- **Before each restart** - To catch any containers added since startup
+- **Every loop** - So newly added containers are picked up promptly, and so a
+  dependent is re-checked each cycle. Discovered containers are also remembered
+  across cycles, so a dependent isn't lost when Gluetun's container id changes
+  (see [Dependent-Aware Health](#dependent-aware-health-issue-20)).
 
 This approach means no configuration is needed - containers are discovered dynamically based on their actual Docker configuration.
 
@@ -412,9 +492,9 @@ The recommended deployment uses a [Docker socket proxy](https://github.com/Tecna
 
 | Proxy Setting | Required For |
 |---------------|-------------|
-| `CONTAINERS=1` | Listing, inspecting, and reading logs of containers |
-| `POST=1` | Restarting containers (also enables other POST operations like stop/kill on any container) |
-| `EXEC=1` | Running connectivity tests inside the Gluetun container |
+| `CONTAINERS=1` | Listing, inspecting, and reading logs of containers; creating the replacement when recreating a stranded dependent |
+| `POST=1` | Restarting, removing, and starting containers (the recreate path rides on the same `POST` flag — no new permission) |
+| `EXEC=1` | Running connectivity/interface probes inside Gluetun and the dependents |
 
 The proxy and gluetun-monitor communicate over an isolated Docker network (`docker-proxy`). Only the proxy container has access to the Docker socket.
 
@@ -436,6 +516,27 @@ Or manually:
 ```bash
 docker build -t gluetun-monitor .
 ```
+
+## Development
+
+v2 is a Python package (`gluetun_monitor`). The whole monitor is unit-testable
+without a Docker daemon — a fake client is injected at the Docker seam.
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'
+
+ruff check gluetun_monitor tests     # lint
+mypy gluetun_monitor                 # types (strict)
+pytest                               # tests (incl. the differential suite vs. bash)
+pytest --cov=gluetun_monitor         # with coverage
+```
+
+The legacy `gluetun-monitor.sh` is retained as the **differential oracle**: the
+`differential`-marked tests execute its actual functions and assert the Python
+port matches (the no-regressions gate from
+[ADR-0007](docs/adr/0007-reimplement-in-python.md)). See
+[DEVELOPMENT.md](DEVELOPMENT.md) for more.
 
 ## License
 

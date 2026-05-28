@@ -21,3 +21,18 @@ session-state.md
 
 # Local experiment/repro scripts (kept as reference, not committed)
 issue*.sh
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/

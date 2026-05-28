@@ -25,3 +25,4 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0004](0004-dependent-aware-health.md) | Health is dependent-aware; recovery is conditional on gluetun's identity (restart if same ID, recreate if changed) | Accepted |
 | [0005](0005-recreate-mechanism.md) | Recreate mechanism — Docker-API reconstruct, default-on + capability-gated (`AUTO_RECREATE=0` to disable), non-destructive (validated) | Accepted |
 | [0006](0006-per-dependent-viability-testing.md) | Per-dependent connectivity + DNS viability testing (gluetun root + one shuffled name per dependent per loop) | Accepted |
+| [0007](0007-reimplement-in-python.md) | Reimplement the monitor in Python (v2.0.0) — docker-py seam, characterization + differential no-regressions gate | Accepted |

@@ -43,6 +43,18 @@ services:
       - FAIL_THRESHOLD=2
       # Max seconds to wait for gluetun to become healthy after restart
       - HEALTHY_WAIT_TIMEOUT=120
+      # --- v2 dependent-aware knobs (all optional; sensible defaults) ---
+      # Consecutive per-dependent viability failures before remediating it
+      # (defaults to FAIL_THRESHOLD if unset)
+      # - DEPENDENT_CONTAINER_FAILURES=2
+      # Cap on concurrent dependent probes per loop
+      # - MAX_PARALLEL_CHECKS=6
+      # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
+      # - AUTO_RECREATE=1
+      # Seconds to wait for gluetun DNS to stabilize after a restart
+      # - DNS_WAIT_TIMEOUT=30
+      # DEBUG to include per-site / per-dependent detail lines
+      # - LOG_LEVEL=INFO
     volumes:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro

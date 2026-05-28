@@ -1,0 +1,279 @@
+"""The monitor loop — the ADR-0006 per-loop state machine (nodes 1-22).
+
+Each loop: test gluetun's full URL set (root signal); restart + re-verify gluetun
+if it breaches threshold; then — every loop, the core #20 fix — probe each
+dependent (interface check + one shuffled viability name) and remediate the ones
+that fail. All counter/state mutation is single-threaded; only the per-dependent
+exec fan-out runs concurrently (bounded by MAX_PARALLEL_CHECKS).
+"""
+
+from __future__ import annotations
+
+import random
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from .connectivity import probe_site
+from .dependents import get_dependents, interface_check
+from .endpoint import get_endpoint_info
+from .recovery import remediate_dependent, restart_gluetun
+from .sites import ip_pool, parse_sites_conf, resolvable_pool
+from .state import Counter, InterfaceStatus
+
+if TYPE_CHECKING:
+    from .config import Config
+    from .docker_client import DockerClient
+    from .logging_setup import Logger
+
+Sleep = Callable[[float], None]
+
+
+@dataclass(frozen=True, slots=True)
+class DependentProbe:
+    """Read-only outcome of probing one dependent (no state mutation)."""
+
+    name: str
+    status: InterfaceStatus
+    running: bool
+    viability_ok: bool | None  # None = not tested (no pool / not live)
+    reason: str
+
+
+class Monitor:
+    """Owns the loop, the failure counters, and the shuffle RNG."""
+
+    def __init__(
+        self,
+        client: DockerClient,
+        config: Config,
+        logger: Logger,
+        *,
+        rng: random.Random | None = None,
+        sleep: Sleep = time.sleep,
+    ) -> None:
+        self.client = client
+        self.config = config
+        self.log = logger
+        self._rng = rng if rng is not None else random.Random()
+        self._sleep = sleep
+        self.site_failures = Counter()
+        self.dependent_failures = Counter()
+        self._last_site_count: int | None = None
+        # Dependents seen at least once. A dependent stranded by a gluetun
+        # *recreate* still points at the dead old id, so current-id discovery no
+        # longer matches it — but we remember it from before the recreate and
+        # keep checking it (ADR-0004: track across cycles). Pruned to existing.
+        self._known_dependents: set[str] = set()
+
+    # ----- gluetun root test (nodes 2-3) -----
+
+    def check_gluetun_sites(self, sites: list[str]) -> bool:
+        """Test the full URL set from inside gluetun. True if none breached threshold."""
+        if not sites:
+            self.log.warn("No sites configured to test")
+            return True
+
+        if self._last_site_count != len(sites):
+            if self._last_site_count is None:
+                self.log.info(f"Loaded {len(sites)} sites from {self.config.config_file}")
+            else:
+                self.log.info(
+                    f"Site count changed from {self._last_site_count} to {len(sites)}"
+                )
+            self._last_site_count = len(sites)
+
+        results = self._fan_out(
+            sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
+                                          self.config.timeout)
+        )
+
+        failed: list[str] = []
+        for result in results:
+            if result.ok:
+                self.site_failures.reset(result.url)
+                self.log.debug(f"Site {result.url} passed ({result.duration_ms}ms)")
+                continue
+            count = self.site_failures.fail(result.url)
+            if count >= self.config.fail_threshold:
+                failed.append(result.url)
+                self.log.warn(
+                    f"Site {result.url} failed {count} consecutive times - "
+                    f"THRESHOLD REACHED - {result.reason}"
+                )
+            else:
+                remaining = self.config.fail_threshold - count
+                self.log.debug(
+                    f"Site {result.url} failed ({count}/{self.config.fail_threshold}) - "
+                    f"{remaining} more to trigger restart - {result.reason}"
+                )
+
+        if failed:
+            self.log.error(f"Failed sites (exceeded threshold): {' '.join(failed)}")
+            return False
+        return True
+
+    # ----- dependent phase (nodes 6-19) -----
+
+    def _probe_dependent(
+        self, dep: str, resolvable: list[str], ips: list[str]
+    ) -> DependentProbe:
+        """Classify + viability-test one dependent. Pure I/O, no state mutation."""
+        status = interface_check(self.client, dep)
+
+        if status is InterfaceStatus.STRANDED:
+            # Node 10: re-check once — a real strand won't self-heal.
+            if interface_check(self.client, dep) is InterfaceStatus.STRANDED:
+                return DependentProbe(dep, status, False, None, "stranded loopback-only")
+            return DependentProbe(dep, InterfaceStatus.LIVE, True, None, "recovered on re-check")
+
+        if status is InterfaceStatus.UNKNOWN:
+            # Distroless / no shell: fall back to the running check (ADR-0006).
+            info = self.client.inspect(dep)
+            running = bool(info and info.running)
+            return DependentProbe(dep, status, running, None, "interface check unavailable")
+
+        # LIVE: one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
+        pool = resolvable or ips
+        if not pool:
+            return DependentProbe(dep, status, True, None, "no test URLs")
+        url = self._rng.choice(pool)
+        result = probe_site(self.client, dep, url, self.config.timeout)
+        return DependentProbe(dep, status, True, result.ok, f"{url}: {result.reason}")
+
+    def _resolve_dependents(self) -> list[str]:
+        """Current dependent set: discovery (or manual list) unioned with the
+        remembered set, pruned to containers that still exist."""
+        current = get_dependents(self.client, self.config, self.log)
+        self._known_dependents.update(current)
+        self._known_dependents = {
+            d for d in self._known_dependents if self.client.inspect(d) is not None
+        }
+        return sorted(self._known_dependents)
+
+    def run_dependent_phase(self, gluetun_id: str, sites: list[str]) -> None:
+        """Probe every dependent and remediate those that fail (nodes 6-19)."""
+        dependents = self._resolve_dependents()
+        if not dependents:
+            return
+
+        resolvable = resolvable_pool(sites)
+        ips = ip_pool(sites)
+        if not resolvable and ips:
+            self.log.warn(
+                "No resolvable (hostname) test URLs — dependent DNS cannot be validated; "
+                "testing connectivity only against IP literals"
+            )
+
+        probes = self._fan_out(dependents, lambda d: self._probe_dependent(d, resolvable, ips))
+
+        # State mutation + remediation decisions are single-threaded.
+        to_remediate: list[tuple[str, str]] = []
+        for probe in probes:
+            if probe.status is InterfaceStatus.STRANDED:
+                to_remediate.append((probe.name, probe.reason))
+                continue
+            if probe.status is InterfaceStatus.UNKNOWN:
+                if not probe.running:
+                    to_remediate.append((probe.name, "not running (interface check unavailable)"))
+                continue
+            if probe.viability_ok is None:
+                continue  # nothing to test
+            if probe.viability_ok:
+                self.dependent_failures.reset(probe.name)
+                self.log.debug(f"Dependent {probe.name}: {probe.reason} [fails 0]")
+                continue
+            count = self.dependent_failures.fail(probe.name)
+            threshold = self.config.dependent_container_failures
+            if count >= threshold:
+                to_remediate.append(
+                    (probe.name, f"{count} consecutive distinct-name failures")
+                )
+                self.log.warn(
+                    f"Dependent {probe.name}: {probe.reason} "
+                    f"[fails {count}/{threshold} -> remediate]"
+                )
+            else:
+                self.log.debug(
+                    f"Dependent {probe.name}: {probe.reason} [fails {count}/{threshold}]"
+                )
+
+        for dep, reason in to_remediate:
+            self.log.warn(f"Remediating dependent {dep}: {reason}")
+            if remediate_dependent(
+                self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
+            ):
+                self.dependent_failures.reset(dep)
+
+    # ----- one full loop iteration (node 1 -> 22, minus the sleep) -----
+
+    def run_once(self) -> None:
+        """Execute one monitoring cycle (no inter-loop sleep)."""
+        self.log.check("Start")
+
+        gluetun = self.client.inspect(self.config.gluetun_container)
+        if gluetun is None or not gluetun.running:
+            self.log.error("Gluetun container is not running!")
+            return
+        if gluetun.health != "healthy":
+            self.log.warn(f"Gluetun health status: {gluetun.health}")
+
+        try:
+            sites = parse_sites_conf(self.config.config_file)
+        except FileNotFoundError:
+            self.log.error(f"Sites config file not found: {self.config.config_file}")
+            return
+
+        if self.check_gluetun_sites(sites):
+            # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
+            # dependents are checked every loop, not only after a gluetun failure).
+            self.run_dependent_phase(gluetun.id, sites)
+            return
+
+        # Gluetun breached threshold: restart + re-verify before touching dependents.
+        self.log.warn("Health check failed, initiating recovery...")
+        if not restart_gluetun(self.client, self.config, self.log, sleep=self._sleep):
+            self.log.error("Recovery failed - manual intervention may be required")
+            return
+
+        if not self.check_gluetun_sites(sites):
+            self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
+            self.site_failures.reset_all()
+            return
+
+        self.log.info("Connectivity verified after restart")
+        self.site_failures.reset_all()
+        # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
+        gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
+        self.run_dependent_phase(gluetun.id, sites)
+
+    def announce(self) -> None:
+        """Log the post-prerequisite startup context (connection + endpoint)."""
+        if self.config.docker_host:
+            self.log.info(f"Docker connection: socket proxy ({self.config.docker_host})")
+        else:
+            self.log.info("Docker connection: local socket")
+        startup = get_endpoint_info(self.client, self.config.gluetun_container)
+        self.log.endpoint(startup.format("STARTUP", "Monitor starting"))
+
+    def run(self) -> None:
+        """Run forever: loop run_once + sleep CHECK_INTERVAL."""
+        while True:
+            try:
+                self.run_once()
+            except Exception as exc:  # never let one bad loop kill the monitor (ROC)
+                self.log.error(f"Unhandled error in monitor loop: {exc}")
+            self.log.check(f"End - Sleeping {self.config.check_interval}s")
+            self._sleep(self.config.check_interval)
+
+    # ----- helpers -----
+
+    def _fan_out[T, R](self, items: list[T], fn: Callable[[T], R]) -> list[R]:
+        """Run ``fn`` over ``items`` with a bounded thread pool, preserving order."""
+        workers = max(1, min(self.config.max_parallel_checks, len(items)))
+        if workers == 1:
+            return [fn(item) for item in items]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(fn, items))
