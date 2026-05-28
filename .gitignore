@@ -18,3 +18,6 @@ docker-compose.override.yml
 
 # Personal session state (never commit)
 session-state.md
+
+# Local experiment/repro scripts (kept as reference, not committed)
+issue*.sh
