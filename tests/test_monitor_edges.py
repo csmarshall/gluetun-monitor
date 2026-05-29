@@ -1,4 +1,10 @@
-"""Degradation + failure-path branches of the monitor (ADR-0006 degradation)."""
+"""Degradation + failure-path branches of the monitor (ADR-0006 degradation).
+
+Why: the happy paths are in test_monitor; these pin the *edges* where it's easy
+to do the wrong thing — distroless/IP-only degradation, and the recovery gates
+that must NOT touch dependents when gluetun can't be restored (Tenet 5: don't
+churn dependents into a dead tunnel).
+"""
 
 from __future__ import annotations
 
@@ -36,6 +42,8 @@ def _write(tmp_path: Path, body: str) -> str:
 
 
 def test_probe_unknown_running_is_not_remediated() -> None:
+    """A distroless dependent (exec fails → UNKNOWN) on the *current* gluetun id is
+    left alone — we don't churn a container we can't prove is broken (Tenet 1)."""
     fake = FakeDockerClient()
     fake.add_container("distroless", network_mode=f"container:{GLUETUN_ID}")
     fake.on_exec = lambda name, cmd: ExecResult(1, "")  # no shell -> exec fails
@@ -48,6 +56,8 @@ def test_probe_unknown_running_is_not_remediated() -> None:
 
 
 def test_probe_ip_only_fallback_uses_ip_pool() -> None:
+    """With no resolvable names, the viability probe falls back to an IP literal
+    (connectivity-only) instead of skipping — ADR-0006 degradation."""
     fake = FakeDockerClient()
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
 
@@ -70,6 +80,8 @@ def test_probe_ip_only_fallback_uses_ip_pool() -> None:
 
 
 def test_ip_only_sites_log_dns_warning(tmp_path: Path) -> None:
+    """An IP-literal-only sites set logs a WARN that dependent DNS can't be
+    validated — a documented limitation must be surfaced, not silent."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -86,6 +98,8 @@ def test_ip_only_sites_log_dns_warning(tmp_path: Path) -> None:
 
 
 def test_gluetun_restart_failure_skips_dependents(tmp_path: Path) -> None:
+    """If gluetun won't come back healthy after its restart, recovery reports
+    FAILED and does NOT touch dependents (Tenet 5 — no churn into a dead tunnel)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID, health="unhealthy")  # never becomes healthy
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -101,6 +115,9 @@ def test_gluetun_restart_failure_skips_dependents(tmp_path: Path) -> None:
 
 
 def test_gluetun_reverify_still_failing_leaves_dependents_untouched(tmp_path: Path) -> None:
+    """gluetun restarts and becomes healthy, but sites still fail on re-verify →
+    leave dependents untouched and reset counters (don't act on a tunnel that
+    came back unhealthy)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -127,8 +144,9 @@ def test_gluetun_reverify_still_failing_leaves_dependents_untouched(tmp_path: Pa
 
 @pytest.mark.parametrize("sites_body", ["", "# only comments\n"])
 def test_no_sites_warns_and_takes_no_action(tmp_path: Path, sites_body: str) -> None:
-    # V1 contract: an empty sites.conf tests nothing for gluetun and never
-    # triggers a restart (no site can fail). We do NOT guess substitute targets.
+    """V1 contract at runtime: an empty sites set tests nothing for gluetun and
+    never triggers a restart (no site can fail). We do NOT guess substitute
+    targets — startup validation is what rejects an empty config (Tenet 1)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     sites = _write(tmp_path, sites_body)

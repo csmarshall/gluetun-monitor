@@ -1,4 +1,11 @@
-"""Logger format parity + LOG_LEVEL gating + file output."""
+"""Logger format parity + LOG_LEVEL gating + file output.
+
+Why: the log format is a compatibility surface — users grep for `[CHECK]`,
+`[ENDPOINT]`, `[WARN]` and the `[ts] [LEVEL] msg` shape (preserved from v1.x).
+These tests pin that the stdlib-logging backend reproduces that exactly, that
+the custom CHECK/ENDPOINT levels survive the default INFO threshold, and that an
+unwritable log path degrades to stderr rather than crashing the monitor.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +28,7 @@ def _lines(stream: io.StringIO) -> list[tuple[str, str]]:
 
 
 def test_format_matches_v1() -> None:
+    """An INFO line matches the exact v1.x `[ts] [LEVEL] msg` format."""
     stream = io.StringIO()
     log = Logger(log_file=None, level="DEBUG", stream=stream)
     log.info("hello")
@@ -28,12 +36,15 @@ def test_format_matches_v1() -> None:
 
 
 def test_warning_renders_as_warn() -> None:
+    """stdlib's WARNING renders as the v1.x token `WARN`, not `WARNING`."""
     stream = io.StringIO()
     Logger(log_file=None, level="DEBUG", stream=stream).warn("careful")
     assert _lines(stream) == [("WARN", "careful")]
 
 
 def test_check_and_endpoint_tokens() -> None:
+    """The v1.x CHECK/ENDPOINT markers exist as custom levels with those exact
+    token names (users grep for them)."""
     stream = io.StringIO()
     log = Logger(log_file=None, level="INFO", stream=stream)
     log.check("Start")
@@ -43,6 +54,7 @@ def test_check_and_endpoint_tokens() -> None:
 
 
 def test_debug_suppressed_at_info_level() -> None:
+    """DEBUG is gated by LOG_LEVEL — silent at the default INFO (new in v2)."""
     stream = io.StringIO()
     log = Logger(log_file=None, level="INFO", stream=stream)
     log.debug("noisy")
@@ -51,6 +63,7 @@ def test_debug_suppressed_at_info_level() -> None:
 
 
 def test_debug_shown_at_debug_level() -> None:
+    """...but DEBUG appears when LOG_LEVEL=DEBUG (the per-site/per-dependent detail)."""
     stream = io.StringIO()
     log = Logger(log_file=None, level="DEBUG", stream=stream)
     log.debug("seen")
@@ -58,8 +71,8 @@ def test_debug_shown_at_debug_level() -> None:
 
 
 def test_check_endpoint_survive_info_threshold() -> None:
-    # The whole point of putting CHECK/ENDPOINT above INFO: they must not be
-    # filtered out at the default level.
+    """CHECK/ENDPOINT are placed just above INFO precisely so they are NOT
+    filtered out at the default level — losing them would hide loop markers."""
     stream = io.StringIO()
     log = Logger(log_file=None, level="INFO", stream=stream)
     log.check("Start")
@@ -67,6 +80,7 @@ def test_check_endpoint_survive_info_threshold() -> None:
 
 
 def test_writes_to_file(tmp_path: Path) -> None:
+    """Logs are written to the file (creating the parent dir on demand)."""
     log_file = tmp_path / "sub" / "monitor.log"  # parent created on demand
     log = Logger(log_file=str(log_file), level="INFO", stream=io.StringIO())
     log.info("persisted")
@@ -75,7 +89,8 @@ def test_writes_to_file(tmp_path: Path) -> None:
 
 
 def test_unwritable_file_degrades_gracefully() -> None:
-    # A path under a non-existent, uncreatable location must not raise.
+    """An unwritable log path must not crash the monitor — it degrades to
+    stderr-only (the watchdog must never become the outage)."""
     stream = io.StringIO()
     log = Logger(log_file="/proc/cannot/create/here.log", level="INFO", stream=stream)
     log.info("still works")

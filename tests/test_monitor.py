@@ -1,4 +1,11 @@
-"""End-to-end state machine via Monitor.run_once against the fake daemon."""
+"""End-to-end state machine via Monitor.run_once against the fake daemon.
+
+Why: these are the integration tests for the ADR-0006 per-loop state machine —
+they exercise the real decision flow (gluetun root test → restart/re-verify →
+per-dependent strand/viability → restart-vs-recreate) end to end, which the unit
+tests only cover piecewise. They're the closest thing to "does the #20 fix
+actually work" without a live daemon.
+"""
 
 from __future__ import annotations
 
@@ -34,6 +41,8 @@ def _monitor(fake: FakeDockerClient, sites_file: str, **cfg_overrides) -> Monito
 
 
 def test_gluetun_not_running_does_nothing(sites_file: str) -> None:
+    """A stopped gluetun → log + take no action this loop (don't restart a
+    gluetun that's deliberately down; the next loop re-checks)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID, running=False)
     _monitor(fake, sites_file).run_once()
@@ -41,6 +50,8 @@ def test_gluetun_not_running_does_nothing(sites_file: str) -> None:
 
 
 def test_healthy_no_dependents_is_quiet(sites_file: str) -> None:
+    """Healthy gluetun, no dependents → no restarts/recreates: the steady state
+    must be completely passive (no churn on a healthy stack)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.on_exec = lambda name, cmd: ExecResult(0, "")  # all wget pass
@@ -50,6 +61,8 @@ def test_healthy_no_dependents_is_quiet(sites_file: str) -> None:
 
 
 def test_healthy_dependent_passes_viability(sites_file: str) -> None:
+    """A live dependent whose viability probe passes is left alone — a working
+    dependent is never touched."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -65,6 +78,8 @@ def test_healthy_dependent_passes_viability(sites_file: str) -> None:
 
 
 def test_stranded_dependent_is_restarted(sites_file: str) -> None:
+    """The headline #20 case: a loopback-stranded dependent on gluetun's *current*
+    id is healed by a restart (not a recreate), and the verify then passes."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -84,6 +99,8 @@ def test_stranded_dependent_is_restarted(sites_file: str) -> None:
 
 
 def test_stranded_dependent_with_moved_gluetun_id_is_recreated(sites_file: str) -> None:
+    """The Watchtower case: gluetun was recreated (new id), so the strand is
+    healed by a volume-preserving recreate (rm without -v), not a restart."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     # Dependent still points at the OLD gluetun id -> recreate, not restart.
@@ -139,6 +156,9 @@ def test_remembered_dependent_recreated_after_live_gluetun_recreate(sites_file: 
 
 
 def test_viability_failure_accumulates_to_threshold(sites_file: str) -> None:
+    """A live dependent failing its viability probe isn't remediated on the first
+    failure — it must reach DEPENDENT_CONTAINER_FAILURES consecutive loops first
+    (Tenet 8, under-react to noise)."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
@@ -162,6 +182,9 @@ def test_viability_failure_accumulates_to_threshold(sites_file: str) -> None:
 
 
 def test_gluetun_failure_triggers_restart_then_reverify(sites_file: str) -> None:
+    """gluetun's own site failures must breach FAIL_THRESHOLD before it's
+    restarted; the ordered-recovery path then restarts gluetun and re-verifies
+    (ADR-0003) — no single-blip restarts."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
 

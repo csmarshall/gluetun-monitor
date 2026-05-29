@@ -1,4 +1,10 @@
-"""Defensive exception / malformed-input branches across modules."""
+"""Defensive exception / malformed-input branches across modules.
+
+Why: a watchdog must survive a flaky daemon and odd container state — a thrown
+exec, a failed create, a vanished container, a malformed mount/NetworkMode.
+These tests ensure each such case degrades to a safe outcome (skip / False /
+unknown / default) rather than crashing the loop (Tenets 1, 7).
+"""
 
 from __future__ import annotations
 
@@ -22,10 +28,9 @@ def _logger() -> Logger:
     return Logger(log_file=None, level="DEBUG", stream=io.StringIO())
 
 
-# ----- endpoint: logs() raising -----
-
-
 def test_get_endpoint_info_handles_logs_exception() -> None:
+    """If fetching gluetun's logs throws, endpoint info degrades to "unknown" —
+    logging is best-effort and must never gate the loop."""
     fake = FakeDockerClient()
 
     def boom(name: str) -> str:
@@ -36,20 +41,18 @@ def test_get_endpoint_info_handles_logs_exception() -> None:
     assert info.public_ip == "unknown"  # default, no crash
 
 
-# ----- dependents: empty gluetun id reaches _ids_match guard -----
-
-
 def test_remediation_recreate_when_gluetun_id_empty() -> None:
+    """An empty current gluetun id can't match any target → recreate (exercises
+    the _ids_match empty-string guard; an empty id never falsely matches)."""
     fake = FakeDockerClient()
     info = fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
-    # An empty current id can't match -> recreate (exercises the _ids_match guard).
     assert remediation_action(info, "") is RemediationAction.RECREATE
 
 
-# ----- recreate: malformed mounts are skipped -----
-
-
 def test_build_create_body_skips_malformed_mounts() -> None:
+    """Mount entries we can't faithfully reproduce (no name/source/destination,
+    unknown type) are dropped, not carried as broken specs — only the valid one
+    survives, so a recreate never fails on a malformed mount."""
     raw = make_inspect(
         "dep",
         id="d1",
@@ -66,10 +69,9 @@ def test_build_create_body_skips_malformed_mounts() -> None:
     assert hc["Mounts"] == [{"Type": "volume", "Source": "ok", "Target": "/d", "ReadOnly": False}]
 
 
-# ----- recreate: create failure -> False (and the old container is already gone) -----
-
-
 def test_recreate_dependent_create_failure_returns_false() -> None:
+    """If the create step fails mid-recreate, recreate_dependent returns False so
+    the caller reports FAILED (rather than assuming success)."""
     fake = FakeDockerClient()
     fake.add(make_inspect("dep", id="d1", network_mode=f"container:{GLUETUN_ID}"))
 
@@ -80,10 +82,9 @@ def test_recreate_dependent_create_failure_returns_false() -> None:
     assert recreate_dependent(fake, "dep", "f" * 64, _logger()) is False
 
 
-# ----- recovery: restart_gluetun when restart raises -----
-
-
 def test_restart_gluetun_handles_restart_exception() -> None:
+    """A restart call that raises is caught and reported as failure, not an
+    unhandled crash."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
 
@@ -94,10 +95,9 @@ def test_restart_gluetun_handles_restart_exception() -> None:
     assert restart_gluetun(fake, Config(), _logger(), sleep=lambda _s: None) is False
 
 
-# ----- recovery: wait_for_dns swallows exec exceptions and times out -----
-
-
 def test_wait_for_dns_handles_exec_exception() -> None:
+    """If the DNS probe exec throws, wait_for_dns keeps polling and times out
+    gracefully (False) instead of propagating the error."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
 
@@ -108,19 +108,17 @@ def test_wait_for_dns_handles_exec_exception() -> None:
     assert wait_for_dns(fake, "gluetun", 4, _logger(), sleep=lambda _s: None) is False
 
 
-# ----- recovery: remediate when the container vanished -----
-
-
 def test_remediate_missing_container_returns_false() -> None:
+    """Remediating a container that no longer exists returns False (nothing to
+    act on) rather than raising."""
     fake = FakeDockerClient()
     ok = remediate_dependent(fake, "ghost", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
     assert ok is False
 
 
-# ----- recovery: try-restart succeeds (no escalation) -----
-
-
 def test_remediate_try_restart_success_without_escalation() -> None:
+    """Name-form target whose restart *succeeds* heals via restart alone — we
+    only escalate to recreate when the restart fails."""
     fake = FakeDockerClient()
     fake.add_container("dep", network_mode="container:gluetun")  # name form -> TRY_RESTART
 

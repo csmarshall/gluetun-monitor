@@ -66,6 +66,8 @@ def _source_and_call(call: str, env_extra: dict[str, str] | None = None) -> str:
     ],
 )
 def test_trim_matches_bash(value: str) -> None:
+    """Differential: the Python trim must produce byte-identical output to the
+    legacy bash trim for every input — including the #17 apostrophe case."""
     # Pass via env to avoid any shell-quoting differences in the harness itself.
     bash_out = _source_and_call('trim "$TRIM_IN"', {"TRIM_IN": value})
     assert trim(value) == bash_out  # bash trim uses printf '%s' (no trailing newline)
@@ -76,12 +78,15 @@ def test_trim_matches_bash(value: str) -> None:
 
 @pytest.mark.parametrize("code", [0, 1, 2, 3, 4, 5, 6, 7, 8, 99])
 def test_decode_wget_exit_code_matches_bash(code: int) -> None:
+    """Differential: the Python exit-code reasons match the legacy bash function
+    exactly — the no-regressions gate for the connectivity classification."""
     bash_out = _source_and_call(f"decode_wget_exit_code {code}").rstrip("\n")
     assert decode_wget_exit_code(code) == bash_out
 
 
 def test_wget_pass_codes_match_bash_logic() -> None:
-    # v1.x test_site_async treats exit 0 (success) and 6/8 (site responded) as PASS.
+    """The pass set matches v1.x test_site_async: 0 (success) and 6/8 (site
+    responded) count as the tunnel working."""
     assert frozenset({0, 6, 8}) == WGET_PASS_CODES
 
 
@@ -97,6 +102,9 @@ def _bash_default(var: str) -> str:
 
 
 def test_env_defaults_match_legacy_script() -> None:
+    """Contract: every shared env default in the Python Config equals the
+    ${VAR:-default} the legacy bash script used — so a port didn't silently
+    change a default an existing deployment relies on."""
     c = Config()
     assert _bash_default("CONFIG_FILE") == c.config_file
     assert _bash_default("LOG_FILE") == c.log_file

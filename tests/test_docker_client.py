@@ -71,22 +71,27 @@ def _client() -> tuple[DockerPyClient, _StubAPI]:
 
 
 def test_ping_true() -> None:
+    """ping() reports reachable when the API answers."""
     client, _ = _client()
     assert client.ping() is True
 
 
 def test_ping_swallows_errors() -> None:
+    """A transport error from ping is swallowed → False (unreachable), not raised
+    — prereqs turn that into a clean exit, not a stack trace."""
     client, api = _client()
     api.ping_raises = True
     assert client.ping() is False
 
 
 def test_list_running_ids() -> None:
+    """The container list is flattened to just the ids the monitor uses."""
     client, _ = _client()
     assert client.list_running_ids() == ["id1", "id2"]
 
 
 def test_inspect_returns_container_info() -> None:
+    """inspect maps the raw payload into the normalized ContainerInfo."""
     client, _ = _client()
     info = client.inspect("gluetun")
     assert info is not None
@@ -95,12 +100,16 @@ def test_inspect_returns_container_info() -> None:
 
 
 def test_inspect_notfound_returns_none() -> None:
+    """A NotFound is translated to None (not an exception) — callers test for
+    None to mean "doesn't exist"."""
     client, api = _client()
     api.inspect_raises_notfound = True
     assert client.inspect("ghost") is None
 
 
 def test_exec_run_decodes_output_and_exit_code() -> None:
+    """exec output is decoded with errors='replace' (an undecodable byte won't
+    crash a probe) and the real exit code is returned."""
     client, api = _client()
     api.exec_output = b"hello\xff"  # includes an undecodable byte
     api.exec_exit_code = 7
@@ -110,23 +119,29 @@ def test_exec_run_decodes_output_and_exit_code() -> None:
 
 
 def test_exec_run_none_exit_code_falls_back_to_failure() -> None:
+    """A None/unknown exit code is treated as failure (1), not success — an
+    indeterminate probe must not read as healthy (Tenet 7)."""
     client, api = _client()
     api.exec_exit_code = None  # still-running / unknown
     assert client.exec_run("c", ["x"]).exit_code == 1
 
 
 def test_exec_run_empty_output() -> None:
+    """No output decodes to "" rather than None — callers can string-parse safely."""
     client, api = _client()
     api.exec_output = None
     assert client.exec_run("c", ["x"]).output == ""
 
 
 def test_logs_decodes() -> None:
+    """logs() returns decoded text (the endpoint parser consumes a str)."""
     client, _ = _client()
     assert client.logs("c") == "log line"
 
 
 def test_restart_remove_create_start_delegate() -> None:
+    """The mutating ops map to the right docker-py calls — notably remove passes
+    force=True with v=volumes, so the recreate path's "rm without -v" is honored."""
     client, api = _client()
     client.restart("c")
     client.remove("c", volumes=False)
