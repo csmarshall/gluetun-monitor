@@ -50,6 +50,18 @@ def test_prereq_fatal_on_empty_sites(tmp_path: Path, body: str) -> None:
     assert "No testable sites" in stream.getvalue()
 
 
+def test_prereq_fatal_clean_when_config_is_a_directory(tmp_path: Path) -> None:
+    """A CONFIG_FILE that's a directory (the classic missing-bind-mount-source
+    that Docker silently turns into a dir) must fail loud and cleanly, not crash
+    with an IsADirectoryError traceback (Tenet 7). Found by the upgrade test."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+    cfg = Config(config_file=str(tmp_path), gluetun_container="gluetun")  # a dir
+    stream = io.StringIO()
+    assert cli.check_prerequisites(fake, cfg, Logger(log_file=None, stream=stream)) is False
+    assert "Cannot read sites config" in stream.getvalue()
+
+
 # ----- explicit DEPENDENT_CONTAINERS must name existing containers -----
 
 

@@ -26,7 +26,14 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
     (overlap with the include list, or names that match nothing) WARN but are not
     fatal: excluding is the "do no harm" direction.
     """
-    if not load_sites(config.config_file, config.sites_env):
+    try:
+        sites = load_sites(config.config_file, config.sites_env)
+    except OSError as exc:
+        # e.g. CONFIG_FILE is a directory (a missing bind-mount source that Docker
+        # silently created) or unreadable — fail loud and cleanly, not a traceback.
+        logger.error(f"Cannot read sites config {config.config_file}: {exc}")
+        return False
+    if not sites:
         logger.error(
             "No testable sites configured: provide URLs via the sites file "
             f"({config.config_file}) and/or the SITES env var — refusing to run a "
