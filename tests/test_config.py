@@ -1,4 +1,10 @@
-"""Config defaults + env parsing. The v1.x defaults are part of the contract."""
+"""Config defaults + env parsing.
+
+Why: the env-var names and their defaults are a compatibility contract with v1.x
+(documented in the README and pinned by the differential suite). These tests
+guard against a default silently drifting and against env overrides not taking
+effect — either of which would change behavior for existing deployments.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from gluetun_monitor.config import Config
 
 
 def test_defaults_match_v1_contract() -> None:
+    """The v1.x env defaults must not drift — existing users rely on them."""
     c = Config()
     assert c.config_file == "/config/sites.conf"
     assert c.log_file == "/logs/gluetun-monitor.log"
@@ -21,6 +28,7 @@ def test_defaults_match_v1_contract() -> None:
 
 
 def test_v2_defaults() -> None:
+    """The new v2 knobs default to safe, on-by-default behavior (Tenet 7)."""
     c = Config()
     assert c.dependent_container_failures == 2  # mirrors fail_threshold
     assert c.max_parallel_checks == 6
@@ -29,6 +37,8 @@ def test_v2_defaults() -> None:
 
 
 def test_from_env_defaults_with_clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no env set, from_env() must equal the dataclass defaults — i.e. the
+    two default sources can't diverge."""
     for var in (
         "CONFIG_FILE", "LOG_FILE", "CHECK_INTERVAL", "TIMEOUT", "FAIL_THRESHOLD",
         "GLUETUN_CONTAINER", "HEALTHY_WAIT_TIMEOUT", "DEPENDENT_CONTAINERS",
@@ -40,6 +50,7 @@ def test_from_env_defaults_with_clean_env(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_from_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Env values actually override the defaults (the basic config path works)."""
     monkeypatch.setenv("CHECK_INTERVAL", "15")
     monkeypatch.setenv("FAIL_THRESHOLD", "5")
     monkeypatch.setenv("GLUETUN_CONTAINER", "vpn")
@@ -54,6 +65,8 @@ def test_from_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_dependent_container_failures_defaults_to_fail_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Unset, the dependent threshold mirrors FAIL_THRESHOLD — one mental model
+    for the whole stack (ADR-0006)."""
     monkeypatch.setenv("FAIL_THRESHOLD", "4")
     monkeypatch.delenv("DEPENDENT_CONTAINER_FAILURES", raising=False)
     assert Config.from_env().dependent_container_failures == 4
@@ -62,6 +75,7 @@ def test_dependent_container_failures_defaults_to_fail_threshold(
 def test_dependent_container_failures_independent_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """...but it can still be tuned independently of FAIL_THRESHOLD when set."""
     monkeypatch.setenv("FAIL_THRESHOLD", "4")
     monkeypatch.setenv("DEPENDENT_CONTAINER_FAILURES", "2")
     assert Config.from_env().dependent_container_failures == 2
@@ -70,15 +84,19 @@ def test_dependent_container_failures_independent_override(
 @pytest.mark.parametrize(
     ("value", "expected"),
     [("1", True), ("0", False), ("true", True), ("false", False),
-     ("yes", True), ("no", False), ("on", True), ("off", False)],
+     ("yes", True), ("on", True), ("off", False), ("no", False)],
 )
 def test_auto_recreate_bool_parsing(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: bool
 ) -> None:
+    """All documented boolean spellings parse correctly (so AUTO_RECREATE=yes
+    isn't silently treated as off)."""
     monkeypatch.setenv("AUTO_RECREATE", value)
     assert Config.from_env().auto_recreate is expected
 
 
 def test_int_fallback_on_garbage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unparseable int still yields the default value on the object (the CLI
+    separately treats the recorded error as fatal — see test_config_warnings)."""
     monkeypatch.setenv("CHECK_INTERVAL", "not-a-number")
     assert Config.from_env().check_interval == 30
