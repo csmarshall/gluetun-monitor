@@ -82,6 +82,10 @@ class Config:
     # parity with the other knobs). None = not set. Unlike the file, this is fixed
     # at process start (no live reload).
     sites_env: str | None = None
+    # Comma-separated container names to NEVER manage (denylist). Filters auto
+    # discovery and subtracts from an explicit list; exclude wins on overlap
+    # ("first, do no harm"). Empty = exclude nothing.
+    exclude_containers: str = ""
 
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
@@ -123,5 +127,6 @@ class Config:
             dns_wait_timeout=_env_int("DNS_WAIT_TIMEOUT", 30, errors),
             log_level=log_level,
             sites_env=os.environ.get("SITES") or None,
+            exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             errors=tuple(errors),
         )

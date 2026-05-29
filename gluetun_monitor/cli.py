@@ -7,6 +7,7 @@ import sys
 from types import FrameType
 
 from .config import Config
+from .dependents import parse_csv_names
 from .docker_client import DockerClient, DockerPyClient
 from .logging_setup import Logger
 from .monitor import Monitor
@@ -20,7 +21,10 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
     to acting on the wrong containers (Tenet 2/6). Specifically: there must be at
     least one testable site (from sites.conf and/or the SITES env — an empty set
     is a fake-green trap), the Docker API must be reachable, gluetun must exist,
-    and an explicit DEPENDENT_CONTAINERS list must name only containers that exist.
+    and an explicit DEPENDENT_CONTAINERS list must name only containers that exist
+    (excluding any in EXCLUDE_CONTAINERS — those need not exist). EXCLUDE issues
+    (overlap with the include list, or names that match nothing) WARN but are not
+    fatal: excluding is the "do no harm" direction.
     """
     if not load_sites(config.config_file, config.sites_env):
         logger.error(
@@ -35,21 +39,48 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
     if client.inspect(config.gluetun_container) is None:
         logger.error(f"Gluetun container '{config.gluetun_container}' not found")
         return False
+
+    excluded = parse_csv_names(config.exclude_containers)
     if config.dependent_containers != "auto":
-        names = [n for n in (s.strip() for s in config.dependent_containers.split(",")) if n]
+        names = parse_csv_names(config.dependent_containers)
         if not names:
             logger.error(
                 "DEPENDENT_CONTAINERS is set but lists no valid container names; "
                 "use 'auto' for discovery or name existing containers"
             )
             return False
-        missing = [n for n in names if client.inspect(n) is None]
-        if missing:
-            logger.error(
-                f"DEPENDENT_CONTAINERS names container(s) not found: {', '.join(missing)} "
-                f"— refusing to start (will not guess which containers to manage)"
+        overlap = sorted(set(names) & set(excluded))
+        if overlap:
+            logger.warn(
+                f"Container(s) in both DEPENDENT_CONTAINERS and EXCLUDE_CONTAINERS: "
+                f"{', '.join(overlap)} — excluding them (first, do no harm)"
             )
-            return False
+        # Excluded names need not exist (the point is to not manage them); only the
+        # effectively-included names are required to be present.
+        effective = [n for n in names if n not in excluded]
+        if not effective:
+            logger.warn(
+                "Every name in DEPENDENT_CONTAINERS is also excluded; "
+                "no dependents will be managed (gluetun-only)"
+            )
+        else:
+            missing = [n for n in effective if client.inspect(n) is None]
+            if missing:
+                logger.error(
+                    f"DEPENDENT_CONTAINERS names container(s) not found: {', '.join(missing)} "
+                    f"— refusing to start (will not guess which containers to manage)"
+                )
+                return False
+
+    # An exclude name matching nothing is usually a typo — and a dangerous one,
+    # since the container you meant to protect would still be managed. Warn (not
+    # fatal: it may legitimately not exist yet).
+    unmatched = [n for n in excluded if client.inspect(n) is None]
+    if unmatched:
+        logger.warn(
+            f"EXCLUDE_CONTAINERS names container(s) not found: {', '.join(unmatched)} "
+            f"(typo? they currently exclude nothing)"
+        )
     logger.info("Prerequisites check passed")
     return True
 

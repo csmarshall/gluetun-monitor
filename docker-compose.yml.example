@@ -36,6 +36,9 @@ services:
       # Auto-discovery finds all containers using network_mode: container:<GLUETUN_CONTAINER>
       # (an explicit list must name containers that exist at startup, or the monitor exits)
       - DEPENDENT_CONTAINERS=auto
+      # Denylist: containers to NEVER manage (skip checks + restart/recreate). Useful with
+      # auto = "discover everything except these". Exclude wins over an include on overlap.
+      # - EXCLUDE_CONTAINERS=some-batch-job,do-not-touch-me
       # Test URLs may be supplied here (comma-separated) instead of / in addition to
       # the mounted sites.conf below; the two are unioned. At least one site is required.
       # Note: SITES is read once at startup; sites.conf is re-read live each loop.

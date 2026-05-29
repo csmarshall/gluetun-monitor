@@ -136,6 +136,7 @@ docker compose up -d
 | `CONFIG_FILE` | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
 | `SITES` | *(unset)* | Comma-separated test URLs, **unioned** with the sites file. Set at startup (not live-reloaded) |
 | `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
+| `EXCLUDE_CONTAINERS` | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
 | `TIMEOUT` | `10` | Seconds to wait for each site test |
 | `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
@@ -193,6 +194,19 @@ The name of your Gluetun container as shown in `docker ps`. This is the containe
 Controls which dependents are watched and healed:
 - `auto` - Automatically discovers containers using `network_mode: "container:<GLUETUN_CONTAINER>"` (queries the Docker API for each running container's `NetworkMode`). Discovering zero is fine — gluetun-only monitoring.
 - `container1,container2` - Comma-separated list of container names. **Every name must exist at startup or the monitor exits** — an explicit list is a contract, and we won't guess around a missing name. If your dependents start alongside the monitor, order startup (`depends_on:`) so they exist first, or use `auto`.
+
+#### `EXCLUDE_CONTAINERS`
+A comma-separated **denylist** of containers the monitor must **never** manage —
+never interface-checked, viability-tested, restarted, or recreated. Most useful
+with `auto` ("discover everything *except* these") so you keep auto-discovery of
+new dependents while protecting specific ones. It also subtracts from an explicit
+`DEPENDENT_CONTAINERS` list.
+
+If a name appears in **both** `DEPENDENT_CONTAINERS` and `EXCLUDE_CONTAINERS`,
+**exclude wins** and the monitor warns — the contradiction resolves toward *not*
+touching the container ("first, do no harm") rather than failing. An exclude name
+that matches no container warns too (likely a typo — the container you meant to
+protect would otherwise still be managed).
 
 #### `CHECK_INTERVAL`
 Time in seconds between health check cycles.

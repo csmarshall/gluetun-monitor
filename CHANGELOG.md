@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `sites.conf`, for config-via-env parity with the other knobs. Either
   source works; at least one site total is required. `sites.conf` is re-read each
   loop (live-editable); `SITES` is fixed at startup.
+- **`EXCLUDE_CONTAINERS` env var** — comma-separated denylist of containers to
+  never manage. Filters auto-discovery and subtracts from an explicit list. On
+  overlap with `DEPENDENT_CONTAINERS`, exclude wins with a warning ("first, do no
+  harm"); an exclude name matching nothing warns (likely typo).
 
 ### Changed (behavior)
 - **Configuration is now validated; bad config is fatal (exit non-zero) instead

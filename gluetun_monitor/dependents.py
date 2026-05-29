@@ -64,7 +64,16 @@ def get_dependents(client: DockerClient, config: Config, logger: Logger) -> list
         else:
             logger.warn("No dependent containers discovered")
         return discovered
-    return [d for d in (trim(x) for x in config.dependent_containers.split(",")) if d]
+    return parse_csv_names(config.dependent_containers)
+
+
+def parse_csv_names(value: str) -> list[str]:
+    """Parse a comma-separated container-name list into trimmed, non-empty names.
+
+    Shared by the manual ``DEPENDENT_CONTAINERS`` list and ``EXCLUDE_CONTAINERS``
+    so both interpret the value identically.
+    """
+    return [n for n in (trim(x) for x in value.split(",")) if n]
 
 
 def interface_check(client: DockerClient, dep_name: str) -> InterfaceStatus:

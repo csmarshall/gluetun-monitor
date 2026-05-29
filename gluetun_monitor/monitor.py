@@ -21,6 +21,7 @@ from .dependents import (
     discover_dependents,
     get_dependents,
     interface_check,
+    parse_csv_names,
     remediation_action,
 )
 from .endpoint import get_endpoint_info
@@ -175,12 +176,13 @@ class Monitor:
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
-        remembered set, pruned to containers that still exist.
+        remembered set, pruned to containers that still exist, minus EXCLUDE.
 
         A name that came from an explicit ``DEPENDENT_CONTAINERS`` list but does
         not exist is a likely misconfiguration — warn loudly (deduped) rather
         than silently dropping it. Auto-discovery never yields a missing name, so
-        this only fires on the manual override.
+        this only fires on the manual override. ``EXCLUDE_CONTAINERS`` is then
+        subtracted: an excluded container is never managed, whatever the source.
         """
         current = get_dependents(self.client, self.config, self.log)
         present = {name: self.client.inspect(name) is not None for name in current}
@@ -196,7 +198,8 @@ class Monitor:
         self._known_dependents = {
             d for d in self._known_dependents if self.client.inspect(d) is not None
         }
-        return sorted(self._known_dependents)
+        excluded = set(parse_csv_names(self.config.exclude_containers))
+        return sorted(self._known_dependents - excluded)
 
     def run_dependent_phase(self, gluetun_id: str, sites: list[str]) -> None:
         """Probe every dependent and remediate those that fail (nodes 6-19)."""
@@ -309,6 +312,9 @@ class Monitor:
                 self.log.info("Dependent containers: auto-discovery enabled (none found currently)")
         else:
             self.log.info(f"Dependent containers (manual): {self.config.dependent_containers}")
+        excluded = parse_csv_names(self.config.exclude_containers)
+        if excluded:
+            self.log.info(f"Excluded from management (EXCLUDE_CONTAINERS): {','.join(excluded)}")
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))
 
