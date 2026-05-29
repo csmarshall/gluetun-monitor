@@ -86,6 +86,14 @@ class Config:
     # discovery and subtracts from an explicit list; exclude wins on overlap
     # ("first, do no harm"). Empty = exclude nothing.
     exclude_containers: str = ""
+    # Per-dependent L7 viability probe (DNS + connectivity from inside the
+    # container) — ADR-0006. On by default; 0 = interface/strand check only (no
+    # URL fetch). The interface check is never optional.
+    dependent_viability: bool = True
+    # Optional per-dispatch jitter (ms) to de-sync the dependent exec burst.
+    # Default 0 = off: the MAX_PARALLEL_CHECKS cap already bounds the burst, so
+    # jitter is opt-in for anyone who wants to spread load further (ADR-0006).
+    max_jitter_ms: int = 0
 
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
@@ -128,5 +136,7 @@ class Config:
             log_level=log_level,
             sites_env=os.environ.get("SITES") or None,
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
+            dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
+            max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
             errors=tuple(errors),
         )

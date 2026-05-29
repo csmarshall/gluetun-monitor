@@ -131,6 +131,12 @@ class Monitor:
         ``gluetun_id`` is the current gluetun container id, needed for the
         inspect-based fallback below.
         """
+        # Optional per-dispatch jitter (default 0 = no-op) to de-sync the burst
+        # of execs across live dependents (ADR-0006). The concurrency cap is the
+        # primary bound; this only spreads start times when explicitly enabled.
+        if self.config.max_jitter_ms > 0:
+            self._sleep(self._rng.uniform(0, self.config.max_jitter_ms) / 1000.0)
+
         status = interface_check(self.client, dep)
 
         if status is InterfaceStatus.STRANDED:
@@ -166,7 +172,13 @@ class Monitor:
                 )
             return DependentProbe(dep, status, running, None, "interface check unavailable")
 
-        # LIVE: one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
+        # LIVE. The viability layer (L7 DNS + connectivity probe) is opt-out: with
+        # it off, a live, non-stranded dependent is judged healthy on the interface
+        # check alone — no URL fetch (ADR-0006; the interface check stays mandatory).
+        if not self.config.dependent_viability:
+            return DependentProbe(dep, status, True, None, "viability disabled (interface only)")
+
+        # one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
         pool = resolvable or ips
         if not pool:
             return DependentProbe(dep, status, True, None, "no test URLs")

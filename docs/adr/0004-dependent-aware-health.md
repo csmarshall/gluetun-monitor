@@ -57,12 +57,23 @@ must therefore be evaluated **per dependent**, not as a single global flag.
      — a dependent showing only `lo` is **stranded loopback-only**. This is
      ground truth and catches it regardless of cause. (Connectivity + DNS
      verification is layered on top in ADR-0006.)
-   - **Inspect (pre-filter, branch-selector, fallback):** track gluetun's **ID**
-     + `.State.StartedAt` across cycles and compare **each** dependent's
-     `NetworkMode` target-ID to gluetun's current ID. This cheaply flags
-     *suspect* dependents, **selects the recovery branch** (below), catches a
-     strand that predates the monitor's own startup, and is the **fallback** when
-     a dependent can't be exec'd (distroless/scratch).
+   - **Inspect (pre-filter, branch-selector, fallback):** compare **each**
+     dependent's `NetworkMode` target-ID to gluetun's current **ID**. This cheaply
+     flags *suspect* dependents, **selects the recovery branch** (below), and is
+     the **fallback** when a dependent can't be exec'd (distroless/scratch).
+
+     > **Implementation note (v2.0.0):** this ADR originally also proposed
+     > tracking gluetun's `.State.StartedAt` across cycles. The v2 build does
+     > **not** — it tracks the current id only. `StartedAt` would detect a
+     > *same-id in-place restart*, but the **interface check is ground truth every
+     > loop** and already detects the resulting strand from *any* cause (same-id
+     > restart *and* recreate both strand dependents to `lo`, per Q2/Q3), while the
+     > id comparison selects restart-vs-recreate. `StartedAt` would only duplicate
+     > detection the interface check already does, so we dropped it rather than
+     > carry extra cross-cycle state (Tenets 8/9 — simple/stateless). Likewise the
+     > "catches a strand that predates the monitor's own startup" claim holds only
+     > for *discovered/known/explicitly-listed* dependents — a recreate-strand
+     > pre-dating startup needs an explicit `DEPENDENT_CONTAINERS` (see README).
 2. **Recovery is conditional on gluetun's identity — per dependent, not a blanket
    recreate.** Read the stranded dependent's `NetworkMode` (`container:<X>`) and
    compare `<X>` to gluetun's current `.Id`:

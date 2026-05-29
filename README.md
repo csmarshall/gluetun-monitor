@@ -143,6 +143,8 @@ docker compose up -d
 | `HEALTHY_WAIT_TIMEOUT` | `120` | Max seconds to wait for Gluetun to become healthy after restart |
 | `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
 | `MAX_PARALLEL_CHECKS` | `6` | Cap on concurrent `docker exec` probes across dependents per loop |
+| `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
+| `MAX_JITTER_MS` | `0` | Optional per-dispatch jitter (ms) to spread the dependent probe burst. `0` = off (the concurrency cap already bounds it) |
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |

@@ -57,6 +57,10 @@ services:
       # - DEPENDENT_CONTAINER_FAILURES=2
       # Cap on concurrent dependent probes per loop
       # - MAX_PARALLEL_CHECKS=6
+      # Per-dependent L7 DNS/connectivity probe; 0 = interface/strand check only (no URL fetch)
+      # - DEPENDENT_VIABILITY=1
+      # Optional per-dispatch jitter (ms) to spread the probe burst; 0 = off (cap already bounds it)
+      # - MAX_JITTER_MS=0
       # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
       # - AUTO_RECREATE=1
       # Seconds to wait for gluetun DNS to stabilize after a restart

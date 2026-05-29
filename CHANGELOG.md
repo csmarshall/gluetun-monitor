@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recreate** (volumes preserved, including anonymous volumes). See ADR-0005.
 - New env vars: `DEPENDENT_CONTAINER_FAILURES` (default = `FAIL_THRESHOLD`),
   `MAX_PARALLEL_CHECKS` (default 6), `AUTO_RECREATE` (default on),
-  `DNS_WAIT_TIMEOUT` (default 30), `LOG_LEVEL` (default `INFO`).
+  `DNS_WAIT_TIMEOUT` (default 30), `LOG_LEVEL` (default `INFO`),
+  `DEPENDENT_VIABILITY` (default on; `0` = interface/strand check only, no L7
+  probe), `MAX_JITTER_MS` (default 0; opt-in per-dispatch jitter).
 - **`SITES` env var** — comma-separated test URLs, **unioned** (de-duplicated)
   with `sites.conf`, for config-via-env parity with the other knobs. Either
   source works; at least one site total is required. `sites.conf` is re-read each

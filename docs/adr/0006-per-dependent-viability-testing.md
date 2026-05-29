@@ -156,8 +156,16 @@ paths is the per-loop reset.
 per loop** (plus gluetun's full set). That's inherent: each container is verified
 independently (you can't prove container X via container Y). It is O(#live deps)
 per loop, **not** O(#deps × names), because each dependent runs a single name
-test. A concurrency cap (`MAX_PARALLEL_CHECKS`, default ~6) + per-dispatch jitter
-bound the burst on host CPU (one `docker exec` fork per job) and the shared tunnel.
+test. A concurrency cap (`MAX_PARALLEL_CHECKS`, default 6) bounds the burst on
+host CPU (one `docker exec` fork per job) and the shared tunnel.
+
+> **Implementation note (v2.0.0):** the cap is the primary bound and is sufficient
+> at homelab scale (≤6 trivial header requests at a time). Per-dispatch jitter
+> ships as an opt-in knob (`MAX_JITTER_MS`) that **defaults to 0 (off)** — it only
+> de-synchronizes start times within the already-capped burst, so it's available
+> for anyone who wants to spread load further, not on by default (Tenet 9 —
+> simple beats clever). The viability layer itself is opt-out via
+> `DEPENDENT_VIABILITY` (default on); the interface check is never optional.
 
 **Degradation:** 0 live dependents → gluetun only (today's behavior). **No
 resolvable names** (all IP-literals) → `WARN` + dependents tested against one
