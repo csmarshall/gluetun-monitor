@@ -74,6 +74,15 @@ must therefore be evaluated **per dependent**, not as a single global flag.
      > "catches a strand that predates the monitor's own startup" claim holds only
      > for *discovered/known/explicitly-listed* dependents — a recreate-strand
      > pre-dating startup needs an explicit `DEPENDENT_CONTAINERS` (see README).
+     >
+     > What v2 *does* keep across cycles is a **remembered-dependent set**: the
+     > union of everything discovered (or listed) so far, pruned to containers
+     > that still exist. This is what lets a dependent stay tracked after gluetun
+     > is recreated under it (its `NetworkMode` now points at the dead old id, so
+     > current-id discovery no longer matches it — but we remember it). It is
+     > *discovery* memory, not failure/backoff state: it carries no counters, and
+     > a monitor restart resets it — so it stays within Tenet 8's "re-act rather
+     > than remember" (which is about not persisting *fault* state).
 2. **Recovery is conditional on gluetun's identity — per dependent, not a blanket
    recreate.** Read the stranded dependent's `NetworkMode` (`container:<X>`) and
    compare `<X>` to gluetun's current `.Id`:

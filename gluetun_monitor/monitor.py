@@ -251,7 +251,7 @@ class Monitor:
             threshold = self.config.dependent_container_failures
             if count >= threshold:
                 to_remediate.append(
-                    (probe.name, f"{count} consecutive distinct-name failures")
+                    (probe.name, f"{count} consecutive viability failures")
                 )
                 self.log.warn(
                     f"Dependent {probe.name}: {probe.reason} "

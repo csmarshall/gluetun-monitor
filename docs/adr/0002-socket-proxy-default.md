@@ -29,4 +29,5 @@ as an explicit, opt-in fallback for users who prefer it.
   added to the recovery path is a capability that must be opened on the proxy —
   a tradeoff to weigh explicitly, per Tenet 4.
 - The `docker:*-cli` image honors `DOCKER_HOST` natively, so supporting the
-  proxy needed no changes to the script itself.
+  proxy needed no changes to the script itself. *(v2.0.0: the Python image +
+  docker-py likewise honor `DOCKER_HOST` — ADR-0007.)*

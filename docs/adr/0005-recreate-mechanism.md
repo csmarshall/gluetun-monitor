@@ -4,6 +4,14 @@
 - **Date:** 2026-05-28
 - **Refines:** ADR-0004 (the ID-changed recovery branch)
 
+> **v2.0.0 note (ADR-0007):** the *mechanism* below (inspect → strip
+> netns-conflicting fields → `rm` without `-v` → recreate with the same `Mounts`
+> → `start`) is exactly what shipped — but in **Python via docker-py**, not the
+> bash + `jq`/`curl` sketched here, so v2 adds **no `jq`/`curl`** to the image.
+> And while this ADR framed it as a *MINOR* release, it actually shipped in
+> **v2.0.0** (a major bump, driven by the language rewrite — ADR-0007 — not by a
+> change to this decision). The "no new proxy permission" conclusion still holds.
+
 ## Context
 ADR-0004 establishes that when gluetun is **recreated** (new container ID), a
 **stranded loopback-only** dependent must be **recreated** — restart can't rejoin

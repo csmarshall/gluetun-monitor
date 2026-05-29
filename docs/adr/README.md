@@ -15,6 +15,16 @@ or in the code, not here.
 
 Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superseded.
 
+> **v1.x → v2.0.0 note.** ADRs 0001–0006 were written against the original
+> **bash** implementation (`gluetun-monitor.sh`). [ADR-0007](0007-reimplement-in-python.md)
+> reimplemented the monitor in **Python** (the `gluetun_monitor` package) for
+> v2.0.0. Their *decisions* still hold, but bash-era specifics — `gluetun-monitor.sh:NNN`
+> line citations, shell function names (`test_site_async`, `handle_failure`,
+> `wait_for_gluetun_healthy`, …), the `docker:*-cli` base image, and the
+> `jq`/`curl` approach — describe the v1.x code and now map onto the Python
+> package (which talks the Docker API via docker-py). The bash script is retained
+> only as the rollback anchor and differential-test oracle.
+
 ## Index
 
 | # | Decision | Status |

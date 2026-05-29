@@ -18,7 +18,9 @@ the **FAILED state** (ADR-0006) and optionally on recovery/endpoint-change.
 - Config: opt-in URL(s) via env; quiet by default (no surprise outbound traffic).
 - Why backlog: it's a separate, sizeable feature surface; the **FAILED state** in
   ADR-0006 is the natural trigger point and is the only prerequisite. Until it
-  lands, FAILED = loud log + unhealthy status.
+  lands, FAILED surfaces only as a **loud ERROR log** — there is no separate
+  machine-readable health surface (no HTTP endpoint, no container `HEALTHCHECK`);
+  exposing one could be a follow-up to this item.
 
 ## Socket-proxy hardening (verify first)
 Today's reference proxy ships `CONTAINERS=1 + POST=1 + EXEC=1`. tecnativa provides

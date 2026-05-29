@@ -174,11 +174,12 @@ this config — a documented limitation). **distroless/scratch** dependents (no
 shell to exec) can't be viability-tested → fall back to ADR-0004's
 interface/inspect signals for those.
 
-Per-dependent results log at DEBUG, e.g. (generic placeholders):
+Per-dependent results log (generic placeholders; the actual v2.0.0 format —
+a pass at DEBUG, a remediation trigger at WARN):
 
 ```
-[DEBUG] Dependent app1: https://example.com ok (1064ms) [fails 0/2]
-[DEBUG] Dependent app1: https://example.org FAILED (DNS) [fails 2/2 -> remediate]
+[DEBUG] Dependent app1: https://example.com: HTTP 200 [fails 0]
+[WARN] Dependent app1: https://example.org: Network failure (DNS or connection) [fails 2/2 -> remediate]
 ```
 
 ## Consequences
