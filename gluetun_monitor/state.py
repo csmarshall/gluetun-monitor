@@ -1,7 +1,7 @@
 """In-memory state: consecutive-failure counters and state-machine enums.
 
 Counters are consecutive and reset on any pass; nothing is persisted and there
-is no backoff/circuit-breaker (ADR-0006, Tenet 8 / ROC): recovery is cheap and
+is no backoff/circuit-breaker (ADR-0006, Tenet 9 / ROC): recovery is cheap and
 non-destructive, so we re-evaluate every loop rather than carry fragile state.
 A monitor restart zeroes everything.
 """

@@ -19,7 +19,7 @@ only interface is `lo`.)
 Because the monitor tests connectivity *only from inside gluetun* (ADR-0001),
 every site check passes and the monitor reports healthy while the dependents are
 cut off from the network entirely. This is the core complaint: the watchdog
-reports green while the stack is broken (violates Tenet 6).
+reports green while the stack is broken (violates Tenet 7).
 
 We validated the mechanics empirically on rosa (Docker 29.1.3,
 `issue20-netns-experiment.sh`): Q1 a dependent's `HostConfig.NetworkMode` is

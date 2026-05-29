@@ -2,7 +2,7 @@
 
 The env-var contract (names + defaults) is part of the v1.x compatibility surface
 pinned by the characterization suite. New v2.0.0 knobs (dependent viability,
-recreate) are additive and default to safe, on-by-default behavior per Tenet 7.
+recreate) are additive and default to safe, on-by-default behavior per Tenet 8.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class Config:
     # Bound the per-loop docker exec fan-out across live dependents (ADR-0006 Load).
     max_parallel_checks: int = 6
     # Recreate a dependent whose netns target moved to a new gluetun id
-    # (ADR-0004/0005). On by default (Tenet 7); set 0 to disable -> FAILED state.
+    # (ADR-0004/0005). On by default (Tenet 8); set 0 to disable -> FAILED state.
     auto_recreate: bool = True
     # Seconds to wait for gluetun DNS to stabilize after a restart (ADR-0003).
     dns_wait_timeout: int = 30

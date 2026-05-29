@@ -12,7 +12,7 @@ are healthy: a dependent can be stranded loopback-only (netns) or carry a
 **per-container** fault — most notably a broken `/etc/resolv.conf`, which is
 per-container filesystem and **not** shared by the netns. The #20 lesson is to
 stop inferring stack health from the gateway and **measure each dependent
-directly** (Tenet 5), without becoming trigger-happy (Tenet 2).
+directly** (Tenet 6), without becoming trigger-happy (Tenet 3).
 
 Two physical facts shape the design:
 - All dependents **share gluetun's netns**, so a test from a dependent egresses
@@ -37,7 +37,7 @@ Each loop, in order:
    itself is the problem → gluetun-restart recovery (ADR-0003), which
    **re-verifies the full set after the restart** and only proceeds to the
    dependent phase if the tunnel is restored; if still failing, dependents are
-   left untouched until next cycle (don't churn them into a dead tunnel — Tenet 4).
+   left untouched until next cycle (don't churn them into a dead tunnel — Tenet 5).
 3. **Per-dependent viability test — one shuffled name per loop.** Build the
    **resolvable-name pool** (the hostname URLs). For each live dependent, pick
    **one shuffled name** from the pool and test resolve+connect *from inside that
@@ -61,7 +61,7 @@ Each loop, in order:
    nodes 2–5), so a container-only failure is still correctly attributed to the
    container — the root test is the disambiguator, so a tiny pool is not a
    false-positive risk.
-5. **Reaction — one knob, two failure classes (Tenet 7).**
+5. **Reaction — one knob, two failure classes (Tenet 8).**
    - **`DEPENDENT_CONTAINER_FAILURES`** (default `$FAIL_THRESHOLD`) — consecutive
      per-container failures before remediation. It mirrors gluetun's retry count
      so there is one mental model and one default for the whole stack; override
@@ -85,7 +85,7 @@ Each loop, in order:
    - **Asymmetry, deliberate:** gluetun tests the **full set** each loop (root,
      comprehensive); each dependent tests **one shuffled name** per loop (spread
      load across many containers — see Load).
-   - **FAILED state (Tenet 6):** when recovery can't restore health — gluetun
+   - **FAILED state (Tenet 7):** when recovery can't restore health — gluetun
      won't come back after its restart, a dependent's post-recovery verify fails,
      or recreate is disabled/denied — the monitor enters an explicit **FAILED**
      state: report unhealthy loudly (and fire a notification once that layer
@@ -182,7 +182,7 @@ Per-dependent results log at DEBUG, e.g. (generic placeholders):
   *different* name each loop is what turns the consecutive-failure count into a
   container-health signal instead of a URL-uptime signal. Testing the same name
   repeatedly would be a bug.
-- **Reaction stays conservative** (Tenet 7): the hard netns strand acts fast
+- **Reaction stays conservative** (Tenet 8): the hard netns strand acts fast
   (single re-check); the soft DNS/connect fault waits `DEPENDENT_CONTAINER_FAILURES`
   loops so a transient blip never recreates a container.
 - Requires `docker exec` into dependents (already required for gluetun, ADR-0001)
@@ -194,5 +194,5 @@ Per-dependent results log at DEBUG, e.g. (generic placeholders):
   (2) per-dependent viability test + the `DEPENDENT_CONTAINER_FAILURES` gate.
 - New knobs: `DEPENDENT_CONTAINER_FAILURES` (default `$FAIL_THRESHOLD`),
   `MAX_PARALLEL_CHECKS` (~6), jitter window, and an **opt-out** for the dependent
-  viability layer — it is **on by default** (Tenet 7); the interface check is not
+  viability layer — it is **on by default** (Tenet 8); the interface check is not
   optional.

@@ -148,7 +148,7 @@ class Monitor:
             # (dead) gluetun is stranded exactly as in #20, just invisible to the
             # interface check. A matching id (RESTART) or an unresolvable name-form
             # target (TRY_RESTART) is left alone: we can't prove a strand there and
-            # must not churn a healthy container (Tenet 2). The id comparison is
+            # must not churn a healthy container (Tenet 3). The id comparison is
             # stable (no flap), so unlike the interface path it needs no re-check.
             info = self.client.inspect(dep)
             running = bool(info and info.running)

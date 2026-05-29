@@ -63,7 +63,7 @@ considered:
 
 ## Decision
 - **Mechanism = B (Docker-API reconstruct).** It satisfies #20's request, stays
-  socket-only (Tenet 3), and avoids coupling the monitor to the user's on-disk
+  socket-only (Tenet 4), and avoids coupling the monitor to the user's on-disk
   compose layout. **C is rejected** as too heavy for a watchdog.
 - **Default = B, attempted automatically (default ON).** When a dependent is
   stranded loopback-only and its `NetworkMode` target ≠ the current gluetun ID,

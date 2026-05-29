@@ -18,7 +18,7 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
     """Validate everything required to start. Any failure is fatal (return False).
 
     We refuse to start on bad config rather than guess, because guessing can lead
-    to acting on the wrong containers (Tenet 2/6). Specifically: there must be at
+    to acting on the wrong containers (Tenet 3/7). Specifically: there must be at
     least one testable site (from sites.conf and/or the SITES env — an empty set
     is a fake-green trap), the Docker API must be reachable, gluetun must exist,
     and an explicit DEPENDENT_CONTAINERS list must name only containers that exist

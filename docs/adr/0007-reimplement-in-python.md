@@ -60,7 +60,7 @@ HTTP probe — which is where almost all of the regression surface would be.
 3. **Port the bats regressions to pytest** — especially #17 (apostrophe parse)
    and shellcheck-clean's spirit (ruff + mypy --strict gate instead).
 4. **Promote the `issue20-*.sh` experiment scripts** to integration tests.
-5. **Staged rollout (ROC, Tenet 8).** Bash stays in-tree and tagged; the v1.x
+5. **Staged rollout (ROC, Tenet 9).** Bash stays in-tree and tagged; the v1.x
    image stays pullable as `:1`. Ship Python as `:2` / `:latest` / v2.0.0,
    dogfood on rosa, and keep **rollback = repin `:1`** — one-step, non-destructive.
 
