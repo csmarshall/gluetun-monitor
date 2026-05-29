@@ -32,10 +32,10 @@ A lightweight Docker container that monitors VPN connectivity through [Gluetun](
 **Pull the image:**
 ```bash
 # From Docker Hub
-docker pull chasmarshall/gluetun-monitor:latest
+docker pull chasmarshall/gluetun-monitor:2
 
 # From GitHub Container Registry
-docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```
 
 ## Features
@@ -85,12 +85,13 @@ permissions** (`CONTAINERS` / `POST` / `EXEC`). In the common case you change
 only the image tag and it keeps working — we validate that the v1 env surface
 boots cleanly against a socket proxy as part of testing.
 
-**Image tags:**
-- **`:2`** — recommended for production: you get every v2.x patch and never a
+**Image tags** (full policy: [docs/VERSIONING.md](docs/VERSIONING.md)):
+- **`:2`** — **recommended for production**: you get every v2.x patch and never a
   surprise future major.
-- **`:latest`** — always the newest release (note: it *will* eventually roll to a
-  future v3 major).
-- **`:1`** — frozen v1, kept only as a **rollback anchor**; unsupported.
+- `:2.0.0` — fully pinned to one release (reproducible; you update deliberately).
+- `:latest` — always the newest release; **will** eventually roll to a future v3
+  major, so don't use it for unattended updates of a container-restarting watchdog.
+- **`:1`** — frozen v1, kept only as a **rollback anchor**; unsupported (EOL).
 
 **Two behavior changes to know about** (the config interface is compatible, but
 v2 does more):
@@ -112,7 +113,7 @@ v2 does more):
 ### 1. Pull the image
 
 ```bash
-docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```
 
 ### 2. Copy example configs
@@ -418,8 +419,8 @@ services:
       - docker-proxy
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
-    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     depends_on:
@@ -458,8 +459,8 @@ services:
       - docker-proxy
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
-    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     depends_on:
@@ -497,7 +498,7 @@ If you prefer a simpler setup without the socket proxy, you can mount the Docker
 ```yaml
 services:
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     network_mode: none

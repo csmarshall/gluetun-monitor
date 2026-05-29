@@ -18,9 +18,11 @@ services:
       - docker-proxy
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    # Pin the major (:2) for production: all v2.x patches, no surprise future major.
+    # Alternatives: :latest (newest, may roll to v3), :2.0.0 (fully pinned). See docs/VERSIONING.md.
+    image: ghcr.io/csmarshall/gluetun-monitor:2
     # Or from Docker Hub:
-    # image: chasmarshall/gluetun-monitor:latest
+    # image: chasmarshall/gluetun-monitor:2
     # Or build locally from source:
     # build: .
     container_name: gluetun-monitor
@@ -86,7 +88,7 @@ networks:
 #
 # services:
 #   gluetun-monitor:
-#     image: ghcr.io/csmarshall/gluetun-monitor:latest
+#     image: ghcr.io/csmarshall/gluetun-monitor:2
 #     container_name: gluetun-monitor
 #     restart: unless-stopped
 #     network_mode: none  # No network needed - communicates via Docker socket only
