@@ -312,6 +312,54 @@ shell can't be exec-probed and fall back to the inspect-based signals.
 > monitor *after* such a strand already exists, name the dependents explicitly
 > via `DEPENDENT_CONTAINERS` so they're tracked from the first loop.
 
+## What it will and won't do (and why your data is safe)
+
+gluetun-monitor is a watchdog that *restarts and recreates containers*, so it
+owes you a clear contract about exactly what it touches — and what it can't.
+
+### It WILL
+- Restart **gluetun** on a confirmed connectivity failure (to force a new endpoint).
+- Restart a **dependent** that shares gluetun's *current* network namespace.
+- **Recreate** a dependent stranded by a gluetun *recreate* (its netns id moved) —
+  non-destructively (see below). On by default; `AUTO_RECREATE=0` disables it.
+- Report a loud, explicit **FAILED** state when it can't heal — never fake-green.
+
+### It WON'T
+- Pull or build images, or change image tags/versions.
+- Edit your compose files, env, or container configuration.
+- **Delete volumes or data** (it never runs `docker rm -v`).
+- Touch containers that aren't gluetun dependents, or any you list in
+  `EXCLUDE_CONTAINERS`.
+- Act on targets you didn't choose — sites you didn't configure, or an orphan it
+  can't confidently attribute to gluetun (Tenet 1).
+- Start at all on malformed config — it fails loud instead of guessing.
+
+### Why your data is safe across a recreate
+A "recreate" replaces the container **object**, not its data. Docker volumes are
+owned by the daemon, not the container, so:
+
+- **Named volumes, bind mounts, and even anonymous volumes are carried forward** —
+  the monitor reads the old container's mounts and re-attaches the *same* volumes
+  by source on the new container, then removes the old container **without `-v`**.
+  No volume is ever deleted. (Mechanism + empirical data-loss test: [ADR-0005](docs/adr/0005-recreate-mechanism.md).)
+- The **only** thing lost is the container's ephemeral **writable layer** — files
+  written *inside* the container that aren't on a volume. That layer is ephemeral
+  by design (recreated from the image). Anything you care about lives on a volume,
+  and volumes survive.
+
+### What's actually at risk vs. what only sounds risky
+
+| Sounds alarming | The reality |
+|---|---|
+| "It *recreates* my container!" | New container **ID** and a **brief downtime** during the swap. Volume data is preserved. |
+| "A watchdog with Docker access" | Behind the default socket-proxy it's limited to container ops (list/inspect/logs/restart/exec/create/remove) — no image pull/build, no host access. |
+| "Reconstruction might drop a setting" | The genuine residual risk: a recreate copies the container's config + mounts, and a fidelity bug could drop a *non-volume* setting. Mitigations: it **verifies** after recreating, `AUTO_RECREATE=0` disables recreate entirely, and `EXCLUDE_CONTAINERS` protects specific containers. |
+
+### Your controls
+- **`AUTO_RECREATE=0`** — never recreate; alert instead (restart-only recovery).
+- **`EXCLUDE_CONTAINERS=...`** — a denylist of containers to never touch.
+- **Socket proxy** (default) — cap the Docker API surface the monitor can use.
+
 ## Docker Compose Example
 
 ### Minimal Configuration (with socket proxy)
