@@ -43,6 +43,7 @@ class Counter:
         self._counts[key] = 0
 
     def get(self, key: str) -> int:
+        """Current consecutive-failure count for ``key`` (0 if never seen)."""
         return self._counts.get(key, 0)
 
     def reset_all(self) -> None:

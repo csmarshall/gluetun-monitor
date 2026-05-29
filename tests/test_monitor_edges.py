@@ -40,7 +40,8 @@ def test_probe_unknown_running_is_not_remediated() -> None:
     fake.add_container("distroless", network_mode=f"container:{GLUETUN_ID}")
     fake.on_exec = lambda name, cmd: ExecResult(1, "")  # no shell -> exec fails
     mon, _ = _mon(fake, "/dev/null")
-    probe = mon._probe_dependent("distroless", ["https://x"], [])
+    # Same id as current gluetun -> shares the live netns -> left alone (healthy).
+    probe = mon._probe_dependent("distroless", GLUETUN_ID, ["https://x"], [])
     assert probe.status is InterfaceStatus.UNKNOWN
     assert probe.running is True
     assert probe.viability_ok is None  # not tested
@@ -60,7 +61,7 @@ def test_probe_ip_only_fallback_uses_ip_pool() -> None:
 
     fake.on_exec = handler
     mon, _ = _mon(fake, "/dev/null")
-    probe = mon._probe_dependent("dep", [], ["https://1.1.1.1"])
+    probe = mon._probe_dependent("dep", GLUETUN_ID, [], ["https://1.1.1.1"])
     assert probe.viability_ok is True
     assert seen == ["https://1.1.1.1"]
 
@@ -125,7 +126,9 @@ def test_gluetun_reverify_still_failing_leaves_dependents_untouched(tmp_path: Pa
 
 
 @pytest.mark.parametrize("sites_body", ["", "# only comments\n"])
-def test_no_sites_is_handled(tmp_path: Path, sites_body: str) -> None:
+def test_no_sites_warns_and_takes_no_action(tmp_path: Path, sites_body: str) -> None:
+    # V1 contract: an empty sites.conf tests nothing for gluetun and never
+    # triggers a restart (no site can fail). We do NOT guess substitute targets.
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     sites = _write(tmp_path, sites_body)
@@ -133,3 +136,4 @@ def test_no_sites_is_handled(tmp_path: Path, sites_body: str) -> None:
     mon.run_once()
     assert "No sites configured" in stream.getvalue()
     assert fake.restarted == []
+    assert fake.created == []

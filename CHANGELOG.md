@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New env vars: `DEPENDENT_CONTAINER_FAILURES` (default = `FAIL_THRESHOLD`),
   `MAX_PARALLEL_CHECKS` (default 6), `AUTO_RECREATE` (default on),
   `DNS_WAIT_TIMEOUT` (default 30), `LOG_LEVEL` (default `INFO`).
+- **`SITES` env var** — comma-separated test URLs, **unioned** (de-duplicated)
+  with `sites.conf`, for config-via-env parity with the other knobs. Either
+  source works; at least one site total is required. `sites.conf` is re-read each
+  loop (live-editable); `SITES` is fixed at startup.
+
+### Changed (behavior)
+- **Configuration is now validated; bad config is fatal (exit non-zero) instead
+  of guessed around.** A malformed env value (bad int/bool/`LOG_LEVEL`), no
+  testable sites (neither `sites.conf` nor `SITES`), or an explicit
+  `DEPENDENT_CONTAINERS` naming a container that doesn't exist, all cause the
+  monitor to refuse to start. v1 silently defaulted / warned-and-skipped / ran
+  green-while-testing-nothing; these are now loud, fatal misconfigurations. Sane
+  defaults still mean an *unset* var just uses its default — only a *set-but-bad*
+  value is fatal. (`DEPENDENT_CONTAINERS=auto` discovering zero is not an error.)
 
 ### Migration
 - Pull `:2` / `2.0.0`. Existing env / `sites.conf` / compose work unchanged. To

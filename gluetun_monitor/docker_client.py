@@ -38,6 +38,7 @@ class ContainerInfo:
 
     @classmethod
     def from_inspect(cls, raw: dict[str, Any]) -> ContainerInfo:
+        """Build a ContainerInfo from a full ``docker inspect`` payload."""
         state = raw.get("State", {}) or {}
         health_obj = state.get("Health") or {}
         host_config = raw.get("HostConfig", {}) or {}
@@ -92,24 +93,31 @@ class DockerClient(Protocol):
 
 
 class DockerPyClient:
-    """``DockerClient`` over docker-py's low-level API (honors DOCKER_HOST)."""
+    """``DockerClient`` over docker-py's low-level API (honors DOCKER_HOST).
 
-    def __init__(self, timeout: int = 60) -> None:
+    Method contracts are the ones declared on the ``DockerClient`` Protocol; the
+    docstrings here note how each maps onto a docker-py API call.
+    """
+
+    def __init__(self, timeout: int = 60) -> None:  # pragma: no cover - needs a live daemon
         import docker  # imported lazily so the fake-only test path needs no daemon
 
         self._client = docker.from_env(timeout=timeout)
         self._api = self._client.api
 
     def ping(self) -> bool:
+        """``GET /_ping`` — swallow any transport error and report unreachable."""
         try:
             return bool(self._api.ping())
         except Exception:
             return False
 
     def list_running_ids(self) -> list[str]:
+        """``GET /containers/json`` (running only) → their ids."""
         return [c["Id"] for c in self._api.containers(all=False)]
 
     def inspect(self, name_or_id: str) -> ContainerInfo | None:
+        """``GET /containers/{id}/json`` → ContainerInfo, or None if not found."""
         import docker.errors
 
         try:
@@ -119,6 +127,7 @@ class DockerPyClient:
         return ContainerInfo.from_inspect(raw)
 
     def exec_run(self, name_or_id: str, cmd: list[str]) -> ExecResult:
+        """exec_create + exec_start + exec_inspect → exit code + combined output."""
         exec_id = self._api.exec_create(name_or_id, cmd)["Id"]
         raw_output = self._api.exec_start(exec_id)
         output = raw_output.decode("utf-8", errors="replace") if raw_output else ""
@@ -127,18 +136,23 @@ class DockerPyClient:
         return ExecResult(exit_code=exit_code if exit_code is not None else 1, output=output)
 
     def logs(self, name_or_id: str) -> str:
+        """``GET /containers/{id}/logs`` (stdout+stderr) decoded to text."""
         raw = self._api.logs(name_or_id, stdout=True, stderr=True)
         return raw.decode("utf-8", errors="replace") if raw else ""
 
     def restart(self, name_or_id: str) -> None:
+        """``POST /containers/{id}/restart``."""
         self._api.restart(name_or_id)
 
     def remove(self, name_or_id: str, *, volumes: bool) -> None:
+        """``DELETE /containers/{id}`` (force); ``v=volumes`` controls volume removal."""
         self._api.remove_container(name_or_id, v=volumes, force=True)
 
     def create_from_config(self, config: dict[str, Any], name: str) -> str:
+        """``POST /containers/create`` from a raw API body → the new container id."""
         result = self._api.create_container_from_config(config, name=name)
         return str(result["Id"])
 
     def start(self, name_or_id: str) -> None:
+        """``POST /containers/{id}/start``."""
         self._api.start(name_or_id)

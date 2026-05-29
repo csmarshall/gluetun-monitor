@@ -40,6 +40,7 @@ class _BashFormatter(logging.Formatter):
     """Render ``[ts] [LEVEL] msg``, displaying WARNING as WARN (v1.x parity)."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a record, displaying WARNING as WARN for v1.x parity."""
         if record.levelname == "WARNING":
             record.levelname = "WARN"
         return super().format(record)
@@ -79,22 +80,29 @@ class Logger:
                 pass
 
     def log(self, level: str, message: str) -> None:
+        """Emit ``message`` at the named level (string token, e.g. "CHECK")."""
         self._logger.log(_LEVEL_BY_NAME.get(level.upper(), logging.INFO), message)
 
     def debug(self, message: str) -> None:
+        """Detail line (suppressed unless LOG_LEVEL=DEBUG)."""
         self._logger.debug(message)
 
     def info(self, message: str) -> None:
+        """Normal operational message."""
         self._logger.info(message)
 
     def warn(self, message: str) -> None:
+        """Non-fatal issue (renders as the v1.x ``WARN`` token)."""
         self._logger.warning(message)
 
     def error(self, message: str) -> None:
+        """Failure / FAILED-state message."""
         self._logger.error(message)
 
     def check(self, message: str) -> None:
+        """Per-loop ``CHECK`` marker (v1.x start/end-of-cycle token)."""
         self._logger.log(CHECK_LEVEL, message)
 
     def endpoint(self, message: str) -> None:
+        """VPN ``ENDPOINT`` line (startup/failing/new)."""
         self._logger.log(ENDPOINT_LEVEL, message)

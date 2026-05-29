@@ -90,4 +90,7 @@ exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
+    # Protocol method stubs are never executed (definition-only).
+    "^\\s*\\.\\.\\.$",
+    'if __name__ == .__main__.:',
 ]

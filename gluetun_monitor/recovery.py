@@ -27,6 +27,7 @@ Sleep = Callable[[float], None]
 
 
 def get_health(client: DockerClient, container: str) -> str:
+    """Health status string for ``container`` ('healthy'/'starting'/.../'unknown')."""
     info = client.inspect(container)
     return info.health if info else "unknown"
 

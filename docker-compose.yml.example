@@ -34,7 +34,12 @@ services:
       - GLUETUN_CONTAINER=gluetun
       # Dependent containers: "auto" to discover dynamically, or comma-separated list
       # Auto-discovery finds all containers using network_mode: container:<GLUETUN_CONTAINER>
+      # (an explicit list must name containers that exist at startup, or the monitor exits)
       - DEPENDENT_CONTAINERS=auto
+      # Test URLs may be supplied here (comma-separated) instead of / in addition to
+      # the mounted sites.conf below; the two are unioned. At least one site is required.
+      # Note: SITES is read once at startup; sites.conf is re-read live each loop.
+      # - SITES=https://www.google.com,https://cloudflare.com
       # Check interval in seconds
       - CHECK_INTERVAL=30
       # Timeout for each site test (seconds)

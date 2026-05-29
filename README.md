@@ -107,6 +107,18 @@ https://1.1.1.1
 # Add sites you need to reach through VPN
 ```
 
+Alternatively (or in addition), you can provide sites entirely via the **`SITES`**
+environment variable — handy if you'd rather not mount a file:
+
+```yaml
+environment:
+  - SITES=https://www.google.com,https://cloudflare.com
+```
+
+The two sources are **unioned** (file + env, de-duplicated). At least one site is
+required — see [Configuration](#configuration). The monitor must reach a real
+endpoint set to do its job, so it refuses to start with none.
+
 ### 4. Deploy
 
 ```bash
@@ -120,8 +132,10 @@ docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCKER_HOST` | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
-| `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor |
-| `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list |
+| `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor (must exist, else fatal) |
+| `CONFIG_FILE` | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
+| `SITES` | *(unset)* | Comma-separated test URLs, **unioned** with the sites file. Set at startup (not live-reloaded) |
+| `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
 | `TIMEOUT` | `10` | Seconds to wait for each site test |
 | `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
@@ -133,7 +147,37 @@ docker compose up -d
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
+### Configuration is validated — sane defaults, but bad config is fatal
+
+The design goal is **good results with zero extra config**: with a container named
+`gluetun` and a site to test, everything else has a sane default. But to protect
+the wider system, the monitor **refuses to start** (exits non-zero) rather than
+*guess* around misconfiguration:
+
+- **Malformed env value** (a non-integer `CHECK_INTERVAL`, an unrecognized
+  `AUTO_RECREATE`, an invalid `LOG_LEVEL`, …) → fatal. An *unset* variable is just
+  its default; a *set-but-unparseable* one is an error we won't paper over.
+- **No testable sites** (no `sites.conf` *and* no `SITES`, or both empty) → fatal.
+  A monitor that tests nothing would report fake-green forever.
+- **`GLUETUN_CONTAINER` doesn't exist** → fatal (nothing to monitor).
+- **Explicit `DEPENDENT_CONTAINERS` names a container that doesn't exist** → fatal.
+  You told us exactly what to manage; we won't silently drop or guess around a
+  name we can't find (it could mean acting on the wrong container). `auto` finding
+  zero is fine — that's gluetun-only monitoring, a valid setup.
+
 ### Variable Details
+
+#### Sites — `CONFIG_FILE` + `SITES`
+Test URLs come from two **unioned** sources (de-duplicated):
+- **`CONFIG_FILE`** (default `/config/sites.conf`) — one URL per line, `#` comments
+  allowed. **Re-read every loop**, so adding/removing a URL takes effect on the
+  next check with no restart.
+- **`SITES`** — a comma-separated list in the environment, for config-via-env
+  parity with the other knobs (no file mount needed). Fixed at process start —
+  changing it requires a container restart.
+
+Provide either, or both. At least one URL total is required or the monitor won't
+start (see above).
 
 #### `DOCKER_HOST`
 When unset, the Docker CLI connects via the local socket (`/var/run/docker.sock`). Set this to `tcp://<proxy-host>:2375` to connect through a [Docker socket proxy](#docker-socket-proxy) instead of mounting the socket directly. See the [Docker Socket Proxy](#docker-socket-proxy) section for setup details.
@@ -146,19 +190,17 @@ The name of your Gluetun container as shown in `docker ps`. This is the containe
 - Used to extract VPN endpoint information from logs
 
 #### `DEPENDENT_CONTAINERS`
-Controls which containers are restarted after Gluetun recovers:
-- `auto` - Automatically discovers containers using `network_mode: "container:<GLUETUN_CONTAINER>"`
-- `container1,container2` - Comma-separated list of container names to restart
-
-Auto-discovery queries the Docker API to inspect each running container's `NetworkMode` setting.
+Controls which dependents are watched and healed:
+- `auto` - Automatically discovers containers using `network_mode: "container:<GLUETUN_CONTAINER>"` (queries the Docker API for each running container's `NetworkMode`). Discovering zero is fine — gluetun-only monitoring.
+- `container1,container2` - Comma-separated list of container names. **Every name must exist at startup or the monitor exits** — an explicit list is a contract, and we won't guess around a missing name. If your dependents start alongside the monitor, order startup (`depends_on:`) so they exist first, or use `auto`.
 
 #### `CHECK_INTERVAL`
-Time in seconds between health check cycles. Each cycle tests all configured sites in parallel.
+Time in seconds between health check cycles.
 
-**Note:** The actual interval is `CHECK_INTERVAL` + up to `TIMEOUT` seconds (for parallel site tests).
+**Note:** sites are tested concurrently, bounded by `MAX_PARALLEL_CHECKS` (default 6). With ≤6 sites a cycle's tests finish within one `TIMEOUT`; with more, they run in batches, so a cycle can take up to `ceil(sites / MAX_PARALLEL_CHECKS) × TIMEOUT`.
 
 #### `TIMEOUT`
-Maximum seconds to wait for each site to respond. Since tests run in parallel, this is the maximum time for the entire test batch, not per-site.
+Maximum seconds to wait for each site to respond. Tests run concurrently (up to `MAX_PARALLEL_CHECKS` at a time), so this bounds each batch rather than each individual site.
 
 Uses `wget --spider` which only fetches headers (no response body downloaded).
 

@@ -17,11 +17,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .connectivity import probe_site
-from .dependents import get_dependents, interface_check
+from .dependents import (
+    discover_dependents,
+    get_dependents,
+    interface_check,
+    remediation_action,
+)
 from .endpoint import get_endpoint_info
 from .recovery import remediate_dependent, restart_gluetun
-from .sites import ip_pool, parse_sites_conf, resolvable_pool
-from .state import Counter, InterfaceStatus
+from .sites import ip_pool, load_sites, resolvable_pool
+from .state import Counter, InterfaceStatus, RemediationAction
 
 if TYPE_CHECKING:
     from .config import Config
@@ -67,6 +72,8 @@ class Monitor:
         # longer matches it — but we remember it from before the recreate and
         # keep checking it (ADR-0004: track across cycles). Pruned to existing.
         self._known_dependents: set[str] = set()
+        # Dedup so a missing explicitly-listed dependent warns once, not per loop.
+        self._warned_missing: set[str] = set()
 
     # ----- gluetun root test (nodes 2-3) -----
 
@@ -78,11 +85,9 @@ class Monitor:
 
         if self._last_site_count != len(sites):
             if self._last_site_count is None:
-                self.log.info(f"Loaded {len(sites)} sites from {self.config.config_file}")
+                self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
             else:
-                self.log.info(
-                    f"Site count changed from {self._last_site_count} to {len(sites)}"
-                )
+                self.log.info(f"Site count changed from {self._last_site_count} to {len(sites)}")
             self._last_site_count = len(sites)
 
         results = self._fan_out(
@@ -118,9 +123,13 @@ class Monitor:
     # ----- dependent phase (nodes 6-19) -----
 
     def _probe_dependent(
-        self, dep: str, resolvable: list[str], ips: list[str]
+        self, dep: str, gluetun_id: str, resolvable: list[str], ips: list[str]
     ) -> DependentProbe:
-        """Classify + viability-test one dependent. Pure I/O, no state mutation."""
+        """Classify + viability-test one dependent. Pure I/O, no state mutation.
+
+        ``gluetun_id`` is the current gluetun container id, needed for the
+        inspect-based fallback below.
+        """
         status = interface_check(self.client, dep)
 
         if status is InterfaceStatus.STRANDED:
@@ -130,9 +139,30 @@ class Monitor:
             return DependentProbe(dep, InterfaceStatus.LIVE, True, None, "recovered on re-check")
 
         if status is InterfaceStatus.UNKNOWN:
-            # Distroless / no shell: fall back to the running check (ADR-0006).
+            # No shell to exec (distroless/scratch), so `ls /sys/class/net` can't
+            # tell us anything. ADR-0004 designates inspect as the fallback signal
+            # here: compare the dependent's NetworkMode target to gluetun's current
+            # id. We act ONLY on the unambiguous moved-id verdict (RECREATE) — a
+            # container that is Running but whose netns parent is a *different*
+            # (dead) gluetun is stranded exactly as in #20, just invisible to the
+            # interface check. A matching id (RESTART) or an unresolvable name-form
+            # target (TRY_RESTART) is left alone: we can't prove a strand there and
+            # must not churn a healthy container (Tenet 2). The id comparison is
+            # stable (no flap), so unlike the interface path it needs no re-check.
             info = self.client.inspect(dep)
             running = bool(info and info.running)
+            if (
+                running
+                and info is not None
+                and remediation_action(info, gluetun_id) is RemediationAction.RECREATE
+            ):
+                return DependentProbe(
+                    dep,
+                    InterfaceStatus.STRANDED,
+                    True,
+                    None,
+                    "inspect: netns id moved (gluetun recreated), container not exec'able",
+                )
             return DependentProbe(dep, status, running, None, "interface check unavailable")
 
         # LIVE: one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
@@ -145,9 +175,24 @@ class Monitor:
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
-        remembered set, pruned to containers that still exist."""
+        remembered set, pruned to containers that still exist.
+
+        A name that came from an explicit ``DEPENDENT_CONTAINERS`` list but does
+        not exist is a likely misconfiguration — warn loudly (deduped) rather
+        than silently dropping it. Auto-discovery never yields a missing name, so
+        this only fires on the manual override.
+        """
         current = get_dependents(self.client, self.config, self.log)
-        self._known_dependents.update(current)
+        present = {name: self.client.inspect(name) is not None for name in current}
+
+        for name, exists in present.items():
+            if not exists and name not in self._warned_missing:
+                self.log.warn(f"Configured dependent '{name}' not found (DEPENDENT_CONTAINERS)")
+                self._warned_missing.add(name)
+        # Re-arm the warning for any name that has since reappeared.
+        self._warned_missing &= {name for name, exists in present.items() if not exists}
+
+        self._known_dependents.update(name for name, exists in present.items() if exists)
         self._known_dependents = {
             d for d in self._known_dependents if self.client.inspect(d) is not None
         }
@@ -167,7 +212,9 @@ class Monitor:
                 "testing connectivity only against IP literals"
             )
 
-        probes = self._fan_out(dependents, lambda d: self._probe_dependent(d, resolvable, ips))
+        probes = self._fan_out(
+            dependents, lambda d: self._probe_dependent(d, gluetun_id, resolvable, ips)
+        )
 
         # State mutation + remediation decisions are single-threaded.
         to_remediate: list[tuple[str, str]] = []
@@ -220,11 +267,10 @@ class Monitor:
         if gluetun.health != "healthy":
             self.log.warn(f"Gluetun health status: {gluetun.health}")
 
-        try:
-            sites = parse_sites_conf(self.config.config_file)
-        except FileNotFoundError:
-            self.log.error(f"Sites config file not found: {self.config.config_file}")
-            return
+        # Re-read every loop so editing sites.conf is picked up live (the SITES
+        # env contribution is fixed at startup). Startup validation guarantees a
+        # non-empty set; a runtime edit down to empty just tests nothing this loop.
+        sites = load_sites(self.config.config_file, self.config.sites_env)
 
         if self.check_gluetun_sites(sites):
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
@@ -250,11 +296,19 @@ class Monitor:
         self.run_dependent_phase(gluetun.id, sites)
 
     def announce(self) -> None:
-        """Log the post-prerequisite startup context (connection + endpoint)."""
+        """Log the post-prerequisite startup context (connection, dependents, endpoint)."""
         if self.config.docker_host:
             self.log.info(f"Docker connection: socket proxy ({self.config.docker_host})")
         else:
             self.log.info("Docker connection: local socket")
+        if self.config.dependent_containers == "auto":
+            discovered = discover_dependents(self.client, self.config.gluetun_container)
+            if discovered:
+                self.log.info(f"Dependent containers (auto-discovery): {','.join(discovered)}")
+            else:
+                self.log.info("Dependent containers: auto-discovery enabled (none found currently)")
+        else:
+            self.log.info(f"Dependent containers (manual): {self.config.dependent_containers}")
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))
 

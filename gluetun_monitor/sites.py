@@ -41,6 +41,36 @@ def parse_sites_conf(path: str | Path) -> list[str]:
     return sites
 
 
+def parse_sites_csv(value: str) -> list[str]:
+    """Parse a comma-separated ``SITES`` env value into trimmed URLs."""
+    return [s for s in (trim(x) for x in value.split(",")) if s]
+
+
+def load_sites(config_file: str | Path, sites_env: str | None) -> list[str]:
+    """Effective test set: the union of ``sites.conf`` and the ``SITES`` env CSV.
+
+    Either source is optional; both may be supplied. Duplicates are removed,
+    first-occurrence order preserved (file entries first, then env-only ones). A
+    missing config file contributes nothing (not an error here — the caller
+    decides whether the *combined* set being empty is fatal). The file is re-read
+    on each call, so editing it is picked up live; the env value is fixed at
+    process start.
+    """
+    try:
+        file_sites = parse_sites_conf(config_file)
+    except FileNotFoundError:
+        file_sites = []
+    env_sites = parse_sites_csv(sites_env) if sites_env else []
+
+    seen: set[str] = set()
+    merged: list[str] = []
+    for site in (*file_sites, *env_sites):
+        if site not in seen:
+            seen.add(site)
+            merged.append(site)
+    return merged
+
+
 def hostname_of(url: str) -> str:
     """Return the host portion of a URL (no port, brackets stripped for IPv6)."""
     # urlsplit needs a scheme to populate .hostname; assume http if bare.
