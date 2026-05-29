@@ -56,7 +56,12 @@ class DockerClient(Protocol):
     """The minimal Docker surface the monitor depends on."""
 
     def ping(self) -> bool:
-        """True if the daemon/proxy is reachable."""
+        """True if the daemon/proxy is reachable.
+
+        Uses Docker's ``/_ping`` (docker-py ``ping()``); validated to be permitted
+        by the default tecnativa socket-proxy config (CONTAINERS/POST/EXEC) — only
+        ``/info`` is gated there (ADR-0002), not ``/_ping``.
+        """
         ...
 
     def list_running_ids(self) -> list[str]:
