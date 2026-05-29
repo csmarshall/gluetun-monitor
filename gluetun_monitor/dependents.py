@@ -32,6 +32,13 @@ def _ids_match(a: str, b: str) -> bool:
     return a == b or a.startswith(b) or b.startswith(a)
 
 
+def is_container_id(value: str) -> bool:
+    """True if ``value`` looks like a Docker container id (12-64 hex chars), as
+    opposed to a container *name* (used to tell id-form NetworkMode targets apart
+    from name-form ones)."""
+    return bool(_CONTAINER_ID_RE.match(value))
+
+
 def discover_dependents(client: DockerClient, gluetun_container: str) -> list[str]:
     """Names of running containers sharing gluetun's network namespace."""
     gluetun = client.inspect(gluetun_container)

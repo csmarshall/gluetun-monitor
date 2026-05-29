@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never manage. Filters auto-discovery and subtracts from an explicit list. On
   overlap with `DEPENDENT_CONTAINERS`, exclude wins with a warning ("first, do no
   harm"); an exclude name matching nothing warns (likely typo).
+- **Startup warning for stranded orphans** — a running container whose netns
+  parent no longer exists (likely a dependent recreate-stranded before the
+  monitor started) is logged at WARN with a pointer to `DEPENDENT_CONTAINERS`. It
+  is not auto-recreated — an orphan whose parent is gone can't be confirmed as a
+  gluetun dependent (Tenet 1).
 
 ### Changed (behavior)
 - **Configuration is now validated; bad config is fatal (exit non-zero) instead

@@ -21,6 +21,7 @@ from .dependents import (
     discover_dependents,
     get_dependents,
     interface_check,
+    is_container_id,
     parse_csv_names,
     remediation_action,
 )
@@ -75,6 +76,8 @@ class Monitor:
         self._known_dependents: set[str] = set()
         # Dedup so a missing explicitly-listed dependent warns once, not per loop.
         self._warned_missing: set[str] = set()
+        # Dedup for the dangling-orphan warning (see _warn_dangling_orphans).
+        self._warned_orphans: set[str] = set()
 
     # ----- gluetun root test (nodes 2-3) -----
 
@@ -327,8 +330,50 @@ class Monitor:
         excluded = parse_csv_names(self.config.exclude_containers)
         if excluded:
             self.log.info(f"Excluded from management (EXCLUDE_CONTAINERS): {','.join(excluded)}")
+        self._warn_dangling_orphans()
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))
+
+    def _warn_dangling_orphans(self) -> None:
+        """Surface a running container stranded on a *dead* netns parent that we
+        are not managing — most likely a gluetun dependent that was recreate-
+        stranded before the monitor started (its NetworkMode still points at
+        gluetun's old, now-gone id, so current-id discovery can't see it).
+
+        We *warn and suggest* DEPENDENT_CONTAINERS rather than recreate it: an
+        orphan whose parent is gone can't be confidently attributed to *this*
+        gluetun (it might belong to some other netns owner), and acting on that
+        guess could re-home or churn the wrong container (Tenet 1 — first, do no
+        harm). Names already listed or excluded are skipped (we either manage them
+        or were told not to touch them).
+        """
+        gluetun = self.config.gluetun_container
+        listed = (
+            set()
+            if self.config.dependent_containers == "auto"
+            else set(parse_csv_names(self.config.dependent_containers))
+        )
+        skip = listed | set(parse_csv_names(self.config.exclude_containers)) | {gluetun}
+        for cid in self.client.list_running_ids():
+            info = self.client.inspect(cid)
+            if info is None or info.name in skip:
+                continue
+            nm = info.network_mode
+            if not nm.startswith("container:"):
+                continue
+            target = nm.split(":", 1)[1]
+            if not is_container_id(target):
+                continue  # name-form target resolves normally; not a dangling id
+            if self.client.inspect(target) is not None:
+                continue  # the netns parent still exists — not stranded
+            if info.name not in self._warned_orphans:
+                self.log.warn(
+                    f"Container '{info.name}' is running but its network parent "
+                    f"({target[:12]}) no longer exists; if it depends on gluetun, add it "
+                    f"to DEPENDENT_CONTAINERS so it can be healed (not auto-recreated — "
+                    f"its parent can't be confirmed as gluetun)"
+                )
+                self._warned_orphans.add(info.name)
 
     def run(self) -> None:
         """Run forever: loop run_once + sleep CHECK_INTERVAL."""

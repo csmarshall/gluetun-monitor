@@ -74,6 +74,12 @@ must therefore be evaluated **per dependent**, not as a single global flag.
      > "catches a strand that predates the monitor's own startup" claim holds only
      > for *discovered/known/explicitly-listed* dependents — a recreate-strand
      > pre-dating startup needs an explicit `DEPENDENT_CONTAINERS` (see README).
+     > To partly recover the original intent, v2 logs a **startup WARN** for any
+     > running container stranded on a *dead* netns parent that it isn't managing,
+     > pointing the operator at `DEPENDENT_CONTAINERS` — but it does **not**
+     > auto-recreate such an orphan: with the parent gone it can't be confirmed as
+     > *this* gluetun's dependent, and acting on that guess could churn the wrong
+     > container (Tenet 1).
      >
      > What v2 *does* keep across cycles is a **remembered-dependent set**: the
      > union of everything discovered (or listed) so far, pruned to containers

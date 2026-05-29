@@ -312,7 +312,11 @@ shell can't be exec-probed and fall back to the inspect-based signals.
 > *current* id/name) no longer recognizes it. A running monitor remembers
 > dependents across cycles and handles this automatically. If you start the
 > monitor *after* such a strand already exists, name the dependents explicitly
-> via `DEPENDENT_CONTAINERS` so they're tracked from the first loop.
+> via `DEPENDENT_CONTAINERS` so they're tracked from the first loop. At startup
+> the monitor logs a **WARN** naming any running container stranded on a
+> now-dead netns parent, so you know which ones to add — it won't auto-recreate
+> them, since an orphan whose parent is gone can't be confirmed as *this*
+> gluetun's dependent (first, do no harm).
 
 ## What it will and won't do (and why your data is safe)
 
