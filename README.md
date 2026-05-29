@@ -75,6 +75,38 @@ The full per-loop state machine (22 nodes) is in
 [ADR-0006](docs/adr/0006-per-dependent-viability-testing.md); the
 restart-vs-recreate decision is [ADR-0004](docs/adr/0004-dependent-aware-health.md).
 
+## Upgrading from v1 (v1 is end-of-life)
+
+**v1 (the original bash implementation, image tag `:1`) is end-of-life.** v2 is
+the supported line — please move to it. The upgrade is a **drop-in config
+change**: v2 reads the **same env vars** (same names and defaults), the same
+`/config/sites.conf` and `/logs` paths, and needs the **same socket-proxy
+permissions** (`CONTAINERS` / `POST` / `EXEC`). In the common case you change
+only the image tag and it keeps working — we validate that the v1 env surface
+boots cleanly against a socket proxy as part of testing.
+
+**Image tags:**
+- **`:2`** — recommended for production: you get every v2.x patch and never a
+  surprise future major.
+- **`:latest`** — always the newest release (note: it *will* eventually roll to a
+  future v3 major).
+- **`:1`** — frozen v1, kept only as a **rollback anchor**; unsupported.
+
+**Two behavior changes to know about** (the config interface is compatible, but
+v2 does more):
+1. **It now heals dependents by default** (the #20 fix): a stranded dependent is
+   restarted (same gluetun id) or **recreated** (id changed — volumes preserved;
+   see [data safety](#what-it-will-and-wont-do-and-why-your-data-is-safe)). To
+   stay close to v1's behavior, set `AUTO_RECREATE=0` (alert instead of recreate)
+   and/or `DEPENDENT_VIABILITY=0` (interface/strand check only, no L7 probing).
+2. **Config is validated; bad config is now fatal.** v2 refuses to start on a
+   few things v1 tolerated silently — an empty `sites.conf`, a malformed env
+   value, or an explicit `DEPENDENT_CONTAINERS` naming a container that doesn't
+   exist. If startup fails after the upgrade, the error message says exactly what
+   to fix (see [Configuration is validated](#configuration-is-validated--sane-defaults-but-bad-config-is-fatal)).
+
+**Rollback** is one step: repin the image to `:1`.
+
 ## Quick Start
 
 ### 1. Pull the image

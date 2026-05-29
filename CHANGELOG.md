@@ -61,9 +61,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value is fatal. (`DEPENDENT_CONTAINERS=auto` discovering zero is not an error.)
 
 ### Migration
-- Pull `:2` / `2.0.0`. Existing env / `sites.conf` / compose work unchanged. To
-  roll back, repin the v1.x image (`:1` / `1.1.1`). The bash implementation
-  remains in the repo as the differential oracle and rollback anchor.
+- **v1 (the bash implementation, image `:1`) is end-of-life; move to v2.** The
+  upgrade is a drop-in config change: same env vars/defaults, same
+  `sites.conf`/`logs` paths, same socket-proxy permissions
+  (`CONTAINERS`/`POST`/`EXEC`). In the common case you change only the image tag.
+- Recommended tag for production is **`:2`** (all v2.x patches, no surprise
+  major); `:latest` floats; `:1` stays as the rollback anchor (one-step rollback:
+  repin `:1`).
+- Two behavior changes to expect: (1) v2 **heals dependents by default**
+  (restart/recreate, volumes preserved) — set `AUTO_RECREATE=0` and/or
+  `DEPENDENT_VIABILITY=0` to stay conservative; (2) **bad config is now fatal** —
+  an empty `sites.conf`, a malformed env value, or an explicit
+  `DEPENDENT_CONTAINERS` naming a missing container will refuse to start with a
+  clear error (v1 tolerated these silently).
 
 ## [1.1.1] - 2026-05-16
 
