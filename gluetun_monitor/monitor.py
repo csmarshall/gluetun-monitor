@@ -266,6 +266,14 @@ class Monitor:
                 )
 
         for dep, reason in to_remediate:
+            if self.config.dry_run:
+                # Observe-only: report the decision + the action we'd take, but
+                # don't mutate. Counters are left intact (we didn't fix anything),
+                # so persistent intent keeps surfacing each loop.
+                info = self.client.inspect(dep)
+                action = remediation_action(info, gluetun_id).name if info else "UNKNOWN"
+                self.log.warn(f"[DRY-RUN] would remediate {dep}: {reason} (action={action})")
+                continue
             self.log.warn(f"Remediating dependent {dep}: {reason}")
             if remediate_dependent(
                 self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
@@ -298,6 +306,15 @@ class Monitor:
 
         # Gluetun breached threshold: restart + re-verify before touching dependents.
         self.log.warn("Health check failed, initiating recovery...")
+        if self.config.dry_run:
+            # Observe-only: don't restart gluetun (can't, without mutating). Log
+            # the intent and still probe dependents so their decisions are visible.
+            self.log.warn(
+                "[DRY-RUN] would restart gluetun and re-verify before touching "
+                "dependents; skipping (observe-only)"
+            )
+            self.run_dependent_phase(gluetun.id, sites)
+            return
         if not restart_gluetun(self.client, self.config, self.log, sleep=self._sleep):
             self.log.error("Recovery failed - manual intervention may be required")
             return

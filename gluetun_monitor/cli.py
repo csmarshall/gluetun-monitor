@@ -113,6 +113,10 @@ def _announce_banner(config: Config, logger: Logger) -> None:
         f"AUTO_RECREATE={int(config.auto_recreate)}"
     )
     logger.info(f"Monitoring container: {config.gluetun_container}")
+    if config.dry_run:
+        logger.warn(
+            "DRY_RUN enabled: observe-only — logs intended actions, never restarts/recreates"
+        )
 
 
 def main() -> int:

@@ -63,6 +63,8 @@ services:
       # - DEPENDENT_VIABILITY=1
       # Optional per-dispatch jitter (ms) to spread the probe burst; 0 = off (cap already bounds it)
       # - MAX_JITTER_MS=0
+      # Observe-only: detect + log intended actions but never restart/recreate (soak-testing)
+      # - DRY_RUN=0
       # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
       # - AUTO_RECREATE=1
       # Seconds to wait for gluetun DNS to stabilize after a restart

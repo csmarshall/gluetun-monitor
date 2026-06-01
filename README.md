@@ -178,6 +178,7 @@ docker compose up -d
 | `MAX_PARALLEL_CHECKS` | `6` | Cap on concurrent `docker exec` probes across dependents per loop |
 | `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
 | `MAX_JITTER_MS` | `0` | Optional per-dispatch jitter (ms) to spread the dependent probe burst. `0` = off (the concurrency cap already bounds it) |
+| `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |

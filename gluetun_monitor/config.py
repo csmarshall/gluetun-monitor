@@ -94,6 +94,11 @@ class Config:
     # Default 0 = off: the MAX_PARALLEL_CHECKS cap already bounds the burst, so
     # jitter is opt-in for anyone who wants to spread load further (ADR-0006).
     max_jitter_ms: int = 0
+    # Observe-only: run all detection/probing (read-only) but take NO mutating
+    # action — log "[DRY-RUN] would ..." instead of restarting/recreating. Lets a
+    # v2 instance soak-test against a real stack alongside an active monitor
+    # without two actors conflicting. Off by default.
+    dry_run: bool = False
 
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
@@ -138,5 +143,6 @@ class Config:
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
+            dry_run=_env_bool("DRY_RUN", False, errors),
             errors=tuple(errors),
         )
