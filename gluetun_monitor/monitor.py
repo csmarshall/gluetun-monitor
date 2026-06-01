@@ -187,7 +187,14 @@ class Monitor:
             return DependentProbe(dep, status, True, None, "no test URLs")
         url = self._rng.choice(pool)
         result = probe_site(self.client, dep, url, self.config.timeout)
-        return DependentProbe(dep, status, True, result.ok, f"{url}: {result.reason}")
+        # Viability fails ONLY on a DNS resolution failure. Because dependents
+        # share gluetun's (already-verified) netns, a non-DNS hiccup — a 4xx/5xx,
+        # a flaky site refusing the connection, a TLS quirk — is the remote's
+        # business, not a dependent fault (the strand case is caught upstream by
+        # the interface check). So any HTTP response *or* a resolved-but-unreached
+        # site counts as viable; only "couldn't resolve the name" does not.
+        viable = not result.dns_failed
+        return DependentProbe(dep, status, True, viable, f"{url}: {result.reason}")
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the

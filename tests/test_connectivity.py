@@ -64,23 +64,62 @@ def test_site_pass_on_exit_0() -> None:
 
 
 @pytest.mark.parametrize("code", [6, 8])
-def test_site_pass_on_responded_error_codes(code: int) -> None:
-    """A 403/5xx (codes 6/8) is still a pass: the site answered, so egress works
-    — the core "a broken tunnel is not a sad website" distinction (Tenet 2)."""
+def test_site_pass_on_responded_error_codes_gnu(code: int) -> None:
+    """GNU wget: a 403 with exit 6/8 is a pass — the site answered, so egress
+    works (Tenet 3, "a broken tunnel is not a sad website")."""
     fake = _client_returning(code, "  HTTP/1.1 403 Forbidden\n")
     result = probe_site(fake, "gluetun", "https://example.com", 10)
     assert result.ok is True
-    assert "VPN working" in result.reason
+    assert result.http_code == "403"
+
+
+def test_site_pass_on_busybox_404_exit_1() -> None:
+    """REGRESSION (dogfood): busybox wget returns exit 1 for an HTTP 404, but the
+    site DID respond (DNS+connect+egress worked), so it must be a PASS. The old
+    exit-code-only map wrongly failed this on every busybox-wget dependent."""
+    output = "  HTTP/1.1 404 Not Found\nwget: server returned error: HTTP/1.1 404 Not Found\n"
+    fake = _client_returning(1, output)
+    result = probe_site(fake, "prowlarr", "https://dognzb.cr", 10)
+    assert result.ok is True
+    assert result.http_code == "404"
 
 
 @pytest.mark.parametrize("code", [1, 4, 5, 7])
-def test_site_fail_on_connectivity_codes(code: int) -> None:
-    """DNS/connection/SSL/protocol failures are real failures (the tunnel path is
-    broken), reported with the decoded reason."""
+def test_site_fail_on_real_failure_no_http(code: int) -> None:
+    """With NO HTTP response (genuine DNS/connect/SSL failure), it's a failure —
+    falls back to the decoded exit code when there's no diagnostic line."""
     fake = _client_returning(code, "")
     result = probe_site(fake, "gluetun", "https://example.com", 10)
     assert result.ok is False
     assert result.reason == decode_wget_exit_code(code)
+
+
+def test_site_failure_reports_real_reason_not_generic() -> None:
+    """REGRESSION (dogfood): a real failure surfaces wget's actual diagnostic, not
+    a useless 'Generic error'. Here a DNS failure with exit 1."""
+    output = "Connecting to bad.example (bad.example)\nwget: bad address 'bad.example'\n"
+    fake = _client_returning(1, output)
+    result = probe_site(fake, "qbittorrent", "https://bad.example", 10)
+    assert result.ok is False
+    assert "bad address" in result.reason
+    assert result.reason != "Generic error"
+    assert result.dns_failed is True  # positively identified as a DNS failure
+
+
+def test_dns_failed_flag_distinguishes_dns_from_connect() -> None:
+    """dns_failed is the dependent-viability signal: True for a resolution failure,
+    False for a connect/timeout failure (DNS resolved, the remote just didn't
+    answer) — the latter is not a per-container fault in a shared netns."""
+    dns = _client_returning(1, "wget: bad address 'x.example'\n")
+    assert probe_site(dns, "dep", "https://x.example", 10).dns_failed is True
+
+    refused = _client_returning(1, "wget: can't connect to remote host: Connection refused\n")
+    r = probe_site(refused, "dep", "https://x.example", 10)
+    assert r.ok is False          # gluetun root test would count this as a site fail
+    assert r.dns_failed is False  # but dependent viability would NOT (DNS resolved)
+
+    responded = _client_returning(1, "  HTTP/1.1 404 Not Found\n")
+    assert probe_site(responded, "dep", "https://x.example", 10).dns_failed is False
 
 
 def test_site_parses_last_http_code() -> None:

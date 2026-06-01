@@ -167,6 +167,20 @@ host CPU (one `docker exec` fork per job) and the shared tunnel.
 > simple beats clever). The viability layer itself is opt-out via
 > `DEPENDENT_VIABILITY` (default on); the interface check is never optional.
 
+> **Implementation note (v2.0.0) — what "viability failure" means.** A live
+> dependent (passed the interface check) **shares gluetun's netns**, so its L3/L4
+> egress *is* gluetun's — already proven by the root test — and the orphaned/
+> stranded case is caught upstream by the interface check (loopback-only). The
+> only fault left that is genuinely **per-container is DNS** (its own
+> `resolv.conf`). So viability **fails only on a positively-identified DNS
+> resolution failure**; any HTTP response (incl. 4xx/5xx) *or* a
+> resolved-but-unreached site (connection refused / timeout / TLS) counts as
+> viable — those are the remote's business, not a dependent fault, and treating
+> them as failures caused spurious restarts (a busybox-wget dependent returns
+> exit 1 for a harmless 404; found in dogfooding). The strict "did it respond"
+> signal is retained separately for gluetun's *root* test (tunnel-down detection).
+> A fully portable injected probe is the long-term improvement (see ROADMAP).
+
 **Degradation:** 0 live dependents → gluetun only (today's behavior). **No
 resolvable names** (all IP-literals) → `WARN` + dependents tested against one
 shuffled IP per loop (connectivity only; **dependent DNS is never validated** in

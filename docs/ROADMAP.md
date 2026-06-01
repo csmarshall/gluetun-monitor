@@ -22,6 +22,31 @@ the **FAILED state** (ADR-0006) and optionally on recovery/endpoint-change.
   machine-readable health surface (no HTTP endpoint, no container `HEALTHCHECK`);
   exposing one could be a follow-up to this item.
 
+## Portable injected viability probe
+Today the per-dependent viability probe execs the dependent's **own** `wget`,
+whose behavior varies (gluetun ships GNU wget; linuxserver/Alpine dependents ship
+busybox wget with a different exit-code convention; distroless ships none). v2
+works around this by keying on "did DNS resolve / did we get any HTTP response"
+rather than wget's exit code, but it still depends on the container having a
+usable `wget`.
+
+A cleaner, fully portable approach: ship a tiny **static, CGO-free binary**
+(`gm-probe`) inside the monitor image, `docker cp` it into each dependent (to an
+ephemeral path) and `docker exec` it — a uniform DNS-resolve (+ optional TCP
+connect) check with an unambiguous exit code, identical on every container.
+
+- **Wins:** identical behavior everywhere; we define "success" exactly (no wget
+  quirks); extends viability to **distroless/scratch** dependents (a static
+  binary execs without a shell).
+- **To resolve first:** (1) does the socket proxy allow the archive endpoints
+  (`PUT /containers/{id}/archive`) under `CONTAINERS`, or is it a new permission?
+  (Tenet 4 — least privilege.) (2) multi-arch binaries (amd64/arm64/arm) selected
+  per dependent; (3) re-inject after a dependent is recreated; (4) it writes into
+  the container's ephemeral layer — benign but a deliberate mutation.
+- **Why backlog:** sizable (a Go sub-project + build/release pipeline) and gated
+  on the proxy-permission question. The v2 HTTP-response/DNS-only classification
+  makes the wget-based probe correct for the common case in the meantime.
+
 ## Socket-proxy hardening (verify first)
 Today's reference proxy ships `CONTAINERS=1 + POST=1 + EXEC=1`. tecnativa provides
 granular carve-outs (`ALLOW_RESTARTS`, `EXEC`) intended to permit those ops

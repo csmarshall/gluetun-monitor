@@ -52,6 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is not auto-recreated — an orphan whose parent is gone can't be confirmed as a
   gluetun dependent (Tenet 1).
 
+### Fixed
+- **Per-dependent viability no longer false-fails on busybox-wget dependents.**
+  The probe classified results by GNU wget's exit codes (0/6/8 = responded), but
+  dependent containers commonly run **busybox wget** (linuxserver/Alpine images),
+  which returns exit 1 for any HTTP error response — so a harmless 404/403 from a
+  dependent was misread as a failure (and could trigger a spurious restart).
+  Classification is now HTTP-response-first and, for dependents, keys on **DNS
+  resolution** only: any HTTP response or a resolved-but-unreached site counts as
+  viable; only a real DNS-resolution failure does not (dependents share gluetun's
+  netns, so DNS is the sole per-container fault — strands are caught by the
+  interface check). Failures now log wget's actual reason instead of a bare
+  "Generic error".
+
 ### Changed (behavior)
 - **Configuration is now validated; bad config is fatal (exit non-zero) instead
   of guessed around.** A malformed env value (bad int/bool/`LOG_LEVEL`), no

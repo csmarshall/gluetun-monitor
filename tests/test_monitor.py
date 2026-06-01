@@ -168,7 +168,7 @@ def test_viability_failure_accumulates_to_threshold(sites_file: str) -> None:
             return ExecResult(0, "eth0\nlo\n")  # always LIVE
         if name == "gluetun":
             return ExecResult(0, "")  # gluetun root test passes
-        return ExecResult(4, "")  # dependent's viability wget fails (DNS/connect)
+        return ExecResult(1, "wget: bad address 'site'")  # dependent DNS failure
 
     fake.on_exec = handler
     mon = _monitor(fake, sites_file, dependent_container_failures=2)

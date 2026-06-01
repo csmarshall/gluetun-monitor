@@ -114,7 +114,7 @@ def test_dry_run_still_counts_failures(tmp_path: Path) -> None:
             return ExecResult(0, "eth0\nlo\n")
         if name == "gluetun":
             return ExecResult(0, "")  # gluetun root test passes
-        return ExecResult(4, "")  # dependent viability fails
+        return ExecResult(1, "wget: bad address 'site'")  # dependent DNS failure
 
     fake.on_exec = handler
     mon, _ = _mon(fake, _sites(tmp_path), dependent_container_failures=2)
