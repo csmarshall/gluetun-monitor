@@ -55,25 +55,17 @@ def test_probe_unknown_running_is_not_remediated() -> None:
     assert probe.viability_ok is None  # not tested
 
 
-def test_probe_ip_only_fallback_uses_ip_pool() -> None:
-    """With no resolvable names, the viability probe falls back to an IP literal
-    (connectivity-only) instead of skipping — ADR-0006 degradation."""
+def test_probe_ip_only_pool_is_not_dns_validated() -> None:
+    """With only IP-literal sites there's nothing to resolve, so viability is
+    'not tested' (None) rather than a bogus DNS pass — the phase already WARNs
+    that dependent DNS can't be validated in an IP-only config (ADR-0006)."""
     fake = FakeDockerClient()
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
-
-    seen: list[str] = []
-
-    def handler(name: str, cmd: list[str]) -> ExecResult:
-        if cmd[:2] == ["ls", "/sys/class/net"]:
-            return ExecResult(0, "eth0\nlo\n")
-        seen.append(cmd[-1])  # the wget URL
-        return ExecResult(0, "")
-
-    fake.on_exec = handler
+    fake.on_exec = lambda name, cmd: ExecResult(0, "eth0\nlo\n")  # LIVE; nothing else probed
     mon, _ = _mon(fake, "/dev/null")
     probe = mon._probe_dependent("dep", GLUETUN_ID, [], ["https://1.1.1.1"])
-    assert probe.viability_ok is True
-    assert seen == ["https://1.1.1.1"]
+    assert probe.viability_ok is None  # IP literal -> no DNS to validate
+    assert "IP literal" in probe.reason
 
 
 # ----- run_dependent_phase IP-only WARN -----

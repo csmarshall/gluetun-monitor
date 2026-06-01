@@ -179,7 +179,18 @@ host CPU (one `docker exec` fork per job) and the shared tunnel.
 > them as failures caused spurious restarts (a busybox-wget dependent returns
 > exit 1 for a harmless 404; found in dogfooding). The strict "did it respond"
 > signal is retained separately for gluetun's *root* test (tunnel-down detection).
-> A fully portable injected probe is the long-term improvement (see ROADMAP).
+>
+> DNS is validated with a **cascade of getaddrinfo-faithful tools** (`gluetun_monitor/dns_check.py`):
+> **wget → getent → ping**, stopping at the first one present in the container.
+> These resolve the way the application does (libc `getaddrinfo`/nsswitch);
+> `nslookup`/`dig`/`host` are deliberately **excluded** — they query DNS servers
+> directly, bypassing nsswitch/`hosts`/libc, so they can report "resolves" when
+> the app's `getaddrinfo` does not. The check has **three** outcomes: OK, BROKEN
+> (a tool ran and resolution failed → the fault we act on), and **UNVALIDATED**
+> (no usable tool in the container — e.g. distroless): we don't guess, we log it
+> once and fall back to the interface check. A fully portable **injected** static
+> probe is the long-term improvement that also covers the UNVALIDATED case (see
+> ROADMAP).
 
 **Degradation:** 0 live dependents → gluetun only (today's behavior). **No
 resolvable names** (all IP-literals) → `WARN` + dependents tested against one

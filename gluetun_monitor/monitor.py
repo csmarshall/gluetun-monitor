@@ -25,9 +25,10 @@ from .dependents import (
     parse_csv_names,
     remediation_action,
 )
+from .dns_check import DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
 from .recovery import remediate_dependent, restart_gluetun
-from .sites import ip_pool, load_sites, resolvable_pool
+from .sites import hostname_of, ip_pool, is_ip_literal, load_sites, resolvable_pool
 from .state import Counter, InterfaceStatus, RemediationAction
 
 if TYPE_CHECKING:
@@ -45,8 +46,9 @@ class DependentProbe:
     name: str
     status: InterfaceStatus
     running: bool
-    viability_ok: bool | None  # None = not tested (no pool / not live)
+    viability_ok: bool | None  # None = not tested (no pool / not live / unvalidatable)
     reason: str
+    dns_unvalidated: bool = False  # True = no usable DNS tool in the container
 
 
 class Monitor:
@@ -78,6 +80,8 @@ class Monitor:
         self._warned_missing: set[str] = set()
         # Dedup for the dangling-orphan warning (see _warn_dangling_orphans).
         self._warned_orphans: set[str] = set()
+        # Dedup for "can't validate DNS (no usable tool)" — re-armed if it later validates.
+        self._warned_dns_unvalidated: set[str] = set()
 
     # ----- gluetun root test (nodes 2-3) -----
 
@@ -186,15 +190,23 @@ class Monitor:
         if not pool:
             return DependentProbe(dep, status, True, None, "no test URLs")
         url = self._rng.choice(pool)
-        result = probe_site(self.client, dep, url, self.config.timeout)
-        # Viability fails ONLY on a DNS resolution failure. Because dependents
-        # share gluetun's (already-verified) netns, a non-DNS hiccup — a 4xx/5xx,
-        # a flaky site refusing the connection, a TLS quirk — is the remote's
-        # business, not a dependent fault (the strand case is caught upstream by
-        # the interface check). So any HTTP response *or* a resolved-but-unreached
-        # site counts as viable; only "couldn't resolve the name" does not.
-        viable = not result.dns_failed
-        return DependentProbe(dep, status, True, viable, f"{url}: {result.reason}")
+        host = hostname_of(url)
+        if is_ip_literal(host):
+            # An IP literal has nothing to resolve; the phase already WARNed that
+            # dependent DNS can't be validated in an IP-only config.
+            return DependentProbe(dep, status, True, None, f"{url}: IP literal (DNS not validated)")
+
+        # Validate the dependent's OWN DNS resolution (the only per-container
+        # fault — see dns_check). Three outcomes: OK -> viable; BROKEN -> the
+        # fault we act on; UNVALIDATED -> can't tell (no tool), don't guess.
+        dns = validate_dns(self.client, dep, url, host, self.config.timeout)
+        if dns.status is DnsStatus.UNVALIDATED:
+            return DependentProbe(
+                dep, status, True, None, f"{host}: {dns.reason}", dns_unvalidated=True
+            )
+        viable = dns.status is DnsStatus.OK
+        detail = f"{host}: DNS ok ({dns.tool})" if viable else f"{host}: DNS FAILED ({dns.reason})"
+        return DependentProbe(dep, status, True, viable, detail)
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
@@ -252,7 +264,17 @@ class Monitor:
                     to_remediate.append((probe.name, "not running (interface check unavailable)"))
                 continue
             if probe.viability_ok is None:
-                continue  # nothing to test
+                if probe.dns_unvalidated and probe.name not in self._warned_dns_unvalidated:
+                    # Can't run any DNS tool in this container — say so loudly once,
+                    # and rely on the interface check (don't guess; Tenet 1).
+                    self.log.warn(
+                        f"Cannot validate DNS for {probe.name} ({probe.reason}); "
+                        f"relying on interface check only"
+                    )
+                    self._warned_dns_unvalidated.add(probe.name)
+                continue  # not tested -> no counter change
+            # A validated result (ok or broken): re-arm the unvalidated warning.
+            self._warned_dns_unvalidated.discard(probe.name)
             if probe.viability_ok:
                 self.dependent_failures.reset(probe.name)
                 self.log.debug(f"Dependent {probe.name}: {probe.reason} [fails 0]")

@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   netns, so DNS is the sole per-container fault — strands are caught by the
   interface check). Failures now log wget's actual reason instead of a bare
   "Generic error".
+- **Portable DNS validation via a getaddrinfo cascade** (`wget → getent → ping`)
+  so the check survives a dependent lacking any one tool, and resolves the way
+  the application does (nslookup/dig are excluded — they bypass nsswitch/libc and
+  can lie). When a container has *no* usable resolver tool (e.g. distroless), DNS
+  is reported **UNVALIDATED** — logged once, falling back to the interface check,
+  rather than silently passing.
 
 ### Changed (behavior)
 - **Configuration is now validated; bad config is fatal (exit non-zero) instead
