@@ -261,6 +261,59 @@ def test_new_metrics_persist_round_trip(tmp_path: Path) -> None:
     assert "restart_effectiveness" in site and "failure_rate" in site
 
 
+def test_monitor_level_counters() -> None:
+    """Top-level (monitor-wide) counters: loops, restarts, remediations, advisories."""
+    s = SiteStatsStore(None)
+    for _ in range(3):
+        s.record_loop()
+    s.record_gluetun_restart()
+    s.record_gluetun_restart()
+    s.record_dependent_remediation()
+    s.record_advisory()
+    assert s.monitor.total_loops == 3
+    assert s.monitor.total_gluetun_restarts == 2
+    assert s.monitor.total_dependent_remediations == 1
+    assert s.monitor.total_advisories == 1
+    assert s.monitor.version  # stamped from the package version
+
+
+def test_monitor_runtime_accumulates_excluding_downtime() -> None:
+    """Runtime accrues between loops; the gap before the first loop of a process
+    doesn't count as runtime (the tick is set at start)."""
+    clock = _Clock(1000.0)
+    s = SiteStatsStore(None, clock=clock)
+    clock.t = 1005.0
+    s.record_loop()  # +5s
+    clock.t = 1008.0
+    s.record_loop()  # +3s
+    assert s.monitor.total_runtime_seconds == 8.0
+
+
+def test_monitor_stats_persist_and_first_started_is_stable(tmp_path: Path) -> None:
+    """Cumulative monitor counters survive a restart; first_started is set once,
+    last_started refreshes each process."""
+    path = str(tmp_path / "stats.json")
+    clock = _Clock(1000.0)
+    s1 = SiteStatsStore(path, clock=clock)
+    s1.record_loop()
+    s1.record_gluetun_restart()
+    assert s1.save() is True
+
+    clock.t = 5000.0  # "restart" later
+    s2 = SiteStatsStore(path, clock=clock)
+    assert s2.monitor.total_loops == 1  # carried over
+    assert s2.monitor.total_gluetun_restarts == 1
+    assert s2.monitor.first_started == 1000.0  # set once, preserved
+    assert s2.monitor.last_started == 5000.0  # this process
+
+    import json as _json
+    data = _json.loads((tmp_path / "stats.json").read_text())
+    assert "monitor" in data
+    s2.save()
+    data = _json.loads((tmp_path / "stats.json").read_text())
+    assert "current_uptime_seconds" in data["monitor"]
+
+
 def test_format_window() -> None:
     assert format_window(86400) == "1d"
     assert format_window(3600) == "1h"

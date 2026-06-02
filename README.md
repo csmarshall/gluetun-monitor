@@ -431,6 +431,11 @@ and first-seen / last-good / last-failure timestamps. It's written **every loop,
 missing/unwritable/corrupt file never blocks the monitor). A site removed from
 `sites.conf` is kept for `STATS_RETENTION_DAYS` (default 90) then pruned.
 
+The file also has a top-level **`monitor`** section with monitor-wide totals:
+version, first-/last-started, current uptime, **total loops**, **total runtime**
+(accumulated, excluding downtime), and cumulative **gluetun restarts**,
+**dependent remediations**, and **advisories** raised.
+
 When one site dominates the recent restarts, the monitor logs a **flaky-site
 advisory** (once, not per loop):
 

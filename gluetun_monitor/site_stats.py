@@ -26,6 +26,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from . import __version__
+
 Clock = Callable[[], float]
 
 
@@ -108,6 +110,20 @@ class SiteStat:
 
 
 @dataclass
+class MonitorStats:
+    """Top-level (monitor-wide) counters, persisted across restarts."""
+
+    version: str = ""
+    first_started: float = 0.0  # first ever start (persisted once)
+    last_started: float = 0.0  # this process's start
+    total_loops: int = 0  # check cycles run (cumulative)
+    total_runtime_seconds: float = 0.0  # accumulated running time (excludes downtime)
+    total_gluetun_restarts: int = 0
+    total_dependent_remediations: int = 0
+    total_advisories: int = 0
+
+
+@dataclass
 class Advisory:
     """A flaky-site finding worth surfacing to the operator."""
 
@@ -134,7 +150,14 @@ class SiteStatsStore:
         self._latency_max = latency_ring_max
         self.sites: dict[str, SiteStat] = {}
         self.recent_restarts: list[dict[str, object]] = []  # {"ts": float, "site": str}
+        self.monitor = MonitorStats()
         self._load()
+        # Stamp this process's start; first_started persists from the first ever run.
+        now = self._clock()
+        self.monitor.last_started = now
+        self.monitor.first_started = self.monitor.first_started or now
+        self.monitor.version = __version__
+        self._last_tick = now  # for runtime accumulation
 
     def _stat(self, site: str) -> SiteStat:
         st = self.sites.get(site)
@@ -177,6 +200,26 @@ class SiteStatsStore:
         self.recent_restarts.append({"ts": now, "site": site})
         if len(self.recent_restarts) > self._recent_max:
             del self.recent_restarts[: -self._recent_max]
+
+    def record_loop(self) -> None:
+        """Mark one check cycle: accumulate running time + bump the loop count.
+        Downtime between runs isn't counted (the tick resets on restart)."""
+        now = self._clock()
+        self.monitor.total_runtime_seconds += max(0.0, now - self._last_tick)
+        self._last_tick = now
+        self.monitor.total_loops += 1
+
+    def record_gluetun_restart(self) -> None:
+        """One actual gluetun restart (monitor-wide count)."""
+        self.monitor.total_gluetun_restarts += 1
+
+    def record_dependent_remediation(self) -> None:
+        """One actual dependent restart/recreate (monitor-wide count)."""
+        self.monitor.total_dependent_remediations += 1
+
+    def record_advisory(self) -> None:
+        """One flaky-site advisory raised (monitor-wide count)."""
+        self.monitor.total_advisories += 1
 
     def record_restart_outcome(self, site: str, cleared: bool) -> None:
         """Record whether ``site`` recovered after the restart it triggered (the
@@ -252,10 +295,20 @@ class SiteStatsStore:
             self.recent_restarts = [
                 r for r in recent if isinstance(r, dict) and "ts" in r and "site" in r
             ]
+            m = data.get("monitor") or {}
+            self.monitor = MonitorStats(
+                first_started=m.get("first_started", 0.0),
+                total_loops=m.get("total_loops", 0),
+                total_runtime_seconds=m.get("total_runtime_seconds", 0.0),
+                total_gluetun_restarts=m.get("total_gluetun_restarts", 0),
+                total_dependent_remediations=m.get("total_dependent_remediations", 0),
+                total_advisories=m.get("total_advisories", 0),
+            )
         except (OSError, ValueError, TypeError):
             # Corrupt/unreadable stats are non-fatal — start fresh in memory.
             self.sites = {}
             self.recent_restarts = []
+            self.monitor = MonitorStats()
 
     def save(self) -> bool:
         """Write stats to disk crash- and power-loss-safely. Returns False (and is
@@ -280,9 +333,13 @@ class SiteStatsStore:
             raw["restart_effectiveness"] = round(st.restart_effectiveness, 4)
             raw["latency_ms"] = st.latency_summary()
             sites_out[url] = raw
+        now = self._clock()
+        monitor_out = asdict(self.monitor)
+        monitor_out["current_uptime_seconds"] = round(max(0.0, now - self.monitor.last_started))
         payload = {
             "version": 1,
-            "updated": self._clock(),
+            "updated": now,
+            "monitor": monitor_out,
             "sites": sites_out,
             "recent_restarts": self.recent_restarts,
         }

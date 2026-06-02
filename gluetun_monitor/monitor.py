@@ -365,6 +365,7 @@ class Monitor:
                 self.log.warn(f"[DRY-RUN] would remediate {dep}: {reason} (action={action})")
                 continue
             self.log.warn(f"Remediating dependent {dep}: {reason}")
+            self.stats.record_dependent_remediation()
             if remediate_dependent(
                 self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
             ):
@@ -375,6 +376,7 @@ class Monitor:
     def run_once(self) -> None:
         """Execute one monitoring cycle (no inter-loop sleep)."""
         self.log.check("Start")
+        self.stats.record_loop()  # monitor-wide: loop count + accumulated runtime
 
         gluetun = self.client.inspect(self.config.gluetun_container)
         if gluetun is None or not gluetun.running:
@@ -415,6 +417,7 @@ class Monitor:
             )
             self.run_dependent_phase(gluetun.id, sites)
             return
+        self.stats.record_gluetun_restart()  # monitor-wide count of actual restarts
         if not restart_gluetun(self.client, self.config, self.log, sleep=self._sleep):
             self.log.error("Recovery failed - manual intervention may be required")
             return
@@ -450,6 +453,7 @@ class Monitor:
         if adv.site == self._advised_site:
             return  # already warned about this site this episode
         self._advised_site = adv.site
+        self.stats.record_advisory()
         self.log.warn(
             f"FLAKY SITE: {adv.site} caused {adv.site_restarts} of the last "
             f"{adv.total_restarts} gluetun restarts over the last "

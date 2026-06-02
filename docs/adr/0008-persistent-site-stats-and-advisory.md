@@ -51,9 +51,12 @@ fragile.
    triggered and **restart-effectiveness** (fraction that actually cleared the
    site on re-verify — distinguishes a site fault from a VPN fault), and
    first-seen / last-failure / last-success timestamps. Plus a bounded
-   **recent-restarts** ring buffer for the windowed advisory. The saved JSON also
-   includes the computed metrics (rates, percentiles) so it reads at a glance.
-   Corrupt/missing file → start fresh, never crash.
+   **recent-restarts** ring buffer for the windowed advisory. A top-level
+   **`monitor`** section carries monitor-wide totals (version, first/last start,
+   uptime, total loops, accumulated runtime, cumulative gluetun restarts /
+   dependent remediations / advisories). The saved JSON also includes the computed
+   metrics (rates, percentiles) so it reads at a glance. Corrupt/missing file →
+   start fresh, never crash.
 3. **Emit a flaky-site advisory.** When one site accounts for a dominant share of
    the gluetun restarts within a recent window — default: ≥ `ADVISORY_MIN_RESTARTS`
    restarts in `ADVISORY_WINDOW`, of which ≥ `ADVISORY_DOMINANCE` fraction are that

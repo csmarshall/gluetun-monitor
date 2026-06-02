@@ -64,7 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failure streak**, a **failure-reason breakdown** (dns/tls/timeout/connection/
   http-error/other), **response-latency** of successful polls (avg/min/max +
   **p50/p90/p99**), and **restart-effectiveness** (fraction of a site's restarts
-  that actually cleared it — a site-vs-VPN signal). The file is written
+  that actually cleared it — a site-vs-VPN signal). A top-level **`monitor`**
+  section records monitor-wide totals (version, uptime, total loops, accumulated
+  runtime, cumulative gluetun restarts / dependent remediations / advisories).
+  The file is written
   every loop, crash/power-loss-safely (temp file + fsync + atomic rename), and a
   site removed from `sites.conf` is pruned after `STATS_RETENTION_DAYS` (default
   90). Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, `ADVISORY_DOMINANCE`,
