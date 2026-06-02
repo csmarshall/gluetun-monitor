@@ -226,6 +226,12 @@ Test URLs come from two **unioned** sources (de-duplicated):
 Provide either, or both. At least one URL total is required or the monitor won't
 start (see above).
 
+Entries are sanity-checked: a URL with no host, or one that looks like a
+command-line flag (leading `-`, which could otherwise be parsed as an option by
+the in-container `wget`/`ping`), is **dropped with a startup warning** rather than
+probed. The probes also pass URLs/hosts after a `--` end-of-options separator, so
+a stray value can never be interpreted as a flag.
+
 #### `DOCKER_HOST`
 When unset, the Docker CLI connects via the local socket (`/var/run/docker.sock`). Set this to `tcp://<proxy-host>:2375` to connect through a [Docker socket proxy](#docker-socket-proxy) instead of mounting the socket directly. See the [Docker Socket Proxy](#docker-socket-proxy) section for setup details.
 

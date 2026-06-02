@@ -302,6 +302,9 @@ class SiteStatsStore:
                 r for r in recent if isinstance(r, dict) and "ts" in r and "site" in r
             ]
             m = data.get("monitor") or {}
+            # `version` and `last_started` are intentionally NOT reloaded: version
+            # is re-stamped from the running build (the persisted one is for human
+            # reading only), and last_started is this process's start, set live.
             self.monitor = MonitorStats(
                 first_started=m.get("first_started", 0.0),
                 total_loops=m.get("total_loops", 0),

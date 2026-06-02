@@ -306,9 +306,15 @@ class Monitor:
         self._warned_missing &= {name for name, exists in present.items() if not exists}
 
         self._known_dependents.update(name for name, exists in present.items() if exists)
-        self._known_dependents = {
-            d for d in self._known_dependents if self.client.inspect(d) is not None
-        }
+        # Prune the remembered set to containers that still exist. Reuse the
+        # existence we already learned for the current names; only inspect a
+        # remembered name we haven't already checked this loop (e.g. one stranded
+        # by a gluetun recreate, so current-id discovery no longer surfaces it).
+        existence = dict(present)
+        for d in self._known_dependents:
+            if d not in existence:
+                existence[d] = self.client.inspect(d) is not None
+        self._known_dependents = {d for d in self._known_dependents if existence.get(d, False)}
         excluded = set(parse_csv_names(self.config.exclude_containers))
         return sorted(self._known_dependents - excluded)
 

@@ -121,7 +121,7 @@ def remediation_action(dep_info: ContainerInfo, gluetun_id: str) -> RemediationA
     target = nm.split(":", 1)[1]
     if not target:
         return RemediationAction.TRY_RESTART
-    if _CONTAINER_ID_RE.match(target):
+    if is_container_id(target):
         if _ids_match(target, gluetun_id):
             return RemediationAction.RESTART
         return RemediationAction.RECREATE

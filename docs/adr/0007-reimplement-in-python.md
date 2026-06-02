@@ -41,11 +41,12 @@ tecnativa socket-proxy already exposes (`CONTAINERS`/`POST`/`EXEC`), and a thin
 wrapper over it is the injection point that makes the whole monitor unit-testable
 with a `FakeDockerClient` — **no live daemon required for the test suite**.
 
-The connectivity test keeps its ADR-0001 semantics exactly: still
-`exec` **inside gluetun's netns** running `wget --spider -S`, still the same
-exit-code → pass/fail map (`0/6/8` = pass). docker-py's `exec_run` returns the
-same exit code shell did, so Python only reorganizes **orchestration**, not the
-HTTP probe — which is where almost all of the regression surface would be.
+The connectivity test keeps its ADR-0001 semantics: still `exec` **inside
+gluetun's netns** running `wget --spider -S`, still "any HTTP response = up" (the
+GNU `0/6/8` exit-code map is retained only as a fallback when no HTTP status line
+is captured — see ADR-0006). docker-py's `exec_run` returns the same exit code
+shell did, so Python only reorganizes **orchestration**, not the HTTP probe —
+which is where almost all of the regression surface would be.
 
 **No-regressions strategy (the contract):**
 1. **Characterization-first.** Before porting behavior, pin v1.x's observable

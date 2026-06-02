@@ -29,7 +29,7 @@ from .site_stats import SiteStatsStore
 
 # Sort keys -> how to extract the sort value from a built site row (descending,
 # except "name" which is ascending alphabetical).
-_SORT_KEYS = ("p90", "p99", "avg", "max", "p50", "rate", "polls", "name")
+_SORT_KEYS = ("p90", "p99", "avg", "max", "p50", "rate", "polls", "eff", "name")
 
 
 def _fmt_ts(value: float | None) -> str:
@@ -85,6 +85,10 @@ def _sort_value(row: dict[str, Any], key: str) -> Any:
         return row["failure_rate"]
     if key == "polls":
         return row["polls"]
+    if key == "eff":
+        # None (no restarts) sorts last under reverse=True via -1.0 sentinel.
+        eff = row["restart_effectiveness"]
+        return eff if eff is not None else -1.0
     return row["latency_ms"][key]  # p50/p90/p99/avg/min/max
 
 

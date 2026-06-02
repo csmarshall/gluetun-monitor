@@ -119,6 +119,9 @@ def restart_gluetun(
         logger.error("Gluetun failed to become healthy after restart")
         return False
 
+    # Best-effort settle: a DNS timeout here logs but does not abort recovery
+    # (we proceed and let the post-restart re-verify be the authority), so the
+    # bool return is intentionally not consumed.
     wait_for_dns(client, config.gluetun_container, config.dns_wait_timeout, logger,
                  request_timeout=config.timeout, tries=config.wget_tries, sleep=sleep)
     new = get_endpoint_info(client, config.gluetun_container)

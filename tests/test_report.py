@@ -67,6 +67,14 @@ def test_table_sort_by_name() -> None:
     assert table.index("https://fast.com") < table.index("https://slow.com")
 
 
+def test_table_sort_by_eff_puts_na_last() -> None:
+    """--sort eff ranks by restart-effectiveness; sites with no restarts (n/a)
+    sort to the bottom rather than the top."""
+    table = format_table(build_report(_store_with_data()), sort="eff")
+    # slow.com has 100% effectiveness; fast.com has none (n/a) -> slow first.
+    assert table.index("https://slow.com") < table.index("https://fast.com")
+
+
 def test_table_empty_store() -> None:
     table = format_table(build_report(SiteStatsStore(None)))
     assert "no sites recorded yet" in table
