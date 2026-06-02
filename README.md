@@ -179,6 +179,10 @@ docker compose up -d
 | `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
 | `MAX_JITTER_MS` | `0` | Optional per-dispatch jitter (ms) to spread the dependent probe burst. `0` = off (the concurrency cap already bounds it) |
 | `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
+| `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
+| `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
+| `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
+| `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
@@ -399,6 +403,38 @@ owned by the daemon, not the container, so:
 - **`AUTO_RECREATE=0`** — never recreate; alert instead (restart-only recovery).
 - **`EXCLUDE_CONTAINERS=...`** — a denylist of containers to never touch.
 - **Socket proxy** (default) — cap the Docker API surface the monitor can use.
+
+## Site stats & flaky-site advisory
+
+A single flaky **test site** (one that intermittently times out or SSL-errors)
+can trip `FAIL_THRESHOLD` and trigger a gluetun restart — even though the tunnel
+is fine (your other sites pass). Restarting *can* fix a genuinely blocked
+endpoint, so the monitor still tries it; but to stop you chasing the wrong thing,
+it keeps a **persistent, rear-looking record** of how each site behaves and
+**tells you** which one is the troublemaker.
+
+It writes a human-readable JSON sidecar (`STATS_FILE`, default
+`/logs/site-stats.json`) with, per site: total polls, total failures (→ failure
+rate), failure **episodes** and the average episode length in polls (how long it
+typically stays down when it breaks), how many gluetun restarts it triggered, and
+last-good / last-failure timestamps. The file survives monitor restarts; it's
+best-effort (a missing/unwritable/corrupt file never blocks the monitor).
+
+When one site dominates the recent restarts, the monitor logs a **flaky-site
+advisory** (once, not per loop):
+
+```
+[WARN] FLAKY SITE: https://dognzb.cr caused 17 of the last 22 gluetun restarts
+over the last 24h — it may be flaky; consider reviewing or removing it from sites.conf
+```
+
+That's the signal to prune that site from `sites.conf` (which is re-read live, so
+no restart needed). Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
+`ADVISORY_DOMINANCE`. See [ADR-0008](docs/adr/0008-persistent-site-stats-and-advisory.md).
+
+> **By design, the monitor does not auto-suppress a flaky site** — it keeps
+> applying the cheap restart fix and escalates to you. (A future automatic
+> back-off is possible; it would be opt-in.)
 
 ## Docker Compose Example
 

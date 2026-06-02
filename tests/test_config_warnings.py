@@ -29,6 +29,13 @@ def test_invalid_bool_records_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("AUTO_RECREATE" in e for e in c.errors)
 
 
+def test_invalid_float_records_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-numeric ADVISORY_DOMINANCE is a fatal config error (not silently default)."""
+    monkeypatch.setenv("ADVISORY_DOMINANCE", "half")
+    c = Config.from_env()
+    assert any("ADVISORY_DOMINANCE" in e for e in c.errors)
+
+
 def test_invalid_log_level_records_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """An unknown LOG_LEVEL errors rather than silently defaulting to INFO."""
     monkeypatch.setenv("LOG_LEVEL", "verbose")

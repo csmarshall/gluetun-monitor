@@ -65,6 +65,12 @@ services:
       # - MAX_JITTER_MS=0
       # Observe-only: detect + log intended actions but never restart/recreate (soak-testing)
       # - DRY_RUN=0
+      # Persistent per-site stats sidecar (best-effort; survives restarts) + flaky-site advisory.
+      # The monitor records how each site behaves and warns when one site causes most restarts.
+      # - STATS_FILE=/logs/site-stats.json
+      # - ADVISORY_WINDOW=86400      # seconds (24h)
+      # - ADVISORY_MIN_RESTARTS=5
+      # - ADVISORY_DOMINANCE=0.5     # one site causing >=50% of recent restarts -> flag it
       # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
       # - AUTO_RECREATE=1
       # Seconds to wait for gluetun DNS to stabilize after a restart

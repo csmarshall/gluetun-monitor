@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   monitor started) is logged at WARN with a pointer to `DEPENDENT_CONTAINERS`. It
   is not auto-recreated — an orphan whose parent is gone can't be confirmed as a
   gluetun dependent (Tenet 1).
+- **Persistent per-site stats + flaky-site advisory** ([ADR-0008](docs/adr/0008-persistent-site-stats-and-advisory.md)).
+  A human-readable JSON sidecar (`STATS_FILE`, default `/logs/site-stats.json`,
+  best-effort, survives restarts) records per test site: total polls/failures
+  (→ rate), failure episodes + average episode length, gluetun restarts triggered,
+  and last-good/last-failure timestamps. When one site dominates the recent
+  gluetun restarts the monitor logs a once-per-episode **flaky-site advisory**
+  ("X of the last Y restarts were this site over the last <window> — review it").
+  By design it still applies the cheap restart fix and escalates to a human rather
+  than auto-suppressing the site. Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`,
+  `ADVISORY_DOMINANCE`, `STATS_SAVE_EVERY`.
 
 ### Fixed
 - **Per-dependent viability no longer false-fails on busybox-wget dependents.**

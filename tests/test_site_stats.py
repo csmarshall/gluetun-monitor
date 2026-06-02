@@ -1,0 +1,122 @@
+"""Persistent per-site stats + flaky-site advisory (ADR-0008).
+
+Why: this is the lifetime/attribution data behind "this site keeps being flaky"
+and the advisory. The episode accounting (avg failure length), the windowed
+advisory (one site dominating recent restarts), and best-effort persistence
+(survives restart; corrupt file never crashes) are the load-bearing behaviors.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from gluetun_monitor.site_stats import SiteStatsStore, format_window
+
+
+class _Clock:
+    """Mutable fake clock."""
+
+    def __init__(self, t: float = 1000.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_episode_accounting_and_derived_metrics() -> None:
+    """fail,fail,pass,fail = 3 failures across 2 episodes (avg 1.5 polls); a pass
+    closes an episode so the next failure starts a new one."""
+    s = SiteStatsStore(None)
+    for ok in (False, False, True, False):
+        s.record_poll("b.com", ok)
+    st = s.sites["b.com"]
+    assert st.total_polls == 4
+    assert st.total_failures == 3
+    assert st.failure_episodes == 2
+    assert st.avg_episode_polls == 1.5
+    assert st.failure_rate == 0.75
+
+
+def test_advisory_fires_when_one_site_dominates() -> None:
+    """>= min_restarts in window, one site >= dominance share -> Advisory."""
+    s = SiteStatsStore(None)
+    for _ in range(4):
+        s.record_restart("b.com")
+    for _ in range(2):
+        s.record_restart("a.com")
+    adv = s.advisory(window_seconds=86400, min_restarts=5, dominance=0.5)
+    assert adv is not None
+    assert adv.site == "b.com"
+    assert adv.site_restarts == 4
+    assert adv.total_restarts == 6
+
+
+def test_advisory_silent_below_min_restarts() -> None:
+    s = SiteStatsStore(None)
+    for _ in range(3):
+        s.record_restart("b.com")
+    assert s.advisory(86400, 5, 0.5) is None
+
+
+def test_advisory_silent_when_no_site_dominates() -> None:
+    s = SiteStatsStore(None)
+    for _ in range(3):
+        s.record_restart("a.com")
+    for _ in range(3):
+        s.record_restart("b.com")
+    # 3/6 = 0.5 each; require >0.5 dominance -> nobody dominates.
+    assert s.advisory(86400, 5, 0.6) is None
+
+
+def test_advisory_respects_the_window() -> None:
+    """Restarts older than the window don't count."""
+    clock = _Clock(1000.0)
+    s = SiteStatsStore(None, clock=clock)
+    for _ in range(6):
+        s.record_restart("b.com")
+    clock.t = 1000.0 + 86400 + 1  # advance past the window
+    assert s.advisory(86400, 5, 0.5) is None
+
+
+def test_persistence_round_trip(tmp_path: Path) -> None:
+    """Stats survive a 'restart' — written by one store, loaded by the next."""
+    path = str(tmp_path / "stats.json")
+    s1 = SiteStatsStore(path)
+    s1.record_poll("b.com", False)
+    s1.record_poll("b.com", True)
+    s1.record_restart("b.com")
+    assert s1.save() is True
+
+    s2 = SiteStatsStore(path)
+    assert s2.sites["b.com"].total_polls == 2
+    assert s2.sites["b.com"].total_failures == 1
+    assert s2.sites["b.com"].restarts_triggered == 1
+    assert len(s2.recent_restarts) == 1
+
+
+def test_corrupt_file_is_non_fatal(tmp_path: Path) -> None:
+    """A garbage stats file degrades to empty in-memory, never raises."""
+    path = tmp_path / "stats.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    s = SiteStatsStore(str(path))
+    assert s.sites == {}
+    assert s.recent_restarts == []
+
+
+def test_save_with_no_path_is_noop() -> None:
+    assert SiteStatsStore(None).save() is False
+
+
+def test_recent_restarts_bounded() -> None:
+    s = SiteStatsStore(None, recent_restarts_max=10)
+    for _ in range(25):
+        s.record_restart("b.com")
+    assert len(s.recent_restarts) == 10
+    assert s.sites["b.com"].restarts_triggered == 25  # lifetime count is not capped
+
+
+def test_format_window() -> None:
+    assert format_window(86400) == "1d"
+    assert format_window(3600) == "1h"
+    assert format_window(1800) == "30m"
+    assert format_window(90) == "90s"

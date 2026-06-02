@@ -33,6 +33,18 @@ def _env_int(name: str, default: int, errors: list[str]) -> int:
         return default
 
 
+def _env_float(name: str, default: float, errors: list[str]) -> float:
+    """Read a float env var; a set-but-unparseable value is a fatal error."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        errors.append(f"Invalid {name}={raw!r}: not a number")
+        return default
+
+
 def _env_bool(name: str, default: bool, errors: list[str]) -> bool:
     """Read a boolean env var (1/0, true/false, yes/no, on/off).
 
@@ -99,6 +111,14 @@ class Config:
     # v2 instance soak-test against a real stack alongside an active monitor
     # without two actors conflicting. Off by default.
     dry_run: bool = False
+    # Persistent per-site stats sidecar (ADR-0008). Observability only; best-effort.
+    stats_file: str = "/logs/site-stats.json"
+    stats_save_every: int = 10  # write the stats file every N loops (plus on restarts)
+    # Flaky-site advisory: warn when one site dominates the gluetun restarts in a
+    # recent window. window in seconds (default 24h).
+    advisory_window: int = 86400
+    advisory_min_restarts: int = 5
+    advisory_dominance: float = 0.5
 
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
@@ -144,5 +164,10 @@ class Config:
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
             dry_run=_env_bool("DRY_RUN", False, errors),
+            stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),
+            stats_save_every=_env_int("STATS_SAVE_EVERY", 10, errors),
+            advisory_window=_env_int("ADVISORY_WINDOW", 86400, errors),
+            advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors),
+            advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors),
             errors=tuple(errors),
         )

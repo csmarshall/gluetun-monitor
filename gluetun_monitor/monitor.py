@@ -28,6 +28,7 @@ from .dependents import (
 from .dns_check import DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
 from .recovery import remediate_dependent, restart_gluetun
+from .site_stats import SiteStatsStore, format_window
 from .sites import hostname_of, ip_pool, is_ip_literal, load_sites, resolvable_pool
 from .state import Counter, InterfaceStatus, RemediationAction
 
@@ -62,12 +63,17 @@ class Monitor:
         *,
         rng: random.Random | None = None,
         sleep: Sleep = time.sleep,
+        stats: SiteStatsStore | None = None,
     ) -> None:
         self.client = client
         self.config = config
         self.log = logger
         self._rng = rng if rng is not None else random.Random()
         self._sleep = sleep
+        # Persistent per-site stats (ADR-0008). Injectable for tests.
+        self.stats = stats if stats is not None else SiteStatsStore(config.stats_file)
+        self._loops_since_save = 0
+        self._advised_site: str | None = None  # dedup the flaky-site advisory
         self.site_failures = Counter()
         self.dependent_failures = Counter()
         self._last_site_count: int | None = None
@@ -85,11 +91,17 @@ class Monitor:
 
     # ----- gluetun root test (nodes 2-3) -----
 
-    def check_gluetun_sites(self, sites: list[str]) -> bool:
-        """Test the full URL set from inside gluetun. True if none breached threshold."""
+    def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
+        """Test the full URL set from inside gluetun. Return the sites that have
+        breached FAIL_THRESHOLD (empty = healthy).
+
+        ``record`` updates the persistent per-site stats (ADR-0008); it's True for
+        the primary loop test and False for the post-restart re-verify (so a loop
+        counts as one poll per site, not two).
+        """
         if not sites:
             self.log.warn("No sites configured to test")
-            return True
+            return []
 
         if self._last_site_count != len(sites):
             if self._last_site_count is None:
@@ -105,6 +117,8 @@ class Monitor:
 
         failed: list[str] = []
         for result in results:
+            if record:
+                self.stats.record_poll(result.url, result.ok)
             if result.ok:
                 self.site_failures.reset(result.url)
                 self.log.debug(f"Site {result.url} passed ({result.duration_ms}ms)")
@@ -125,8 +139,7 @@ class Monitor:
 
         if failed:
             self.log.error(f"Failed sites (exceeded threshold): {' '.join(failed)}")
-            return False
-        return True
+        return failed
 
     # ----- dependent phase (nodes 6-19) -----
 
@@ -327,14 +340,24 @@ class Monitor:
         # non-empty set; a runtime edit down to empty just tests nothing this loop.
         sites = load_sites(self.config.config_file, self.config.sites_env)
 
-        if self.check_gluetun_sites(sites):
+        breached = self.check_gluetun_sites(sites)
+        if not breached:
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
             self.run_dependent_phase(gluetun.id, sites)
+            self._maybe_save_stats()
             return
 
         # Gluetun breached threshold: restart + re-verify before touching dependents.
         self.log.warn("Health check failed, initiating recovery...")
+        # Attribute the restart to the breached site(s) and surface a flaky-site
+        # advisory if one site keeps causing them (ADR-0008). Persist now — a
+        # restart is an important, infrequent event worth not losing.
+        for site in breached:
+            self.stats.record_restart(site)
+        self._emit_advisory()
+        self.stats.save()
+
         if self.config.dry_run:
             # Observe-only: don't restart gluetun (can't, without mutating). Log
             # the intent and still probe dependents so their decisions are visible.
@@ -348,7 +371,8 @@ class Monitor:
             self.log.error("Recovery failed - manual intervention may be required")
             return
 
-        if not self.check_gluetun_sites(sites):
+        # Re-verify without recording (so the loop counts one poll per site, not two).
+        if self.check_gluetun_sites(sites, record=False):
             self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
             self.site_failures.reset_all()
             return
@@ -358,6 +382,34 @@ class Monitor:
         # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
         gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
         self.run_dependent_phase(gluetun.id, sites)
+        self._maybe_save_stats()
+
+    def _emit_advisory(self) -> None:
+        """Warn (deduped) when one site dominates recent gluetun restarts."""
+        adv = self.stats.advisory(
+            self.config.advisory_window,
+            self.config.advisory_min_restarts,
+            self.config.advisory_dominance,
+        )
+        if adv is None:
+            self._advised_site = None
+            return
+        if adv.site == self._advised_site:
+            return  # already warned about this site this episode
+        self._advised_site = adv.site
+        self.log.warn(
+            f"FLAKY SITE: {adv.site} caused {adv.site_restarts} of the last "
+            f"{adv.total_restarts} gluetun restarts over the last "
+            f"{format_window(adv.window_seconds)} — it may be flaky; consider "
+            f"reviewing or removing it from sites.conf"
+        )
+
+    def _maybe_save_stats(self) -> None:
+        """Persist stats every STATS_SAVE_EVERY loops (best-effort)."""
+        self._loops_since_save += 1
+        if self._loops_since_save >= self.config.stats_save_every:
+            self.stats.save()
+            self._loops_since_save = 0
 
     def announce(self) -> None:
         """Log the post-prerequisite startup context (connection, dependents, endpoint)."""
