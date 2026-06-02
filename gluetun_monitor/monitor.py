@@ -385,6 +385,17 @@ class Monitor:
         if gluetun.health != "healthy":
             self.log.warn(f"Gluetun health status: {gluetun.health}")
 
+        # Observability before the site curls: log the gateway's own L3 interfaces
+        # (symmetry with the dependent checks; presence of tun0 = tunnel up at L3).
+        # We do NOT gate on this — the site tests are the authoritative tunnel
+        # check (ADR-0001); this is just visibility.
+        gw_ifaces = list_interfaces(self.client, self.config.gluetun_container)
+        self.log.debug(
+            f"[gateway:{self.config.gluetun_container}] interface check: "
+            f"{classify_interfaces(gw_ifaces).name.lower()} "
+            f"[{','.join(sorted(gw_ifaces)) if gw_ifaces else 'unknown'}]"
+        )
+
         # Re-read every loop so editing sites.conf is picked up live (the SITES
         # env contribution is fixed at startup). Startup validation guarantees a
         # non-empty set; a runtime edit down to empty just tests nothing this loop.
