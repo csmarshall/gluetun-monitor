@@ -113,7 +113,9 @@ class Config:
     dry_run: bool = False
     # Persistent per-site stats sidecar (ADR-0008). Observability only; best-effort.
     stats_file: str = "/logs/site-stats.json"
-    stats_save_every: int = 10  # write the stats file every N loops (plus on restarts)
+    # Drop a site's stats if it hasn't been polled (e.g. removed from sites.conf)
+    # for this many days; <=0 keeps them forever.
+    stats_retention_days: int = 90
     # Flaky-site advisory: warn when one site dominates the gluetun restarts in a
     # recent window. window in seconds (default 24h).
     advisory_window: int = 86400
@@ -165,7 +167,7 @@ class Config:
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
             dry_run=_env_bool("DRY_RUN", False, errors),
             stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),
-            stats_save_every=_env_int("STATS_SAVE_EVERY", 10, errors),
+            stats_retention_days=_env_int("STATS_RETENTION_DAYS", 90, errors),
             advisory_window=_env_int("ADVISORY_WINDOW", 86400, errors),
             advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors),
             advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors),

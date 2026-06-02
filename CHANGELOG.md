@@ -59,8 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gluetun restarts the monitor logs a once-per-episode **flaky-site advisory**
   ("X of the last Y restarts were this site over the last <window> — review it").
   By design it still applies the cheap restart fix and escalates to a human rather
-  than auto-suppressing the site. Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`,
-  `ADVISORY_DOMINANCE`, `STATS_SAVE_EVERY`.
+  than auto-suppressing the site. Per-site metrics also include the **longest
+  failure streak** (worst consecutive run of failed polls). The file is written
+  every loop, crash/power-loss-safely (temp file + fsync + atomic rename), and a
+  site removed from `sites.conf` is pruned after `STATS_RETENTION_DAYS` (default
+  90). Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, `ADVISORY_DOMINANCE`,
+  `STATS_RETENTION_DAYS`.
+- **Per-dependent interface check is now shown at DEBUG** — each dependent logs
+  its L3 route check (`interface=live [eth0,lo,tun0]` / `stranded [lo]` /
+  `unknown`) alongside the DNS viability result, so "can it route out" is visible
+  every loop.
 
 ### Fixed
 - **Per-dependent viability no longer false-fails on busybox-wget dependents.**

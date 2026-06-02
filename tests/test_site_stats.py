@@ -37,6 +37,64 @@ def test_episode_accounting_and_derived_metrics() -> None:
     assert st.failure_rate == 0.75
 
 
+def test_longest_fail_streak_tracks_the_worst_run() -> None:
+    """longest_fail_streak = the longest run of consecutive failed polls ever,
+    even after a recovery shortens the current streak."""
+    s = SiteStatsStore(None)
+    for ok in (False, False, False, True, False):  # runs of 3 then 1
+        s.record_poll("b.com", ok)
+    st = s.sites["b.com"]
+    assert st.longest_fail_streak == 3
+    assert st.current_fail_streak == 1
+
+
+def test_last_seen_updates_on_poll() -> None:
+    clock = _Clock(500.0)
+    s = SiteStatsStore(None, clock=clock)
+    s.record_poll("b.com", True)
+    assert s.sites["b.com"].last_seen == 500.0
+    clock.t = 900.0
+    s.record_poll("b.com", True)
+    assert s.sites["b.com"].last_seen == 900.0
+
+
+def test_prune_stale_drops_unseen_sites_keeps_fresh() -> None:
+    """A site not polled within retention (e.g. removed from sites.conf) is pruned;
+    a recently-polled one is kept."""
+    clock = _Clock(1_000_000.0)
+    s = SiteStatsStore(None, clock=clock)
+    s.record_poll("old.com", True)
+    s.record_poll("fresh.com", True)
+    clock.t += 100 * 86400  # 100 days later
+    s.record_poll("fresh.com", True)  # fresh.com seen again; old.com not
+    pruned = s.prune_stale(90 * 86400)
+    assert pruned == ["old.com"]
+    assert "old.com" not in s.sites
+    assert "fresh.com" in s.sites
+
+
+def test_prune_disabled_with_nonpositive_retention() -> None:
+    clock = _Clock(1_000_000.0)
+    s = SiteStatsStore(None, clock=clock)
+    s.record_poll("old.com", True)
+    clock.t += 1000 * 86400
+    assert s.prune_stale(0) == []  # 0 disables pruning
+    assert "old.com" in s.sites
+
+
+def test_save_is_atomic_no_leftover_tmp(tmp_path: Path) -> None:
+    """A successful save leaves the real file complete and no stray .tmp behind."""
+    path = tmp_path / "stats.json"
+    s = SiteStatsStore(str(path))
+    s.record_poll("b.com", False)
+    assert s.save() is True
+    assert path.exists()
+    assert not (tmp_path / "stats.json.tmp").exists()  # tmp renamed away
+    import json as _json
+    data = _json.loads(path.read_text())  # the file is complete, valid JSON
+    assert data["sites"]["b.com"]["total_failures"] == 1
+
+
 def test_advisory_fires_when_one_site_dominates() -> None:
     """>= min_restarts in window, one site >= dominance share -> Advisory."""
     s = SiteStatsStore(None)

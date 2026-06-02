@@ -18,6 +18,7 @@ episode length (in polls) is simply total_failures / failure_episodes.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -32,9 +33,11 @@ class SiteStat:
     """Lifetime counters for one test site."""
 
     first_seen: float
+    last_seen: float = 0.0  # last time this site was polled (for retention pruning)
     total_polls: int = 0
     total_failures: int = 0
     failure_episodes: int = 0  # count of distinct consecutive-failure runs
+    longest_fail_streak: int = 0  # longest run of consecutive failed polls ever
     restarts_triggered: int = 0
     current_fail_streak: int = 0
     last_failure: float | None = None
@@ -84,6 +87,7 @@ class SiteStatsStore:
         st = self.sites.get(site)
         if st is None:
             st = self.sites[site] = SiteStat(first_seen=now)
+        st.last_seen = now
         st.total_polls += 1
         if ok:
             st.current_fail_streak = 0
@@ -93,6 +97,7 @@ class SiteStatsStore:
             if st.current_fail_streak == 0:
                 st.failure_episodes += 1  # a new failure episode begins
             st.current_fail_streak += 1
+            st.longest_fail_streak = max(st.longest_fail_streak, st.current_fail_streak)
             st.last_failure = now
 
     def record_restart(self, site: str) -> None:
@@ -105,6 +110,18 @@ class SiteStatsStore:
         self.recent_restarts.append({"ts": now, "site": site})
         if len(self.recent_restarts) > self._recent_max:
             del self.recent_restarts[: -self._recent_max]
+
+    def prune_stale(self, retention_seconds: float) -> list[str]:
+        """Drop sites not polled within ``retention_seconds`` (e.g. removed from
+        sites.conf 90+ days ago). Returns the pruned site names. A non-positive
+        retention disables pruning (keep forever)."""
+        if retention_seconds <= 0:
+            return []
+        cutoff = self._clock() - retention_seconds
+        stale = [url for url, st in self.sites.items() if st.last_seen < cutoff]
+        for url in stale:
+            del self.sites[url]
+        return stale
 
     # ----- advisory -----
 
@@ -137,11 +154,16 @@ class SiteStatsStore:
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             for url, raw in data.get("sites", {}).items():
+                first_seen = raw.get("first_seen", 0.0)
                 self.sites[url] = SiteStat(
-                    first_seen=raw.get("first_seen", 0.0),
+                    first_seen=first_seen,
+                    # Old files predate last_seen; fall back so they aren't pruned
+                    # as "stale" the moment they load.
+                    last_seen=raw.get("last_seen") or first_seen,
                     total_polls=raw.get("total_polls", 0),
                     total_failures=raw.get("total_failures", 0),
                     failure_episodes=raw.get("failure_episodes", 0),
+                    longest_fail_streak=raw.get("longest_fail_streak", 0),
                     restarts_triggered=raw.get("restarts_triggered", 0),
                     current_fail_streak=raw.get("current_fail_streak", 0),
                     last_failure=raw.get("last_failure"),
@@ -157,8 +179,16 @@ class SiteStatsStore:
             self.recent_restarts = []
 
     def save(self) -> bool:
-        """Write stats to disk atomically. Returns False (and is ignored) on any
-        I/O error — stats must never block the monitor."""
+        """Write stats to disk crash- and power-loss-safely. Returns False (and is
+        ignored) on any I/O error — stats must never block the monitor.
+
+        Pattern: serialize to a temp file, ``fsync`` it, then atomically rename
+        over the target (``rename(2)``), then fsync the directory. A process crash
+        or container restart can only leave the *old* complete file or the *new*
+        complete file — never a partial/corrupt one — and the reader tolerates a
+        bad file regardless (``_load`` falls back to empty). The fsyncs extend that
+        guarantee across a host power loss, not just a process crash.
+        """
         if self._path is None:
             return False
         payload = {
@@ -170,11 +200,27 @@ class SiteStatsStore:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            tmp.replace(self._path)  # atomic
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())  # data is on disk before the rename
+            tmp.replace(self._path)  # atomic rename
+            self._fsync_dir(self._path.parent)  # persist the rename itself
             return True
         except OSError:
             return False
+
+    @staticmethod
+    def _fsync_dir(directory: Path) -> None:
+        """Best-effort fsync of a directory so a rename survives power loss."""
+        try:
+            fd = os.open(str(directory), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
 
 
 def format_window(seconds: int) -> str:

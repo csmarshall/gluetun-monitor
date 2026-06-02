@@ -179,7 +179,8 @@ docker compose up -d
 | `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
 | `MAX_JITTER_MS` | `0` | Optional per-dispatch jitter (ms) to spread the dependent probe burst. `0` = off (the concurrency cap already bounds it) |
 | `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
-| `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
+| `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort, atomic; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
+| `STATS_RETENTION_DAYS` | `90` | Drop a site's stats if it hasn't been tested (e.g. removed from `sites.conf`) for this many days; `0` keeps them forever |
 | `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
 | `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
@@ -416,9 +417,12 @@ it keeps a **persistent, rear-looking record** of how each site behaves and
 It writes a human-readable JSON sidecar (`STATS_FILE`, default
 `/logs/site-stats.json`) with, per site: total polls, total failures (→ failure
 rate), failure **episodes** and the average episode length in polls (how long it
-typically stays down when it breaks), how many gluetun restarts it triggered, and
-last-good / last-failure timestamps. The file survives monitor restarts; it's
-best-effort (a missing/unwritable/corrupt file never blocks the monitor).
+typically stays down when it breaks), the **longest** such streak, how many
+gluetun restarts it triggered, and first-seen / last-good / last-failure
+timestamps. It's written **every loop, crash- and power-loss-safely** (temp file
++ fsync + atomic rename), survives monitor restarts, and is best-effort (a
+missing/unwritable/corrupt file never blocks the monitor). A site removed from
+`sites.conf` is kept for `STATS_RETENTION_DAYS` (default 90) then pruned.
 
 When one site dominates the recent restarts, the monitor logs a **flaky-site
 advisory** (once, not per loop):

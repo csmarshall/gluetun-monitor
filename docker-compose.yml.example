@@ -68,6 +68,7 @@ services:
       # Persistent per-site stats sidecar (best-effort; survives restarts) + flaky-site advisory.
       # The monitor records how each site behaves and warns when one site causes most restarts.
       # - STATS_FILE=/logs/site-stats.json
+      # - STATS_RETENTION_DAYS=90    # drop a site's stats N days after it leaves sites.conf (0=keep)
       # - ADVISORY_WINDOW=86400      # seconds (24h)
       # - ADVISORY_MIN_RESTARTS=5
       # - ADVISORY_DOMINANCE=0.5     # one site causing >=50% of recent restarts -> flag it

@@ -48,8 +48,7 @@ def test_repeated_restarts_from_one_site_raise_advisory(tmp_path: Path) -> None:
         fail_threshold=1,            # breach on first failure each loop
         dns_wait_timeout=2,
         advisory_min_restarts=3,     # advise after 3 restarts
-        advisory_dominance=0.5,
-        stats_save_every=1000,       # don't write during the test
+        advisory_dominance=0.5,       # don't write during the test
     )
     mon = Monitor(
         fake, cfg, Logger(log_file=None, stream=stream),
@@ -80,8 +79,7 @@ def test_advisory_deduped_not_per_loop(tmp_path: Path) -> None:
     )
     stream = io.StringIO()
     cfg = Config(config_file=str(conf), gluetun_container="gluetun", fail_threshold=1,
-                 dns_wait_timeout=2, advisory_min_restarts=3, advisory_dominance=0.5,
-                 stats_save_every=1000)
+                 dns_wait_timeout=2, advisory_min_restarts=3, advisory_dominance=0.5)
     mon = Monitor(fake, cfg, Logger(log_file=None, stream=stream),
                   rng=random.Random(0), sleep=lambda _s: None, stats=SiteStatsStore(None))
     for _ in range(6):

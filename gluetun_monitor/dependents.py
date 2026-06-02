@@ -83,19 +83,30 @@ def parse_csv_names(value: str) -> list[str]:
     return [n for n in (trim(x) for x in value.split(",")) if n]
 
 
-def interface_check(client: DockerClient, dep_name: str) -> InterfaceStatus:
-    """Classify a dependent by its network interfaces (ADR-0004, node 7)."""
+def list_interfaces(client: DockerClient, dep_name: str) -> set[str] | None:
+    """Return the dependent's network interfaces (``ls /sys/class/net``), or None
+    if it couldn't be determined (exec failed / no shell / empty output)."""
     try:
         result = client.exec_run(dep_name, ["ls", "/sys/class/net"])
     except Exception:
-        return InterfaceStatus.UNKNOWN
+        return None
     if result.exit_code != 0:
-        return InterfaceStatus.UNKNOWN
+        return None
     interfaces = {tok for tok in result.output.split() if tok}
+    return interfaces or None
+
+
+def classify_interfaces(interfaces: set[str] | None) -> InterfaceStatus:
+    """LIVE if a non-loopback interface is present, STRANDED if only ``lo``,
+    UNKNOWN if we couldn't read them (ADR-0004, node 7)."""
     if not interfaces:
         return InterfaceStatus.UNKNOWN
-    non_loopback = interfaces - {"lo"}
-    return InterfaceStatus.LIVE if non_loopback else InterfaceStatus.STRANDED
+    return InterfaceStatus.LIVE if (interfaces - {"lo"}) else InterfaceStatus.STRANDED
+
+
+def interface_check(client: DockerClient, dep_name: str) -> InterfaceStatus:
+    """Classify a dependent by its network interfaces (ADR-0004, node 7)."""
+    return classify_interfaces(list_interfaces(client, dep_name))
 
 
 def remediation_action(dep_info: ContainerInfo, gluetun_id: str) -> RemediationAction:

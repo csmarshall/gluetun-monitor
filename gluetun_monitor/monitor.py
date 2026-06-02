@@ -18,10 +18,11 @@ from typing import TYPE_CHECKING
 
 from .connectivity import probe_site
 from .dependents import (
+    classify_interfaces,
     discover_dependents,
     get_dependents,
-    interface_check,
     is_container_id,
+    list_interfaces,
     parse_csv_names,
     remediation_action,
 )
@@ -50,6 +51,7 @@ class DependentProbe:
     viability_ok: bool | None  # None = not tested (no pool / not live / unvalidatable)
     reason: str
     dns_unvalidated: bool = False  # True = no usable DNS tool in the container
+    interfaces: str = "?"  # the dependent's net interfaces, for DEBUG visibility
 
 
 class Monitor:
@@ -72,7 +74,6 @@ class Monitor:
         self._sleep = sleep
         # Persistent per-site stats (ADR-0008). Injectable for tests.
         self.stats = stats if stats is not None else SiteStatsStore(config.stats_file)
-        self._loops_since_save = 0
         self._advised_site: str | None = None  # dedup the flaky-site advisory
         self.site_failures = Counter()
         self.dependent_failures = Counter()
@@ -157,13 +158,22 @@ class Monitor:
         if self.config.max_jitter_ms > 0:
             self._sleep(self._rng.uniform(0, self.config.max_jitter_ms) / 1000.0)
 
-        status = interface_check(self.client, dep)
+        # L3/L4 interface check (node 7): which interfaces does the dependent have?
+        # The set is captured (not just the verdict) so it's visible in DEBUG —
+        # "can it route out" is exactly the eth0/tun0-vs-lo-only question.
+        ifaces = list_interfaces(self.client, dep)
+        status = classify_interfaces(ifaces)
+        ifs = ",".join(sorted(ifaces)) if ifaces else "unknown"
 
         if status is InterfaceStatus.STRANDED:
             # Node 10: re-check once — a real strand won't self-heal.
-            if interface_check(self.client, dep) is InterfaceStatus.STRANDED:
-                return DependentProbe(dep, status, False, None, "stranded loopback-only")
-            return DependentProbe(dep, InterfaceStatus.LIVE, True, None, "recovered on re-check")
+            ifaces2 = list_interfaces(self.client, dep)
+            if classify_interfaces(ifaces2) is InterfaceStatus.STRANDED:
+                return DependentProbe(dep, status, False, None, "stranded loopback-only",
+                                      interfaces=ifs)
+            ifs2 = ",".join(sorted(ifaces2)) if ifaces2 else "unknown"
+            return DependentProbe(dep, InterfaceStatus.LIVE, True, None, "recovered on re-check",
+                                  interfaces=ifs2)
 
         if status is InterfaceStatus.UNKNOWN:
             # No shell to exec (distroless/scratch), so `ls /sys/class/net` can't
@@ -184,42 +194,42 @@ class Monitor:
                 and remediation_action(info, gluetun_id) is RemediationAction.RECREATE
             ):
                 return DependentProbe(
-                    dep,
-                    InterfaceStatus.STRANDED,
-                    True,
-                    None,
+                    dep, InterfaceStatus.STRANDED, True, None,
                     "inspect: netns id moved (gluetun recreated), container not exec'able",
+                    interfaces=ifs,
                 )
-            return DependentProbe(dep, status, running, None, "interface check unavailable")
+            return DependentProbe(dep, status, running, None, "interface check unavailable",
+                                  interfaces=ifs)
 
         # LIVE. The viability layer (L7 DNS + connectivity probe) is opt-out: with
         # it off, a live, non-stranded dependent is judged healthy on the interface
         # check alone — no URL fetch (ADR-0006; the interface check stays mandatory).
         if not self.config.dependent_viability:
-            return DependentProbe(dep, status, True, None, "viability disabled (interface only)")
+            return DependentProbe(dep, status, True, None, "viability disabled (interface only)",
+                                  interfaces=ifs)
 
         # one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
         pool = resolvable or ips
         if not pool:
-            return DependentProbe(dep, status, True, None, "no test URLs")
+            return DependentProbe(dep, status, True, None, "no test URLs", interfaces=ifs)
         url = self._rng.choice(pool)
         host = hostname_of(url)
         if is_ip_literal(host):
             # An IP literal has nothing to resolve; the phase already WARNed that
             # dependent DNS can't be validated in an IP-only config.
-            return DependentProbe(dep, status, True, None, f"{url}: IP literal (DNS not validated)")
+            return DependentProbe(dep, status, True, None,
+                                  f"{url}: IP literal (DNS not validated)", interfaces=ifs)
 
         # Validate the dependent's OWN DNS resolution (the only per-container
         # fault — see dns_check). Three outcomes: OK -> viable; BROKEN -> the
         # fault we act on; UNVALIDATED -> can't tell (no tool), don't guess.
         dns = validate_dns(self.client, dep, url, host, self.config.timeout)
         if dns.status is DnsStatus.UNVALIDATED:
-            return DependentProbe(
-                dep, status, True, None, f"{host}: {dns.reason}", dns_unvalidated=True
-            )
+            return DependentProbe(dep, status, True, None, f"{host}: {dns.reason}",
+                                  dns_unvalidated=True, interfaces=ifs)
         viable = dns.status is DnsStatus.OK
         detail = f"{host}: DNS ok ({dns.tool})" if viable else f"{host}: DNS FAILED ({dns.reason})"
-        return DependentProbe(dep, status, True, viable, detail)
+        return DependentProbe(dep, status, True, viable, detail, interfaces=ifs)
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
@@ -266,13 +276,20 @@ class Monitor:
             dependents, lambda d: self._probe_dependent(d, gluetun_id, resolvable, ips)
         )
 
-        # State mutation + remediation decisions are single-threaded.
+        # State mutation + remediation decisions are single-threaded. Every
+        # dependent logs its L3 interface check (which interfaces / can it route)
+        # at DEBUG each loop, plus the L7 viability detail when applicable.
         to_remediate: list[tuple[str, str]] = []
         for probe in probes:
+            iface = f"interface={probe.status.name.lower()} [{probe.interfaces}]"
             if probe.status is InterfaceStatus.STRANDED:
+                self.log.debug(f"Dependent {probe.name}: {iface} -> {probe.reason}")
                 to_remediate.append((probe.name, probe.reason))
                 continue
             if probe.status is InterfaceStatus.UNKNOWN:
+                self.log.debug(
+                    f"Dependent {probe.name}: {iface}, running={probe.running} — {probe.reason}"
+                )
                 if not probe.running:
                     to_remediate.append((probe.name, "not running (interface check unavailable)"))
                 continue
@@ -285,12 +302,14 @@ class Monitor:
                         f"relying on interface check only"
                     )
                     self._warned_dns_unvalidated.add(probe.name)
+                else:
+                    self.log.debug(f"Dependent {probe.name}: {iface}, {probe.reason}")
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
             self._warned_dns_unvalidated.discard(probe.name)
             if probe.viability_ok:
                 self.dependent_failures.reset(probe.name)
-                self.log.debug(f"Dependent {probe.name}: {probe.reason} [fails 0]")
+                self.log.debug(f"Dependent {probe.name}: {iface}, {probe.reason} [fails 0]")
                 continue
             count = self.dependent_failures.fail(probe.name)
             threshold = self.config.dependent_container_failures
@@ -299,12 +318,12 @@ class Monitor:
                     (probe.name, f"{count} consecutive viability failures")
                 )
                 self.log.warn(
-                    f"Dependent {probe.name}: {probe.reason} "
+                    f"Dependent {probe.name}: {iface}, {probe.reason} "
                     f"[fails {count}/{threshold} -> remediate]"
                 )
             else:
                 self.log.debug(
-                    f"Dependent {probe.name}: {probe.reason} [fails {count}/{threshold}]"
+                    f"Dependent {probe.name}: {iface}, {probe.reason} [fails {count}/{threshold}]"
                 )
 
         for dep, reason in to_remediate:
@@ -345,7 +364,7 @@ class Monitor:
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
             self.run_dependent_phase(gluetun.id, sites)
-            self._maybe_save_stats()
+            self._save_stats()
             return
 
         # Gluetun breached threshold: restart + re-verify before touching dependents.
@@ -356,7 +375,7 @@ class Monitor:
         for site in breached:
             self.stats.record_restart(site)
         self._emit_advisory()
-        self.stats.save()
+        self._save_stats()
 
         if self.config.dry_run:
             # Observe-only: don't restart gluetun (can't, without mutating). Log
@@ -382,7 +401,7 @@ class Monitor:
         # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
         gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
         self.run_dependent_phase(gluetun.id, sites)
-        self._maybe_save_stats()
+        self._save_stats()
 
     def _emit_advisory(self) -> None:
         """Warn (deduped) when one site dominates recent gluetun restarts."""
@@ -404,12 +423,16 @@ class Monitor:
             f"reviewing or removing it from sites.conf"
         )
 
-    def _maybe_save_stats(self) -> None:
-        """Persist stats every STATS_SAVE_EVERY loops (best-effort)."""
-        self._loops_since_save += 1
-        if self._loops_since_save >= self.config.stats_save_every:
-            self.stats.save()
-            self._loops_since_save = 0
+    def _save_stats(self) -> None:
+        """Prune stale sites (retention), then persist — every loop (best-effort;
+        a few-KB atomic write, so no throttle needed)."""
+        pruned = self.stats.prune_stale(self.config.stats_retention_days * 86400)
+        if pruned:
+            self.log.info(
+                f"Pruned {len(pruned)} stale site stat(s) not seen in "
+                f"{self.config.stats_retention_days}d: {', '.join(pruned)}"
+            )
+        self.stats.save()
 
     def announce(self) -> None:
         """Log the post-prerequisite startup context (connection, dependents, endpoint)."""
