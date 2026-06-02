@@ -26,14 +26,20 @@ directly and heals it.
   layer is rebuilt from the image. On by default; `AUTO_RECREATE=0` to disable.
 - **Reimplemented in Python** (docker-py) for testability — the connectivity test
   itself is unchanged (`wget --spider` inside gluetun's namespace, same pass/fail
-  rules). 349 tests at 99% line+branch coverage, including a differential suite
-  that checks behavior against the original bash.
+  rules). 380+ tests at 99% line+branch coverage (enforced in CI), including a
+  differential suite that checks behavior against the original bash.
 - **Per-site stats + flaky-site advisory.** A best-effort JSON sidecar
   (`/logs/site-stats.json`) records each site's failure rate, episodes, restart
   effectiveness, response-latency percentiles (p50/p90/p99) and failure-reason
   breakdown, plus monitor-wide totals. When one site dominates recent gluetun
   restarts the monitor warns ("X of the last Y restarts were this site") and
-  escalates to a human rather than auto-suppressing it.
+  escalates to a human rather than auto-suppressing it. Both a **recent** window
+  and a bounded all-time **histogram** (≤5% error) are kept per site.
+- **`gluetun-monitor-stats` command** shipped in the image — `docker exec
+  gluetun-monitor gluetun-monitor-stats` renders the sidecar as a sortable per-site
+  matrix (latency percentiles, failure rate, restart-effectiveness) plus
+  monitor-wide totals; `--lifetime` for the all-time view, `--json` for
+  jq/dashboards. Read-only, no Docker API.
 - **Configuration is validated; bad config fails loud.** Empty `sites.conf`, a
   malformed or out-of-range env value (e.g. `TIMEOUT=0`), or an explicit
   `DEPENDENT_CONTAINERS` naming a missing container now refuse to start with a
