@@ -84,7 +84,8 @@ def test_dns_unvalidated_warns_once_and_relies_on_interface() -> None:
     mon.run_dependent_phase(GLUETUN_ID, ["https://x.example"])
     mon.run_dependent_phase(GLUETUN_ID, ["https://x.example"])  # second loop: no re-warn
     log = _stream(mon).getvalue()
-    assert log.count("cannot validate DNS") == 1
+    assert log.count("using link check only") == 1  # warned once, not per-loop
+    assert "reach ?:" in log
     assert fake.restarted == [] and fake.created == []  # never churned (Tenet 1)
 
 

@@ -42,8 +42,8 @@ def test_gateway_interface_logged_before_site_tests(tmp_path: Path) -> None:
     )
     mon.run_once()
     out = stream.getvalue()
-    assert "[gateway:gluetun] interface check: live [eth0,lo,tun0]" in out
+    assert "[gateway:gluetun] link live: eth0,lo,tun0" in out
     # ...and it comes before the first site curl line.
-    gw_at = out.index("[gateway:gluetun] interface check:")
-    site_at = out.index("[gateway:gluetun] site https://www.google.com")
+    gw_at = out.index("[gateway:gluetun] link ")
+    site_at = out.index("[gateway:gluetun] reach ok: https://www.google.com")
     assert gw_at < site_at

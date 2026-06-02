@@ -27,7 +27,7 @@ from .dependents import (
     parse_csv_names,
     remediation_action,
 )
-from .dns_check import DnsStatus, validate_dns
+from .dns_check import DnsResult, DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
 from .recovery import remediate_dependent, restart_gluetun
 from .site_stats import SiteStatsStore, format_window
@@ -53,6 +53,18 @@ class DependentProbe:
     reason: str
     dns_unvalidated: bool = False  # True = no usable DNS tool in the container
     interfaces: str = "?"  # the dependent's net interfaces, for DEBUG visibility
+
+
+def _fmt_reach(host: str, r: DnsResult) -> str:
+    """Bare reach detail: ``<host> (<why>) [<tool>]`` (tool omitted if unknown)."""
+    tool = f" [{r.tool}]" if r.tool else ""
+    return f"{host} ({r.reason}){tool}"
+
+
+def _link_line(status: str, interfaces: str) -> str:
+    """L3 link verdict + interface list: ``live: eth0,lo,tun0`` / ``stranded: lo``
+    / ``unknown`` (no list when the interfaces couldn't be read)."""
+    return f"{status}: {interfaces}" if interfaces and interfaces != "unknown" else status
 
 
 class Monitor:
@@ -134,24 +146,25 @@ class Monitor:
                 self.stats.record_poll(result.url, result.ok, result.duration_ms, result.reason)
             if result.ok:
                 self.site_failures.reset(result.url)
-                self.log.debug(f"[{gw}] site {result.url}: ok ({result.duration_ms}ms)")
+                self.log.debug(
+                    f"[{gw}] reach ok: {result.url} ({result.reason}, {result.duration_ms}ms)"
+                )
                 continue
             count = self.site_failures.fail(result.url)
-            if count >= self.config.fail_threshold:
+            threshold = self.config.fail_threshold
+            if count >= threshold:
                 failed.append(result.url)
                 self.log.warn(
-                    f"[{gw}] site {result.url}: FAILED {count}x consecutive - "
-                    f"THRESHOLD REACHED - {result.reason}"
+                    f"[{gw}] reach fail: {result.url} ({result.reason}) "
+                    f"[{count}/{threshold} → restart]"
                 )
             else:
-                remaining = self.config.fail_threshold - count
                 self.log.debug(
-                    f"[{gw}] site {result.url}: failed ({count}/{self.config.fail_threshold}, "
-                    f"{remaining} more to restart) - {result.reason}"
+                    f"[{gw}] reach fail: {result.url} ({result.reason}) [{count}/{threshold}]"
                 )
 
         if failed:
-            self.log.error(f"[{gw}] failed sites (exceeded threshold): {' '.join(failed)}")
+            self.log.error(f"[{gw}] restart triggered by: {' '.join(failed)}")
         return failed
 
     # ----- dependent phase (nodes 6-19) -----
@@ -212,14 +225,14 @@ class Monitor:
                     "inspect: netns id moved (gluetun recreated), container not exec'able",
                     interfaces=ifs,
                 )
-            return DependentProbe(dep, status, running, None, "interface check unavailable",
+            return DependentProbe(dep, status, running, None, "link check unavailable",
                                   interfaces=ifs)
 
         # LIVE. The viability layer (L7 DNS + connectivity probe) is opt-out: with
         # it off, a live, non-stranded dependent is judged healthy on the interface
         # check alone — no URL fetch (ADR-0006; the interface check stays mandatory).
         if not self.config.dependent_viability:
-            return DependentProbe(dep, status, True, None, "viability disabled (interface only)",
+            return DependentProbe(dep, status, True, None, "disabled (link check only)",
                                   interfaces=ifs)
 
         # Sample one (default) or more shuffled names per loop. The shuffle is
@@ -240,11 +253,13 @@ class Monitor:
         ]
         if not resolvable_chosen:
             return DependentProbe(dep, status, True, None,
-                                  f"{chosen[0]}: IP literal (DNS not validated)", interfaces=ifs)
+                                  f"{chosen[0]} (IP literal — DNS not tested)", interfaces=ifs)
 
         # Validate the dependent's OWN DNS resolution (the only per-container fault
         # — dns_check). Viable if ANY sampled site resolves; not-viable only if
         # ALL sampled resolvable sites fail DNS; unvalidated if no tool exists.
+        # ``reason`` is the bare detail — "<host> (<why>) [<tool>]" — because the
+        # caller prefixes the verb + verdict ("reach ok/fail/?").
         results = [
             (h, validate_dns(self.client, dep, u, h, self.config.timeout, self.config.wget_tries))
             for (u, h) in resolvable_chosen
@@ -254,21 +269,20 @@ class Monitor:
         if oks:
             h, r = oks[0]
             detail = (
-                f"{h}: {r.reason} [{r.tool}]" if len(results) == 1
-                else f"{len(oks)}/{len(results)} sampled sites resolved "
-                     f"(e.g. {h}: {r.reason} [{r.tool}])"
+                _fmt_reach(h, r) if len(results) == 1
+                else f"{len(oks)}/{len(results)} sampled ok (e.g. {_fmt_reach(h, r)})"
             )
             return DependentProbe(dep, status, True, True, detail, interfaces=ifs)
         if broken:
             h, r = broken[0]
             detail = (
-                f"{h}: DNS FAILED — {r.reason} [{r.tool}]" if len(results) == 1
-                else f"all {len(results)} sampled sites failed DNS (e.g. {h}: {r.reason})"
+                _fmt_reach(h, r) if len(results) == 1
+                else f"all {len(results)} sampled failed (e.g. {_fmt_reach(h, r)})"
             )
             return DependentProbe(dep, status, True, False, detail, interfaces=ifs)
         # All sampled sites were UNVALIDATED (no usable DNS tool in the container).
         h, r = results[0]
-        return DependentProbe(dep, status, True, None, f"{h}: {r.reason}",
+        return DependentProbe(dep, status, True, None, _fmt_reach(h, r),
                               dns_unvalidated=True, interfaces=ifs)
 
     def _resolve_dependents(self) -> list[str]:
@@ -324,46 +338,43 @@ class Monitor:
         for probe in probes:
             dep = probe.name
             tag = f"dependent:{dep}"  # role + name, mirrors "[gateway:<name>]"
-            self.log.debug(
-                f"[{tag}] interface check: {probe.status.name.lower()} [{probe.interfaces}]"
-            )
+            link = _link_line(probe.status.name.lower(), probe.interfaces)
+            self.log.debug(f"[{tag}] link {link}")
             if probe.status is InterfaceStatus.STRANDED:
                 to_remediate.append((dep, probe.reason))
                 continue
             if probe.status is InterfaceStatus.UNKNOWN:
                 self.log.debug(f"[{tag}] {probe.reason} (running={probe.running})")
                 if not probe.running:
-                    to_remediate.append((dep, "not running (interface check unavailable)"))
+                    to_remediate.append((dep, "not running (link check unavailable)"))
                 continue
             if probe.viability_ok is None:
-                if probe.dns_unvalidated and dep not in self._warned_dns_unvalidated:
-                    # Can't run any DNS tool in this container — say so loudly once,
-                    # and rely on the interface check (don't guess; Tenet 1).
-                    self.log.warn(
-                        f"[{tag}] cannot validate DNS ({probe.reason}); "
-                        f"relying on interface check only"
-                    )
-                    self._warned_dns_unvalidated.add(dep)
+                if probe.dns_unvalidated:
+                    # Can't run any DNS tool in this container — say so loudly once
+                    # (re-armed when it later validates), then rely on the link check.
+                    if dep not in self._warned_dns_unvalidated:
+                        self.log.warn(f"[{tag}] reach ?: {probe.reason}; using link check only")
+                        self._warned_dns_unvalidated.add(dep)
+                    else:
+                        self.log.debug(f"[{tag}] reach ?: {probe.reason}")
                 else:
-                    self.log.debug(f"[{tag}] viability: {probe.reason}")
+                    self.log.debug(f"[{tag}] reach skip: {probe.reason}")
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
             self._warned_dns_unvalidated.discard(dep)
             if probe.viability_ok:
                 self.dependent_failures.reset(dep)
-                self.log.debug(f"[{tag}] viability: {probe.reason} [fails 0]")
+                self.log.debug(f"[{tag}] reach ok: {probe.reason}")
                 continue
             count = self.dependent_failures.fail(dep)
             threshold = self.config.dependent_container_failures
             if count >= threshold:
                 to_remediate.append((dep, f"{count} consecutive viability failures"))
                 self.log.warn(
-                    f"[{tag}] viability: {probe.reason} [fails {count}/{threshold} -> remediate]"
+                    f"[{tag}] reach fail: {probe.reason} [{count}/{threshold} → remediate]"
                 )
             else:
-                self.log.debug(
-                    f"[{tag}] viability: {probe.reason} [fails {count}/{threshold}]"
-                )
+                self.log.debug(f"[{tag}] reach fail: {probe.reason} [{count}/{threshold}]")
 
         for dep, reason in to_remediate:
             if self.config.dry_run:
@@ -400,10 +411,10 @@ class Monitor:
         # We do NOT gate on this — the site tests are the authoritative tunnel
         # check (ADR-0001); this is just visibility.
         gw_ifaces = list_interfaces(self.client, self.config.gluetun_container)
+        gw_ifs = ",".join(sorted(gw_ifaces)) if gw_ifaces else "unknown"
         self.log.debug(
-            f"[gateway:{self.config.gluetun_container}] interface check: "
-            f"{classify_interfaces(gw_ifaces).name.lower()} "
-            f"[{','.join(sorted(gw_ifaces)) if gw_ifaces else 'unknown'}]"
+            f"[gateway:{self.config.gluetun_container}] link "
+            f"{_link_line(classify_interfaces(gw_ifaces).name.lower(), gw_ifs)}"
         )
 
         # Re-read every loop so editing sites.conf is picked up live (the SITES
@@ -420,7 +431,7 @@ class Monitor:
             return
 
         # Gluetun breached threshold: restart + re-verify before touching dependents.
-        self.log.warn("Health check failed, initiating recovery...")
+        self.log.warn("Gluetun unhealthy → restarting")
         # Attribute the restart to the breached site(s) and surface a flaky-site
         # advisory if one site keeps causing them (ADR-0008). Persist now — a
         # restart is an important, infrequent event worth not losing.

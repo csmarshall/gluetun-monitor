@@ -618,12 +618,17 @@ gluetun container (through the tunnel); each dependent logs its interface/route
 check, then its viability result.
 ```
 [2025-01-15 10:00:00] [CHECK] Start
-[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] site https://www.google.com: ok (769ms)
-[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] site https://cloudflare.com: ok (1768ms)
-[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] interface check: live [eth0,lo,tun0]
-[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] viability: https://cloudflare.com: resolved + connected (HTTP 200) [wget] [fails 0]
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] reach ok: https://www.google.com (HTTP 200, 769ms)
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] reach ok: https://cloudflare.com (HTTP 200, 1768ms)
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] link live: eth0,lo,tun0
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] reach ok: cloudflare.com (HTTP 200) [wget]
 [2025-01-15 10:00:04] [CHECK] End - Sleeping 30s
 ```
+
+Each line reads `[<role>:<name>] <dim> <verdict>: <target> (<detail>)`. The
+dimension is `link` (the L3 interface/route check) or `reach` (DNS + connectivity);
+the verdict is `ok` / `fail` / `stranded` / `?` (couldn't verify). A healthy line
+omits the failure counter — a failing one shows `[2/2 → restart]`.
 
 Each test line is tagged `[gateway:<name>]` (the gluetun VPN container, where the
 site tests run — through the tunnel) or `[dependent:<name>]`, so you can tell at a
@@ -631,9 +636,9 @@ glance what kind of container a line is about (`grep gateway:` / `grep dependent
 
 ### Gluetun connectivity failure + recovery
 ```
-[2025-01-15 10:10:00] [WARN] [gateway:gluetun] site https://example.com: FAILED 2x consecutive - THRESHOLD REACHED - Network failure (DNS or connection)
-[2025-01-15 10:10:00] [ERROR] [gateway:gluetun] failed sites (exceeded threshold): https://example.com
-[2025-01-15 10:10:00] [WARN] Health check failed, initiating recovery...
+[2025-01-15 10:10:00] [WARN] [gateway:gluetun] reach fail: https://example.com (Network failure (DNS or connection)) [2/2 → restart]
+[2025-01-15 10:10:00] [ERROR] [gateway:gluetun] restart triggered by: https://example.com
+[2025-01-15 10:10:00] [WARN] Gluetun unhealthy → restarting
 [2025-01-15 10:10:00] [ENDPOINT] Status: FAILING | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Site connectivity test failed
 [2025-01-15 10:10:05] [INFO] Restarting gluetun to force new endpoint...
 [2025-01-15 10:10:35] [INFO] gluetun is healthy after 30s
@@ -645,7 +650,7 @@ glance what kind of container a line is about (`grep gateway:` / `grep dependent
 ### Dependent stranded by a Gluetun recreate (self-healed)
 ```
 [2025-01-15 11:00:00] [WARN] Remediating dependent qbittorrent: stranded loopback-only
-[2025-01-15 11:00:00] [WARN] qbittorrent netns target moved (gluetun recreated) — recreate required
+[2025-01-15 11:00:00] [WARN] qbittorrent netns moved (gluetun recreated) → recreate
 [2025-01-15 11:00:00] [WARN] Recreating qbittorrent (re-homing netns onto gluetun 9f3c1a2b4d5e)
 [2025-01-15 11:00:02] [INFO] qbittorrent recreated as 7a1b2c3d4e5f and started
 [2025-01-15 11:00:04] [INFO] qbittorrent verified healthy after remediation

@@ -25,6 +25,7 @@ session-state.md
 
 # Local experiment/repro scripts (kept as reference, not committed)
 issue*.sh
+build-smoketest.sh
 
 # Python
 __pycache__/

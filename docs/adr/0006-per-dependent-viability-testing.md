@@ -205,9 +205,9 @@ the L7 viability result — each prefixed with the container the test ran in, so
 "can it route out" and "what did we actually validate" are both visible:
 
 ```
-[dependent:app1] interface check: live [eth0,lo,tun0]
-[dependent:app1] viability: https://example.com: resolved + connected (HTTP 200) [wget] [fails 0]
-[dependent:app1] viability: https://example.org: DNS FAILED — bad address [wget] [fails 2/2 -> remediate]   (WARN)
+[dependent:app1] link live: eth0,lo,tun0
+[dependent:app1] reach ok: example.com (HTTP 200) [wget]
+[dependent:app1] reach fail: example.org (bad address) [wget] [2/2 → remediate]   (WARN)
 ```
 
 ## Consequences

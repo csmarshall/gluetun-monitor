@@ -73,12 +73,12 @@ def test_live_dependent_logs_its_interfaces(tmp_path: Path) -> None:
     mon, stream = _mon(fake, tmp_path)
     mon.run_once()
     out = stream.getvalue()
-    # Two ordered lines: the interface/route check first, then the viability test.
-    assert "[dependent:dep] interface check: live [eth0,lo,tun0]" in out
-    assert "[dependent:dep] viability:" in out
-    iface_at = out.index("[dependent:dep] interface check:")
-    viability_at = out.index("[dependent:dep] viability:")
-    assert iface_at < viability_at  # path validated BEFORE the DNS/connect test
+    # Two ordered lines: the L3 link check first, then the reach (DNS/connect) test.
+    assert "[dependent:dep] link live: eth0,lo,tun0" in out
+    assert "[dependent:dep] reach " in out
+    iface_at = out.index("[dependent:dep] link ")
+    reach_at = out.index("[dependent:dep] reach ")
+    assert iface_at < reach_at  # path validated BEFORE the DNS/connect test
 
 
 def test_stranded_dependent_logs_loopback_only(tmp_path: Path) -> None:
@@ -90,4 +90,4 @@ def test_stranded_dependent_logs_loopback_only(tmp_path: Path) -> None:
     )
     mon, stream = _mon(fake, tmp_path)
     mon.run_once()
-    assert "[dependent:dep] interface check: stranded [lo]" in stream.getvalue()
+    assert "[dependent:dep] link stranded: lo" in stream.getvalue()

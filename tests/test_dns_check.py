@@ -53,7 +53,7 @@ def test_wget_resolved_but_no_http_is_ok() -> None:
                                               "wget: can't connect: Connection refused\n"))
     r = validate_dns(fake, "dep", "https://x", "x", 5)
     assert r.status is DnsStatus.OK and r.tool == "wget"
-    assert "no HTTP response" in r.reason
+    assert r.reason.startswith("no HTTP:")
 
 
 def test_wget_broken_short_circuits_the_cascade() -> None:

@@ -178,17 +178,17 @@ def remediate_dependent(
     action = remediation_action(info, gluetun_id)
 
     if action is RemediationAction.RESTART:
-        logger.info(f"Restarting {dep_name} (shares current gluetun netns id)")
+        logger.info(f"Restarting {dep_name} (same netns id)")
         if not _do_restart(client, dep_name, logger, sleep=sleep):
             return False
     elif action is RemediationAction.TRY_RESTART:
-        logger.info(f"Restarting {dep_name} (name-form netns target)")
+        logger.info(f"Restarting {dep_name} (name-form netns)")
         if not _do_restart(client, dep_name, logger, sleep=sleep):
             logger.warn(f"{dep_name} restart failed; escalating to recreate")
             if not _maybe_recreate(client, dep_name, gluetun_id, config, logger):
                 return False
     elif action is RemediationAction.RECREATE:
-        logger.warn(f"{dep_name} netns target moved (gluetun recreated) — recreate required")
+        logger.warn(f"{dep_name} netns moved (gluetun recreated) → recreate")
         if not _maybe_recreate(client, dep_name, gluetun_id, config, logger):
             return False
 

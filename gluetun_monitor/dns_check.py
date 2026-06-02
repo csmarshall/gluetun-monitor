@@ -82,23 +82,25 @@ def validate_dns(
     """
     # Tool 1 — wget (reuses the connectivity probe: it resolves via getaddrinfo
     # before connecting, so its result already tells us OK vs DNS-broken).
+    # ``reason`` carries only the *detail*; the caller supplies the verb + verdict
+    # ("reach ok/fail"), so we don't repeat "resolved"/"DNS FAILED" here.
     wget = probe_site(client, container, url, timeout, tries)
     if wget.exit_code not in _ABSENT_EXIT_CODES:
         if wget.dns_failed:
-            return DnsResult(DnsStatus.BROKEN, "wget", f"DNS resolution failed ({wget.reason})")
+            return DnsResult(DnsStatus.BROKEN, "wget", wget.reason)
         if wget.http_code != "N/A":
             # Full round-trip: resolved DNS + TCP-connected + got an HTTP response.
-            return DnsResult(DnsStatus.OK, "wget", f"resolved + connected (HTTP {wget.http_code})")
+            return DnsResult(DnsStatus.OK, "wget", f"HTTP {wget.http_code}")
         # DNS resolved but no HTTP response (connect refused / timeout / TLS).
         # Still viable (DNS is the only per-container fault), but say so honestly.
-        return DnsResult(DnsStatus.OK, "wget", f"resolved, no HTTP response ({wget.reason})")
+        return DnsResult(DnsStatus.OK, "wget", f"no HTTP: {wget.reason}")
 
     # Tool 2 — getent hosts (nsswitch-faithful; glibc images). 0 = resolved,
     # 2 = name not found. DNS-only (no connection attempt).
     getent = _try(client, container, ["getent", "hosts", "--", host])
     if getent is not None and not _absent(getent):
         if getent.exit_code == 0 and getent.output.strip():
-            return DnsResult(DnsStatus.OK, "getent", "resolved (DNS lookup only)")
+            return DnsResult(DnsStatus.OK, "getent", "lookup only")
         if getent.exit_code == 2:
             return DnsResult(DnsStatus.BROKEN, "getent", "name not found")
 
@@ -117,6 +119,6 @@ def validate_dns(
             or "(" in ping.output  # "PING host (1.2.3.4)" — name resolved to an address
         )
         if resolved:
-            return DnsResult(DnsStatus.OK, "ping", "resolved (DNS lookup only)")
+            return DnsResult(DnsStatus.OK, "ping", "lookup only")
 
-    return DnsResult(DnsStatus.UNVALIDATED, "", "no usable DNS tool (wget/getent/ping)")
+    return DnsResult(DnsStatus.UNVALIDATED, "", "no resolver tool")
