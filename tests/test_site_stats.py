@@ -238,6 +238,13 @@ def test_restart_effectiveness() -> None:
     assert st.restart_effectiveness == 0.5
 
 
+def test_restart_effectiveness_none_when_no_restarts() -> None:
+    """No restarts triggered -> None (callers render 'n/a', not a misleading 0%)."""
+    s = SiteStatsStore(None)
+    s.record_poll("b.com", True, duration_ms=10)
+    assert s.sites["b.com"].restart_effectiveness is None
+
+
 def test_new_metrics_persist_round_trip(tmp_path: Path) -> None:
     path = str(tmp_path / "stats.json")
     s1 = SiteStatsStore(path)

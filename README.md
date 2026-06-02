@@ -486,6 +486,30 @@ no restart needed). Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
 > applying the cheap restart fix and escalates to you. (A future automatic
 > back-off is possible; it would be opt-in.)
 
+### Viewing the stats: `gluetun-monitor-stats`
+
+The image ships a read-only command that renders the sidecar as a per-site matrix
+(it reads the same file the monitor writes, using the same code, so the numbers
+always match). It touches no Docker API and never mutates state — safe to run any
+time:
+
+```console
+$ docker exec gluetun-monitor gluetun-monitor-stats
+monitor v2.0.0  loops=205  runtime=2.0h  gluetun_restarts=0  remediations=0  advisories=0
+tracking since 2026-06-02 14:24
+
+site                     polls  fails  rate%   avg   p50   p90   p99   max  eff%  last_fail
+-----------------------  -----  -----  -----  ----  ----  ----  ----  ----  ----  ---------
+https://thepiratebay.org   319      0   0.00  2255  2191  2527  2679  3136   n/a  —
+https://www.google.com     319      0   0.00   716   631   911  1238  1274   n/a  —
+...
+latency in ms; eff% = restart-effectiveness (n/a = no restarts triggered)
+```
+
+Sites are sorted by `p90` (worst tail first) by default; `--sort` accepts
+`p90|p99|avg|max|p50|rate|polls|name`. Add `--json` to emit the same data for
+`jq`/dashboards, and `--file PATH` if your `STATS_FILE` lives elsewhere.
+
 ## Docker Compose Example
 
 ### Minimal Configuration (with socket proxy)

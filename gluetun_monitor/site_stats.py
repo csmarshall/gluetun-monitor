@@ -85,9 +85,13 @@ class SiteStat:
         return self.total_failures / self.failure_episodes if self.failure_episodes else 0.0
 
     @property
-    def restart_effectiveness(self) -> float:
-        """Fraction of this site's restarts after which it recovered on re-verify."""
-        return self.restarts_cleared / self.restarts_triggered if self.restarts_triggered else 0.0
+    def restart_effectiveness(self) -> float | None:
+        """Fraction of this site's restarts after which it recovered on re-verify,
+        or None when the site has triggered no restarts (so callers render 'n/a'
+        rather than a misleading 0% that reads as 'restarts never worked')."""
+        if not self.restarts_triggered:
+            return None
+        return self.restarts_cleared / self.restarts_triggered
 
     def latency_summary(self) -> dict[str, int]:
         """min/avg/max + p50/p90/p99 (ms) over the recent successful-poll samples.
@@ -334,7 +338,8 @@ class SiteStatsStore:
             raw = asdict(st)
             raw["failure_rate"] = round(st.failure_rate, 4)
             raw["avg_episode_polls"] = round(st.avg_episode_polls, 2)
-            raw["restart_effectiveness"] = round(st.restart_effectiveness, 4)
+            eff = st.restart_effectiveness
+            raw["restart_effectiveness"] = round(eff, 4) if eff is not None else None
             raw["latency_ms"] = st.latency_summary()
             sites_out[url] = raw
         now = self._clock()

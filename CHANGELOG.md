@@ -79,13 +79,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   site removed from `sites.conf` is pruned after `STATS_RETENTION_DAYS` (default
   90). Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, `ADVISORY_DOMINANCE`,
   `STATS_RETENTION_DAYS`.
-- **Per-dependent interface check is now shown at DEBUG** — each dependent logs
-  its L3 route check (`interface check: live [eth0,lo,tun0]` / `stranded [lo]` /
-  `unknown`) *before* its DNS/connect viability line, so "can it route out" is
-  visible every loop. Every test line is tagged with the container's role +
-  name — `[gateway:<gluetun>]` (site tests, run through the tunnel) or
-  `[dependent:<name>]` — and the viability label is honest about depth
-  (`resolved + connected (HTTP 200)` vs `resolved (DNS lookup only)`).
+- **`gluetun-monitor-stats` command** — a read-only operator command (shipped in
+  the image, `docker exec gluetun-monitor gluetun-monitor-stats`) that renders the
+  stats sidecar as a per-site matrix (latency percentiles, failure rate,
+  restart-effectiveness) plus monitor-wide totals. Sortable (`--sort`), with a
+  `--json` mode for jq/dashboards. Reads the same file via the same code the
+  monitor uses, so the numbers always match; touches no Docker API.
+- **Concise, consistent per-loop log grammar.** Each line reads
+  `[<role>:<name>] <dim> <verdict>: <target> (<detail>) [tool] [n/threshold → action]`.
+  The dimension is `link` (the L3 interface/route check, shown *before* the
+  connectivity test) or `reach` (DNS + connectivity), unifying the gateway site
+  test and the dependent viability test under one greppable verb; the verdict is
+  `ok` / `fail` / `stranded` / `?`. Healthy lines omit the failure counter (a
+  failing one shows e.g. `[2/2 → restart]`), and the detail is the bare proof
+  (`HTTP 200`, `bad address`) rather than a redundant restatement. Every line is
+  tagged with the container's role + name — `[gateway:<gluetun>]` (site tests, run
+  through the tunnel) or `[dependent:<name>]`.
+- **Log files are rotated** so the watchdog can't fill its own disk: the `/logs`
+  file is size-capped (`LOG_MAX_BYTES` ≈10 MB × `LOG_BACKUP_COUNT` 5; `0`
+  disables). The compose example also caps the Docker/stderr stream
+  (`logging: max-size/max-file`), which Docker does *not* rotate on its own.
 - **Log files are rotated** so the watchdog can't fill its own disk: the `/logs`
   file is size-capped (`LOG_MAX_BYTES` ≈10 MB × `LOG_BACKUP_COUNT` 5; `0`
   disables). The compose example also caps the Docker/stderr stream

@@ -21,6 +21,7 @@ Issues = "https://github.com/csmarshall/gluetun-monitor/issues"
 
 [project.scripts]
 gluetun-monitor = "gluetun_monitor.cli:main"
+gluetun-monitor-stats = "gluetun_monitor.report:main"
 
 [project.optional-dependencies]
 dev = [
