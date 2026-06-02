@@ -171,7 +171,8 @@ docker compose up -d
 | `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
 | `EXCLUDE_CONTAINERS` | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
-| `TIMEOUT` | `10` | Seconds to wait for each site test |
+| `TIMEOUT` | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W` |
+| `WGET_TRIES` | `1` | Attempts per `wget` probe (the shuffle + consecutive-failure thresholds, not retries, are how noise is tolerated) |
 | `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
 | `HEALTHY_WAIT_TIMEOUT` | `120` | Max seconds to wait for Gluetun to become healthy after restart |
 | `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
@@ -261,6 +262,38 @@ Time in seconds between health check cycles.
 Maximum seconds to wait for each site to respond. Tests run concurrently (up to `MAX_PARALLEL_CHECKS` at a time), so this bounds each batch rather than each individual site.
 
 Uses `wget --spider` which only fetches headers (no response body downloaded).
+
+### Timeouts & retries — one model, everywhere
+
+There is **one per-request timeout knob, `TIMEOUT`**, and it is applied identically
+to every network probe the monitor makes:
+
+| where | command | uses |
+|---|---|---|
+| gluetun site tests (through the tunnel) | `wget --spider --timeout=$TIMEOUT --tries=$WGET_TRIES` | `TIMEOUT`, `WGET_TRIES` |
+| dependent viability (inside each dependent) | the same `wget …` | `TIMEOUT`, `WGET_TRIES` |
+| DNS fallback (`ping`) | `ping -W $TIMEOUT` | `TIMEOUT` |
+| post-restart DNS-readiness probe | the same `wget …` | `TIMEOUT`, `WGET_TRIES` |
+
+So setting `TIMEOUT=10` **does** flow straight down to the `wget` run inside the
+dependent containers (busybox or GNU — both honor `--timeout`). `getent`/`nslookup`
+have no timeout flag and fall back to the container's resolver config (the cascade
+moves on if a tool is slow/absent).
+
+Don't confuse the **per-request** `TIMEOUT` with the **overall wait budgets** used
+only after a gluetun restart: `HEALTHY_WAIT_TIMEOUT` (wait for gluetun's
+healthcheck) and `DNS_WAIT_TIMEOUT` (poll for DNS to stabilize). Those are loops;
+`TIMEOUT` is each individual request inside them.
+
+**How the monitor "hunts" for a good result — and why `WGET_TRIES` defaults to 1.**
+Reliability comes from *breadth and repetition over time*, not from retrying a
+single request: gluetun tests the **whole site set** each loop and only acts after
+`FAIL_THRESHOLD` **consecutive** loops fail; each dependent tests **one shuffled
+site per loop** (so over loops it covers many names) and only acts after
+`DEPENDENT_CONTAINER_FAILURES` consecutive failures. That shuffle-and-threshold
+design already absorbs a flaky site, so a single fast attempt (`WGET_TRIES=1`) is
+the right default — raise it only if your links are lossy enough that one in-loop
+retry meaningfully helps.
 
 ### Site Test Success/Failure Logic
 

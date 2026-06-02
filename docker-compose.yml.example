@@ -52,8 +52,11 @@ services:
       # - SITES=https://www.google.com,https://cloudflare.com
       # Check interval in seconds
       - CHECK_INTERVAL=30
-      # Timeout for each site test (seconds)
+      # Per-request network timeout (seconds) — applied to every wget/ping probe,
+      # including the wget run inside the dependent containers.
       - TIMEOUT=10
+      # Attempts per wget probe (noise is handled by the shuffle + thresholds, not retries)
+      # - WGET_TRIES=1
       # Number of consecutive failures before triggering restart
       - FAIL_THRESHOLD=2
       # Max seconds to wait for gluetun to become healthy after restart

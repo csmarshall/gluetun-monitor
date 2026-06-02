@@ -113,7 +113,7 @@ class Monitor:
 
         results = self._fan_out(
             sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
-                                          self.config.timeout)
+                                          self.config.timeout, self.config.wget_tries)
         )
 
         # Site tests run *inside the gluetun container* (the VPN gateway, through
@@ -236,7 +236,7 @@ class Monitor:
         # — dns_check). Viable if ANY sampled site resolves; not-viable only if
         # ALL sampled resolvable sites fail DNS; unvalidated if no tool exists.
         results = [
-            (h, validate_dns(self.client, dep, u, h, self.config.timeout))
+            (h, validate_dns(self.client, dep, u, h, self.config.timeout, self.config.wget_tries))
             for (u, h) in resolvable_chosen
         ]
         oks = [(h, r) for (h, r) in results if r.status is DnsStatus.OK]

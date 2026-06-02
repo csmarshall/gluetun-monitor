@@ -15,34 +15,55 @@ _FALSE_VALUES = {"0", "false", "no", "off"}
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARN", "WARNING", "ERROR"}
 
 
-def _env_int(name: str, default: int, errors: list[str]) -> int:
+def _env_int(
+    name: str, default: int, errors: list[str],
+    *, minimum: int | None = None, maximum: int | None = None,
+) -> int:
     """Read an int env var, returning ``default`` when **unset**.
 
     An *unset* var is just the (sane) default. A var that is **set** to an
-    unparseable value is malformed config: record a fatal error so the CLI
-    refuses to start, rather than guessing a substitute and risking acting on the
-    larger system with bad parameters. The return value is irrelevant then.
+    unparseable value — *or* a parseable value outside ``[minimum, maximum]`` — is
+    malformed config: record a fatal error so the CLI refuses to start, rather
+    than guessing a substitute and risking acting on the larger system with bad
+    parameters (e.g. TIMEOUT=0 = infinite wget, WGET_TRIES=0 = infinite retries).
     """
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError:
         errors.append(f"Invalid {name}={raw!r}: not an integer")
         return default
+    if minimum is not None and value < minimum:
+        errors.append(f"Invalid {name}={value}: must be >= {minimum}")
+        return default
+    if maximum is not None and value > maximum:
+        errors.append(f"Invalid {name}={value}: must be <= {maximum}")
+        return default
+    return value
 
 
-def _env_float(name: str, default: float, errors: list[str]) -> float:
-    """Read a float env var; a set-but-unparseable value is a fatal error."""
+def _env_float(
+    name: str, default: float, errors: list[str],
+    *, minimum: float | None = None, maximum: float | None = None,
+) -> float:
+    """Read a float env var; a set-but-unparseable or out-of-range value is fatal."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         errors.append(f"Invalid {name}={raw!r}: not a number")
         return default
+    if minimum is not None and value < minimum:
+        errors.append(f"Invalid {name}={value}: must be >= {minimum}")
+        return default
+    if maximum is not None and value > maximum:
+        errors.append(f"Invalid {name}={value}: must be <= {maximum}")
+        return default
+    return value
 
 
 def _env_bool(name: str, default: bool, errors: list[str]) -> bool:
@@ -71,7 +92,8 @@ class Config:
     config_file: str = "/config/sites.conf"
     log_file: str = "/logs/gluetun-monitor.log"
     check_interval: int = 30
-    timeout: int = 10
+    timeout: int = 10  # per-request network timeout (wget --timeout, ping -W) everywhere
+    wget_tries: int = 1  # attempts per wget probe (the shuffle+threshold handle noise)
     fail_threshold: int = 2
     gluetun_container: str = "gluetun"
     healthy_wait_timeout: int = 120
@@ -145,7 +167,9 @@ class Config:
         system must not run with parameters it couldn't parse.
         """
         errors: list[str] = []
-        fail_threshold = _env_int("FAIL_THRESHOLD", 2, errors)
+        # Bounds are validated (out-of-range -> fatal) so a parseable-but-nonsensical
+        # value can't create a downstream bug (TIMEOUT=0 -> infinite wget, etc.).
+        fail_threshold = _env_int("FAIL_THRESHOLD", 2, errors, minimum=1)
         docker_host = os.environ.get("DOCKER_HOST") or None
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if log_level not in _VALID_LOG_LEVELS:
@@ -155,33 +179,39 @@ class Config:
         return cls(
             config_file=os.environ.get("CONFIG_FILE", "/config/sites.conf"),
             log_file=os.environ.get("LOG_FILE", "/logs/gluetun-monitor.log"),
-            check_interval=_env_int("CHECK_INTERVAL", 30, errors),
-            timeout=_env_int("TIMEOUT", 10, errors),
+            check_interval=_env_int("CHECK_INTERVAL", 30, errors, minimum=1),
+            timeout=_env_int("TIMEOUT", 10, errors, minimum=1),
+            wget_tries=_env_int("WGET_TRIES", 1, errors, minimum=1),
             fail_threshold=fail_threshold,
             gluetun_container=os.environ.get("GLUETUN_CONTAINER", "gluetun"),
-            healthy_wait_timeout=_env_int("HEALTHY_WAIT_TIMEOUT", 120, errors),
+            healthy_wait_timeout=_env_int("HEALTHY_WAIT_TIMEOUT", 120, errors, minimum=1),
             dependent_containers=os.environ.get("DEPENDENT_CONTAINERS", "auto"),
             docker_host=docker_host,
             # DEPENDENT_CONTAINER_FAILURES defaults to FAIL_THRESHOLD (ADR-0006).
             dependent_container_failures=_env_int(
-                "DEPENDENT_CONTAINER_FAILURES", fail_threshold, errors
+                "DEPENDENT_CONTAINER_FAILURES", fail_threshold, errors, minimum=1
             ),
-            max_parallel_checks=_env_int("MAX_PARALLEL_CHECKS", 6, errors),
+            max_parallel_checks=_env_int("MAX_PARALLEL_CHECKS", 6, errors, minimum=1),
             auto_recreate=_env_bool("AUTO_RECREATE", True, errors),
-            dns_wait_timeout=_env_int("DNS_WAIT_TIMEOUT", 30, errors),
+            dns_wait_timeout=_env_int("DNS_WAIT_TIMEOUT", 30, errors, minimum=0),
             log_level=log_level,
-            log_max_bytes=_env_int("LOG_MAX_BYTES", 10 * 1024 * 1024, errors),
-            log_backup_count=_env_int("LOG_BACKUP_COUNT", 5, errors),
+            log_max_bytes=_env_int("LOG_MAX_BYTES", 10 * 1024 * 1024, errors, minimum=0),
+            log_backup_count=_env_int("LOG_BACKUP_COUNT", 5, errors, minimum=0),
             sites_env=os.environ.get("SITES") or None,
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
-            dependent_viability_samples=_env_int("DEPENDENT_VIABILITY_SAMPLES", 1, errors),
-            max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
+            # -1 = all sites; otherwise >= 1 (0 would be meaningless).
+            dependent_viability_samples=_env_int(
+                "DEPENDENT_VIABILITY_SAMPLES", 1, errors, minimum=-1
+            ),
+            max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors, minimum=0),
             dry_run=_env_bool("DRY_RUN", False, errors),
             stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),
+            # No lower bound: <= 0 intentionally means "keep stats forever".
             stats_retention_days=_env_int("STATS_RETENTION_DAYS", 90, errors),
-            advisory_window=_env_int("ADVISORY_WINDOW", 86400, errors),
-            advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors),
-            advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors),
+            advisory_window=_env_int("ADVISORY_WINDOW", 86400, errors, minimum=1),
+            advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors, minimum=1),
+            advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors,
+                                          minimum=0.0, maximum=1.0),
             errors=tuple(errors),
         )

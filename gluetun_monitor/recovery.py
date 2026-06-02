@@ -61,9 +61,17 @@ def wait_for_dns(
     max_wait: int,
     logger: Logger,
     *,
+    request_timeout: int = 10,
+    tries: int = 1,
     sleep: Sleep = time.sleep,
 ) -> bool:
-    """Wait for gluetun DNS + connectivity to stabilize after a restart."""
+    """Wait for gluetun DNS + connectivity to stabilize after a restart.
+
+    The per-request probe uses the same standardized TIMEOUT/WGET_TRIES as every
+    other wget in the monitor (``request_timeout``/``tries``) — not a hardcoded
+    value — so one knob governs them all. ``max_wait`` (DNS_WAIT_TIMEOUT) is the
+    separate overall poll budget.
+    """
     logger.info("Waiting for DNS to stabilize...")
     waited = 0
     while waited < max_wait:
@@ -72,7 +80,8 @@ def wait_for_dns(
             if ns.exit_code == 0:
                 probe = client.exec_run(
                     container,
-                    ["wget", "--spider", "--timeout=5", "--tries=1", "-q", "https://1.1.1.1"],
+                    ["wget", "--spider", f"--timeout={request_timeout}", f"--tries={tries}",
+                     "-q", "https://1.1.1.1"],
                 )
                 if probe.exit_code == 0:
                     logger.info(f"DNS and connectivity verified after {waited}s")
@@ -110,7 +119,8 @@ def restart_gluetun(
         logger.error("Gluetun failed to become healthy after restart")
         return False
 
-    wait_for_dns(client, config.gluetun_container, config.dns_wait_timeout, logger, sleep=sleep)
+    wait_for_dns(client, config.gluetun_container, config.dns_wait_timeout, logger,
+                 request_timeout=config.timeout, tries=config.wget_tries, sleep=sleep)
     new = get_endpoint_info(client, config.gluetun_container)
     logger.endpoint(new.format("NEW", "After restart"))
     return True

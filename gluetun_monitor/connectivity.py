@@ -109,14 +109,17 @@ def probe_site(
     container: str,
     url: str,
     timeout: int,
+    tries: int = 1,
 ) -> SiteResult:
     """Probe ``url`` with ``wget --spider`` from inside ``container``'s netns.
 
-    No ``-q``: we want wget's diagnostics in the output so a real failure reports
-    *why* (not a bare exit code). Classification is HTTP-response-first (see the
-    module docstring), so it's correct for both GNU and busybox wget.
+    ``timeout`` (TIMEOUT) and ``tries`` (WGET_TRIES) are the standardized per-request
+    knobs, applied identically to gluetun's GNU wget and the dependents' busybox
+    wget. No ``-q``: we want wget's diagnostics in the output so a real failure
+    reports *why* (not a bare exit code). Classification is HTTP-response-first (see
+    the module docstring), so it's correct for both GNU and busybox wget.
     """
-    cmd = ["wget", "--spider", "-S", f"--timeout={timeout}", "--tries=1", url]
+    cmd = ["wget", "--spider", "-S", f"--timeout={timeout}", f"--tries={tries}", url]
     start = time.monotonic()
     try:
         result = client.exec_run(container, cmd)

@@ -71,15 +71,18 @@ def validate_dns(
     url: str,
     host: str,
     timeout: int,
+    tries: int = 1,
 ) -> DnsResult:
     """Validate that ``container`` can resolve ``host`` (the host part of ``url``).
 
     Cascades wget → getent → ping, stopping at the first tool that's actually
     present (gives OK or BROKEN). If none are present, returns UNVALIDATED.
+    ``timeout``/``tries`` are the standardized per-request knobs (wget --timeout/
+    --tries; ping -W).
     """
     # Tool 1 — wget (reuses the connectivity probe: it resolves via getaddrinfo
     # before connecting, so its result already tells us OK vs DNS-broken).
-    wget = probe_site(client, container, url, timeout)
+    wget = probe_site(client, container, url, timeout, tries)
     if wget.exit_code not in _ABSENT_EXIT_CODES:
         if wget.dns_failed:
             return DnsResult(DnsStatus.BROKEN, "wget", f"DNS resolution failed ({wget.reason})")

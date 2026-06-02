@@ -43,6 +43,62 @@ def test_invalid_log_level_records_error(monkeypatch: pytest.MonkeyPatch) -> Non
     assert any("LOG_LEVEL" in e for e in c.errors)
 
 
+@pytest.mark.parametrize(
+    "var",
+    ["CHECK_INTERVAL", "TIMEOUT", "WGET_TRIES", "FAIL_THRESHOLD",
+     "DEPENDENT_CONTAINER_FAILURES", "MAX_PARALLEL_CHECKS", "HEALTHY_WAIT_TIMEOUT",
+     "ADVISORY_WINDOW", "ADVISORY_MIN_RESTARTS"],
+)
+def test_zero_is_rejected_for_must_be_positive_dials(
+    monkeypatch: pytest.MonkeyPatch, var: str
+) -> None:
+    """0 (and negatives) on these would cause real bugs — infinite wget timeout,
+    busy-loops, restart-on-every-loop — so they're fatal, not silently accepted."""
+    monkeypatch.setenv(var, "0")
+    assert any(var in e for e in Config.from_env().errors)
+
+
+@pytest.mark.parametrize("var", ["TIMEOUT", "WGET_TRIES", "MAX_PARALLEL_CHECKS"])
+def test_negative_is_rejected(monkeypatch: pytest.MonkeyPatch, var: str) -> None:
+    monkeypatch.setenv(var, "-3")
+    assert any(var in e for e in Config.from_env().errors)
+
+
+def test_advisory_dominance_out_of_range_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dominance is a fraction; >1 (never fires) or <0 (always) are fatal."""
+    monkeypatch.setenv("ADVISORY_DOMINANCE", "9")
+    assert any("ADVISORY_DOMINANCE" in e for e in Config.from_env().errors)
+    monkeypatch.setenv("ADVISORY_DOMINANCE", "-0.5")
+    assert any("ADVISORY_DOMINANCE" in e for e in Config.from_env().errors)
+
+
+def test_in_range_values_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TIMEOUT", "30")
+    monkeypatch.setenv("WGET_TRIES", "3")
+    monkeypatch.setenv("ADVISORY_DOMINANCE", "0.75")
+    c = Config.from_env()
+    assert c.errors == ()
+    assert c.timeout == 30 and c.wget_tries == 3 and c.advisory_dominance == 0.75
+
+
+def test_intentional_special_values_are_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Documented sentinels are NOT rejected: STATS_RETENTION_DAYS<=0 = keep
+    forever, LOG_MAX_BYTES=0 = no rotation, DEPENDENT_VIABILITY_SAMPLES=-1 = all."""
+    monkeypatch.setenv("STATS_RETENTION_DAYS", "0")
+    monkeypatch.setenv("LOG_MAX_BYTES", "0")
+    monkeypatch.setenv("DEPENDENT_VIABILITY_SAMPLES", "-1")
+    c = Config.from_env()
+    assert c.errors == ()
+    assert c.stats_retention_days == 0
+    assert c.log_max_bytes == 0
+    assert c.dependent_viability_samples == -1
+
+
+def test_viability_samples_below_minus_one_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEPENDENT_VIABILITY_SAMPLES", "-5")
+    assert any("DEPENDENT_VIABILITY_SAMPLES" in e for e in Config.from_env().errors)
+
+
 def test_clean_env_has_no_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """The crucial contrast: with everything unset, there are NO errors — unset
     is just the default, never a misconfiguration."""
