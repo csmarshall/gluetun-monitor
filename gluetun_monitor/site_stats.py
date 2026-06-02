@@ -214,11 +214,13 @@ class SiteStatsStore:
         self.monitor.total_loops += 1
 
     def record_gluetun_restart(self) -> None:
-        """One actual gluetun restart (monitor-wide count)."""
+        """One gluetun restart initiated (monitor-wide count; counted when the
+        action is taken, not gated on it clearing the failure)."""
         self.monitor.total_gluetun_restarts += 1
 
     def record_dependent_remediation(self) -> None:
-        """One actual dependent restart/recreate (monitor-wide count)."""
+        """One dependent remediation initiated — restart/recreate (monitor-wide
+        count; counted when the action is taken, not gated on it succeeding)."""
         self.monitor.total_dependent_remediations += 1
 
     def record_advisory(self) -> None:

@@ -216,8 +216,8 @@ class Monitor:
             info = self.client.inspect(dep)
             running = bool(info and info.running)
             if (
-                running
-                and info is not None
+                info is not None
+                and info.running
                 and remediation_action(info, gluetun_id) is RemediationAction.RECREATE
             ):
                 return DependentProbe(

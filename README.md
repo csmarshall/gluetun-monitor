@@ -298,18 +298,14 @@ retry meaningfully helps.
 
 ### Site Test Success/Failure Logic
 
-The monitor distinguishes between **connectivity failures** (VPN broken) and **site errors** (VPN working, site returned an error):
+The monitor distinguishes between **connectivity failures** (VPN broken) and **site errors** (VPN working, site returned an error). The decision is **HTTP-response-first**, not exit-code-based:
 
-| wget Exit Code | Meaning | Treated As | Rationale |
-|----------------|---------|------------|-----------|
-| 0 | Success (HTTP 2xx/3xx) | **PASS** | Site responded successfully |
-| 6 | Authentication required | **PASS** | Site responded (VPN working) |
-| 8 | Server error (HTTP 4xx/5xx) | **PASS** | Site responded (VPN working) |
-| 4 | Network failure | **FAIL** | DNS or connection failed |
-| 5 | SSL verification failure | **FAIL** | Possible MITM or connectivity issue |
-| 1-3, 7 | Other errors | **FAIL** | Various connectivity issues |
+- **Any HTTP response = PASS** — including 401/403/404/5xx. A status line proves DNS resolved, the connection traversed the tunnel, and a server answered, so the tunnel is up regardless of *what* the server said (Tenet 3 — a broken tunnel is not a sad website).
+- **Only a failure to get any HTTP response = FAIL** — DNS failure, connection refused, TLS error, or timeout.
 
-**Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working - the site just doesn't like the request. Only actual network/DNS failures indicate a VPN problem.
+This is also why it's correct across wget implementations: gluetun ships **GNU wget** (HTTP errors → exit 6/8), but dependent containers commonly run **busybox wget** (exit 1 for *any* HTTP error). Keying on "did we get an HTTP status?" rather than on the exit code means a busybox dependent's harmless 404 is read as a PASS, not a spurious failure. The wget exit code is used only as a **fallback** when no HTTP status line was captured at all (GNU's `0/6/8` = "responded").
+
+**Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working — the site just doesn't like the request. Only actual network/DNS/TLS/timeout failures indicate a VPN problem.
 
 #### `FAIL_THRESHOLD`
 Number of **consecutive** failures for a site before triggering a restart. This prevents restarts from transient network blips.
