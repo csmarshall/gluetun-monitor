@@ -95,7 +95,7 @@ def validate_dns(
 
     # Tool 2 — getent hosts (nsswitch-faithful; glibc images). 0 = resolved,
     # 2 = name not found. DNS-only (no connection attempt).
-    getent = _try(client, container, ["getent", "hosts", host])
+    getent = _try(client, container, ["getent", "hosts", "--", host])
     if getent is not None and not _absent(getent):
         if getent.exit_code == 0 and getent.output.strip():
             return DnsResult(DnsStatus.OK, "getent", "resolved (DNS lookup only)")
@@ -104,7 +104,7 @@ def validate_dns(
 
     # Tool 3 — ping (resolves via getaddrinfo before sending; we only care that
     # resolution happened, not that ICMP succeeded — packets may be blocked).
-    ping = _try(client, container, ["ping", "-c", "1", "-W", str(max(1, timeout)), host])
+    ping = _try(client, container, ["ping", "-c", "1", "-W", str(max(1, timeout)), "--", host])
     if ping is not None and not _absent(ping):
         if _is_dns_failure(ping.output):
             return DnsResult(DnsStatus.BROKEN, "ping", "resolution failed")

@@ -9,6 +9,10 @@ docker-compose.yml
 # Local overrides
 docker-compose.override.yml
 
+# Personal local backups of the live compose (may contain real names)
+docker-compose.yml.*-backup
+*.bak
+
 # Editor files
 *.swp
 *.swo

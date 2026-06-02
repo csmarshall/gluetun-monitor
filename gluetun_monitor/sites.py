@@ -46,15 +46,29 @@ def parse_sites_csv(value: str) -> list[str]:
     return [s for s in (trim(x) for x in value.split(",")) if s]
 
 
-def load_sites(config_file: str | Path, sites_env: str | None) -> list[str]:
-    """Effective test set: the union of ``sites.conf`` and the ``SITES`` env CSV.
+def unsafe_site_reason(site: str) -> str | None:
+    """Why ``site`` is unsafe/useless to probe, or None if it's acceptable.
 
-    Either source is optional; both may be supplied. Duplicates are removed,
-    first-occurrence order preserved (file entries first, then env-only ones). A
-    missing config file contributes nothing (not an error here — the caller
-    decides whether the *combined* set being empty is fatal). The file is re-read
-    on each call, so editing it is picked up live; the env value is fixed at
-    process start.
+    A leading-dash entry would be parsed by ``wget``/``ping`` as an *option*
+    rather than a URL — e.g. ``--directory-prefix=/etc`` could write files inside
+    a container (the exec layer also guards this with a ``--`` separator; this
+    keeps such a bogus "flag URL" out of the test set entirely — Tenet 1). An
+    entry with no host component tests nothing.
+    """
+    if site.startswith("-"):
+        return "looks like a command-line flag (leading '-')"
+    if not hostname_of(site):
+        return "no host component"
+    return None
+
+
+def load_sites_report(
+    config_file: str | Path, sites_env: str | None
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Like :func:`load_sites`, but also returns rejected ``(entry, reason)`` pairs.
+
+    Used at startup so the operator gets a loud warning about dropped entries; the
+    per-loop path uses :func:`load_sites` and drops them silently (already warned).
     """
     try:
         file_sites = parse_sites_conf(config_file)
@@ -63,12 +77,31 @@ def load_sites(config_file: str | Path, sites_env: str | None) -> list[str]:
     env_sites = parse_sites_csv(sites_env) if sites_env else []
 
     seen: set[str] = set()
-    merged: list[str] = []
+    safe: list[str] = []
+    rejected: list[tuple[str, str]] = []
     for site in (*file_sites, *env_sites):
-        if site not in seen:
-            seen.add(site)
-            merged.append(site)
-    return merged
+        if site in seen:
+            continue
+        seen.add(site)
+        reason = unsafe_site_reason(site)
+        if reason is not None:
+            rejected.append((site, reason))
+        else:
+            safe.append(site)
+    return safe, rejected
+
+
+def load_sites(config_file: str | Path, sites_env: str | None) -> list[str]:
+    """Effective test set: the union of ``sites.conf`` and the ``SITES`` env CSV.
+
+    Either source is optional; both may be supplied. Duplicates are removed,
+    first-occurrence order preserved (file entries first, then env-only ones).
+    Unsafe entries (see :func:`unsafe_site_reason`) are dropped. A missing config
+    file contributes nothing (not an error here — the caller decides whether the
+    *combined* set being empty is fatal). The file is re-read on each call, so
+    editing it is picked up live; the env value is fixed at process start.
+    """
+    return load_sites_report(config_file, sites_env)[0]
 
 
 def hostname_of(url: str) -> str:

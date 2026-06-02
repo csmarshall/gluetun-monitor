@@ -119,7 +119,11 @@ def probe_site(
     reports *why* (not a bare exit code). Classification is HTTP-response-first (see
     the module docstring), so it's correct for both GNU and busybox wget.
     """
-    cmd = ["wget", "--spider", "-S", f"--timeout={timeout}", f"--tries={tries}", url]
+    # ``--`` ends option parsing: a site like "--directory-prefix=/etc" must be
+    # treated as a (bad) URL, never as a wget flag that could write files inside
+    # the container. sites.py already rejects leading-dash entries; this is the
+    # belt-and-suspenders second layer (Tenet 1).
+    cmd = ["wget", "--spider", "-S", f"--timeout={timeout}", f"--tries={tries}", "--", url]
     start = time.monotonic()
     try:
         result = client.exec_run(container, cmd)

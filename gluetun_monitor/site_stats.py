@@ -304,8 +304,12 @@ class SiteStatsStore:
                 total_dependent_remediations=m.get("total_dependent_remediations", 0),
                 total_advisories=m.get("total_advisories", 0),
             )
-        except (OSError, ValueError, TypeError):
-            # Corrupt/unreadable stats are non-fatal — start fresh in memory.
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            # Corrupt/unreadable stats are non-fatal — start fresh in memory. This
+            # must tolerate *any* shape of garbage, not just truncation: a file
+            # whose top level or a "sites"/"monitor" value is the wrong type (e.g.
+            # a JSON list) would otherwise raise AttributeError on .get()/.items()
+            # and crash startup, defeating the best-effort contract (Tenet 1).
             self.sites = {}
             self.recent_restarts = []
             self.monitor = MonitorStats()

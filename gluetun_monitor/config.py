@@ -170,6 +170,13 @@ class Config:
         # Bounds are validated (out-of-range -> fatal) so a parseable-but-nonsensical
         # value can't create a downstream bug (TIMEOUT=0 -> infinite wget, etc.).
         fail_threshold = _env_int("FAIL_THRESHOLD", 2, errors, minimum=1)
+        # Samples is -1 (all) or >= 1; 0 is meaningless (probe nothing) and the
+        # monitor would silently coerce it to 1, so reject it rather than guess.
+        viability_samples = _env_int("DEPENDENT_VIABILITY_SAMPLES", 1, errors, minimum=-1)
+        if viability_samples == 0:
+            errors.append(
+                "Invalid DEPENDENT_VIABILITY_SAMPLES=0: use -1 (all sites) or a positive count"
+            )
         docker_host = os.environ.get("DOCKER_HOST") or None
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if log_level not in _VALID_LOG_LEVELS:
@@ -200,10 +207,7 @@ class Config:
             sites_env=os.environ.get("SITES") or None,
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
-            # -1 = all sites; otherwise >= 1 (0 would be meaningless).
-            dependent_viability_samples=_env_int(
-                "DEPENDENT_VIABILITY_SAMPLES", 1, errors, minimum=-1
-            ),
+            dependent_viability_samples=viability_samples,
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors, minimum=0),
             dry_run=_env_bool("DRY_RUN", False, errors),
             stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),

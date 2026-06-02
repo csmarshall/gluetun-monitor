@@ -11,7 +11,7 @@ from .dependents import parse_csv_names
 from .docker_client import DockerClient, DockerPyClient
 from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
-from .sites import load_sites
+from .sites import load_sites_report
 
 
 def check_prerequisites(client: DockerClient, config: Config, logger: Logger) -> bool:
@@ -27,12 +27,14 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
     fatal: excluding is the "do no harm" direction.
     """
     try:
-        sites = load_sites(config.config_file, config.sites_env)
+        sites, rejected = load_sites_report(config.config_file, config.sites_env)
     except OSError as exc:
         # e.g. CONFIG_FILE is a directory (a missing bind-mount source that Docker
         # silently created) or unreadable — fail loud and cleanly, not a traceback.
         logger.error(f"Cannot read sites config {config.config_file}: {exc}")
         return False
+    for entry, reason in rejected:
+        logger.warn(f"Ignoring unsafe site entry {entry!r}: {reason}")
     if not sites:
         logger.error(
             "No testable sites configured: provide URLs via the sites file "

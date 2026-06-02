@@ -10,6 +10,7 @@ exec fan-out runs concurrently (bounded by MAX_PARALLEL_CHECKS).
 from __future__ import annotations
 
 import random
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -71,6 +72,12 @@ class Monitor:
         self.config = config
         self.log = logger
         self._rng = rng if rng is not None else random.Random()
+        # _probe_dependent runs across a ThreadPoolExecutor (_fan_out), and a
+        # random.Random instance is not thread-safe — concurrent sample()/uniform()
+        # calls can interleave and corrupt its state, biasing the load-bearing site
+        # shuffle (ADR-0006). All draws go through this lock so the shuffle stays
+        # sound under fan-out. The lock is held only for the draw, never across I/O.
+        self._rng_lock = threading.Lock()
         self._sleep = sleep
         # Persistent per-site stats (ADR-0008). Injectable for tests.
         self.stats = stats if stats is not None else SiteStatsStore(config.stats_file)
@@ -161,7 +168,9 @@ class Monitor:
         # of execs across live dependents (ADR-0006). The concurrency cap is the
         # primary bound; this only spreads start times when explicitly enabled.
         if self.config.max_jitter_ms > 0:
-            self._sleep(self._rng.uniform(0, self.config.max_jitter_ms) / 1000.0)
+            with self._rng_lock:
+                jitter = self._rng.uniform(0, self.config.max_jitter_ms) / 1000.0
+            self._sleep(jitter)
 
         # L3/L4 interface check (node 7): which interfaces does the dependent have?
         # The set is captured (not just the verdict) so it's visible in DEBUG —
@@ -222,7 +231,8 @@ class Monitor:
             return DependentProbe(dep, status, True, None, "no test URLs", interfaces=ifs)
         n = self.config.dependent_viability_samples
         k = len(pool) if (n < 0 or n >= len(pool)) else max(1, n)
-        chosen = self._rng.sample(pool, k)
+        with self._rng_lock:
+            chosen = self._rng.sample(pool, k)
 
         # Only hostnames exercise DNS; IP literals have nothing to resolve.
         resolvable_chosen = [

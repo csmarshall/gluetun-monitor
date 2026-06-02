@@ -99,6 +99,19 @@ def test_viability_samples_below_minus_one_rejected(monkeypatch: pytest.MonkeyPa
     assert any("DEPENDENT_VIABILITY_SAMPLES" in e for e in Config.from_env().errors)
 
 
+def test_viability_samples_zero_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0 would probe nothing and the monitor would silently coerce it to 1, so
+    it's fatal — only -1 (all) or a positive count are valid."""
+    monkeypatch.setenv("DEPENDENT_VIABILITY_SAMPLES", "0")
+    assert any("DEPENDENT_VIABILITY_SAMPLES" in e for e in Config.from_env().errors)
+
+
+def test_viability_samples_one_and_minus_one_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    for val in ("1", "-1", "5"):
+        monkeypatch.setenv("DEPENDENT_VIABILITY_SAMPLES", val)
+        assert Config.from_env().errors == ()
+
+
 def test_clean_env_has_no_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """The crucial contrast: with everything unset, there are NO errors — unset
     is just the default, never a misconfiguration."""
