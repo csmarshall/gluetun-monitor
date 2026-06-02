@@ -66,12 +66,13 @@ Three behavior changes to know about:
    only).
 2. **Bad config is now fatal** (see above) — if it refuses to start after the
    upgrade, the log says exactly what to fix.
-3. v2 **runs as a non-root user** (uid 10001). v1 ran as root, so an existing
-   `./logs` dir is likely root-owned — make it writable by the new user
-   (`sudo chown 10001:10001 ./logs`) to keep the file log + stats sidecar. If you
-   skip this the monitor still runs and logs to `docker logs`; it just can't
-   persist them. Using the direct socket mount instead of the proxy? Add your host
-   `docker` group via `group_add` (see the compose example).
+3. v2 **runs as a non-root user** (default uid/gid 1000 — the typical first host
+   user). v1 ran as root, so existing `./logs` files are likely root-owned — run
+   `sudo chown -R 1000:1000 ./logs` (or override `user:` to match your uid) to keep
+   the file log + stats sidecar. If you skip this the monitor still runs and logs
+   to `docker logs`; it just can't persist them. Using the direct socket mount
+   instead of the proxy? Add your host `docker` group via `group_add` (see the
+   compose example).
 
 **Rollback** is one step: repin `:1`.
 

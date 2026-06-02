@@ -99,10 +99,12 @@ services:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
       # Persistent logs + stats (the monitor rotates the file inside this dir).
-      # The image runs as non-root (uid 10001); make this dir writable by it, e.g.
-      #   mkdir -p ./logs && sudo chown 10001:10001 ./logs
-      # If it isn't writable the monitor still runs and logs to stdout (docker
-      # logs) — it just can't persist the file log / site-stats sidecar.
+      # The image runs non-root (default uid/gid 1000 = the typical first host
+      # user), so a ./logs you created is usually already writable. If your user
+      # isn't 1000 (check: id), either chown it (sudo chown -R <uid>:<gid> ./logs)
+      # or run as your uid with `user: "1000:1000"` on this service. If it isn't
+      # writable the monitor still runs and logs to stdout (docker logs) — it just
+      # can't persist the file log / site-stats sidecar.
       - ./logs:/logs
     networks:
       - docker-proxy

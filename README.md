@@ -674,14 +674,20 @@ soak-testing); `INFO` is much quieter for steady-state.
 
 ### Running as non-root
 
-The image runs as a non-root user (uid **10001**). The real privilege the monitor
-holds is the Docker API, not its in-container uid — running unprivileged is just
-defense in depth. Two things follow:
+The image runs as a non-root user, default **uid/gid 1000** (the first real user
+on a typical single-user host). The real privilege the monitor holds is the Docker
+API, not its in-container uid — running unprivileged is just defense in depth.
+Three things follow:
 
-- **Make `/logs` writable by it** — e.g. `mkdir -p ./logs && sudo chown 10001:10001
-  ./logs`. If it isn't writable the monitor still runs and logs to `docker logs`;
-  it just can't persist the file log or the site-stats sidecar. (Upgrading from v1,
-  which ran as root? Your existing `./logs` is probably root-owned — chown it.)
+- **`/logs` must be writable by the runtime uid.** If your host user is `1000`
+  (the common case — check with `id`), a `./logs` you created is already owned by
+  it and just works. If it isn't writable the monitor still runs and logs to
+  `docker logs`; it just can't persist the file log or the site-stats sidecar.
+- **Different uid?** Override at runtime to match whoever owns `/logs` —
+  `user: "${UID}:${GID}"` (or e.g. `user: "1000:1000"`) in the compose service.
+  No image rebuild needed.
+- **Upgrading from v1** (which ran as root)? Your existing `./logs` files are
+  root-owned — `sudo chown -R 1000:1000 ./logs` (or to whatever uid you run as).
 - **Direct socket mount** (instead of the recommended socket proxy)? A non-root
   process can't read the root:docker-owned `/var/run/docker.sock` by default — add
   the host `docker` group via `group_add` (see the compose example). The
