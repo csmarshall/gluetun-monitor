@@ -213,31 +213,53 @@ class Monitor:
             return DependentProbe(dep, status, True, None, "viability disabled (interface only)",
                                   interfaces=ifs)
 
-        # one shuffled name per loop (the shuffle is load-bearing, ADR-0006).
+        # Sample one (default) or more shuffled names per loop. The shuffle is
+        # load-bearing (ADR-0006); DEPENDENT_VIABILITY_SAMPLES lets an operator
+        # widen it (N, or -1 = all), at N execs/dependent/loop — usually redundant
+        # since dependents share gluetun's netns (only DNS differs).
         pool = resolvable or ips
         if not pool:
             return DependentProbe(dep, status, True, None, "no test URLs", interfaces=ifs)
-        url = self._rng.choice(pool)
-        host = hostname_of(url)
-        if is_ip_literal(host):
-            # An IP literal has nothing to resolve; the phase already WARNed that
-            # dependent DNS can't be validated in an IP-only config.
-            return DependentProbe(dep, status, True, None,
-                                  f"{url}: IP literal (DNS not validated)", interfaces=ifs)
+        n = self.config.dependent_viability_samples
+        k = len(pool) if (n < 0 or n >= len(pool)) else max(1, n)
+        chosen = self._rng.sample(pool, k)
 
-        # Validate the dependent's OWN DNS resolution (the only per-container
-        # fault — see dns_check). Three outcomes: OK -> viable; BROKEN -> the
-        # fault we act on; UNVALIDATED -> can't tell (no tool), don't guess.
-        dns = validate_dns(self.client, dep, url, host, self.config.timeout)
-        if dns.status is DnsStatus.UNVALIDATED:
-            return DependentProbe(dep, status, True, None, f"{host}: {dns.reason}",
-                                  dns_unvalidated=True, interfaces=ifs)
-        viable = dns.status is DnsStatus.OK
-        if viable:
-            detail = f"{host}: {dns.reason} [{dns.tool}]"  # what was actually validated
-        else:
-            detail = f"{host}: DNS FAILED — {dns.reason} [{dns.tool}]"
-        return DependentProbe(dep, status, True, viable, detail, interfaces=ifs)
+        # Only hostnames exercise DNS; IP literals have nothing to resolve.
+        resolvable_chosen = [
+            (u, hostname_of(u)) for u in chosen if not is_ip_literal(hostname_of(u))
+        ]
+        if not resolvable_chosen:
+            return DependentProbe(dep, status, True, None,
+                                  f"{chosen[0]}: IP literal (DNS not validated)", interfaces=ifs)
+
+        # Validate the dependent's OWN DNS resolution (the only per-container fault
+        # — dns_check). Viable if ANY sampled site resolves; not-viable only if
+        # ALL sampled resolvable sites fail DNS; unvalidated if no tool exists.
+        results = [
+            (h, validate_dns(self.client, dep, u, h, self.config.timeout))
+            for (u, h) in resolvable_chosen
+        ]
+        oks = [(h, r) for (h, r) in results if r.status is DnsStatus.OK]
+        broken = [(h, r) for (h, r) in results if r.status is DnsStatus.BROKEN]
+        if oks:
+            h, r = oks[0]
+            detail = (
+                f"{h}: {r.reason} [{r.tool}]" if len(results) == 1
+                else f"{len(oks)}/{len(results)} sampled sites resolved "
+                     f"(e.g. {h}: {r.reason} [{r.tool}])"
+            )
+            return DependentProbe(dep, status, True, True, detail, interfaces=ifs)
+        if broken:
+            h, r = broken[0]
+            detail = (
+                f"{h}: DNS FAILED — {r.reason} [{r.tool}]" if len(results) == 1
+                else f"all {len(results)} sampled sites failed DNS (e.g. {h}: {r.reason})"
+            )
+            return DependentProbe(dep, status, True, False, detail, interfaces=ifs)
+        # All sampled sites were UNVALIDATED (no usable DNS tool in the container).
+        h, r = results[0]
+        return DependentProbe(dep, status, True, None, f"{h}: {r.reason}",
+                              dns_unvalidated=True, interfaces=ifs)
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the

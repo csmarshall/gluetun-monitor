@@ -106,6 +106,11 @@ class Config:
     # container) — ADR-0006. On by default; 0 = interface/strand check only (no
     # URL fetch). The interface check is never optional.
     dependent_viability: bool = True
+    # How many sites each dependent samples per loop: 1 (default, one shuffled
+    # site — optimal, since dependents share gluetun's netns so only their DNS
+    # differs), N for N distinct shuffled sites, or -1 for all. >1 is largely
+    # redundant; the dial is for completeness (and costs N execs/dependent/loop).
+    dependent_viability_samples: int = 1
     # Optional per-dispatch jitter (ms) to de-sync the dependent exec burst.
     # Default 0 = off: the MAX_PARALLEL_CHECKS cap already bounds the burst, so
     # jitter is opt-in for anyone who wants to spread load further (ADR-0006).
@@ -170,6 +175,7 @@ class Config:
             sites_env=os.environ.get("SITES") or None,
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),
+            dependent_viability_samples=_env_int("DEPENDENT_VIABILITY_SAMPLES", 1, errors),
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors),
             dry_run=_env_bool("DRY_RUN", False, errors),
             stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),

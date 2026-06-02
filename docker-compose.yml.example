@@ -66,6 +66,9 @@ services:
       # - MAX_PARALLEL_CHECKS=6
       # Per-dependent L7 DNS/connectivity probe; 0 = interface/strand check only (no URL fetch)
       # - DEPENDENT_VIABILITY=1
+      # Sites each dependent tests per loop: 1 (one shuffled), N (N distinct), -1 (all).
+      # >1 is largely redundant (dependents share gluetun's netns); the dial is for completeness.
+      # - DEPENDENT_VIABILITY_SAMPLES=1
       # Optional per-dispatch jitter (ms) to spread the probe burst; 0 = off (cap already bounds it)
       # - MAX_JITTER_MS=0
       # Observe-only: detect + log intended actions but never restart/recreate (soak-testing)
