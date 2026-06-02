@@ -191,6 +191,7 @@ docker compose up -d
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
 | `LOG_MAX_BYTES` | `10485760` | Rotate the `/logs` file at this size (≈10 MB); `0` disables rotation |
 | `LOG_BACKUP_COUNT` | `5` | How many rotated log backups to keep (≈60 MB total at defaults) |
+| `LOG_FILE` | `/logs/gluetun-monitor.log` | Path to the log file inside the `/logs` mount. Logs always go to stdout (`docker logs`) too; if this path isn't writable the monitor degrades to stdout-only rather than failing |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
 ### Configuration is validated — sane defaults, but bad config is fatal
@@ -665,6 +666,21 @@ watchdog never fills the disk:
 
 At `LOG_LEVEL=DEBUG` the per-site/per-dependent lines are verbose (good for
 soak-testing); `INFO` is much quieter for steady-state.
+
+### Running as non-root
+
+The image runs as a non-root user (uid **10001**). The real privilege the monitor
+holds is the Docker API, not its in-container uid — running unprivileged is just
+defense in depth. Two things follow:
+
+- **Make `/logs` writable by it** — e.g. `mkdir -p ./logs && sudo chown 10001:10001
+  ./logs`. If it isn't writable the monitor still runs and logs to `docker logs`;
+  it just can't persist the file log or the site-stats sidecar. (Upgrading from v1,
+  which ran as root? Your existing `./logs` is probably root-owned — chown it.)
+- **Direct socket mount** (instead of the recommended socket proxy)? A non-root
+  process can't read the root:docker-owned `/var/run/docker.sock` by default — add
+  the host `docker` group via `group_add` (see the compose example). The
+  socket-proxy path talks TCP and needs none of this.
 
 ## Requirements
 

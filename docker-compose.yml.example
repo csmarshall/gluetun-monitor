@@ -93,10 +93,16 @@ services:
       # LOG_BACKUP_COUNT). Defaults ~10MB x 5; 0 disables rotation.
       # - LOG_MAX_BYTES=10485760
       # - LOG_BACKUP_COUNT=5
+      # Log file path inside the /logs mount (also always logged to stdout)
+      # - LOG_FILE=/logs/gluetun-monitor.log
     volumes:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
-      # Persistent logs (the monitor rotates the file inside this dir)
+      # Persistent logs + stats (the monitor rotates the file inside this dir).
+      # The image runs as non-root (uid 10001); make this dir writable by it, e.g.
+      #   mkdir -p ./logs && sudo chown 10001:10001 ./logs
+      # If it isn't writable the monitor still runs and logs to stdout (docker
+      # logs) — it just can't persist the file log / site-stats sidecar.
       - ./logs:/logs
     networks:
       - docker-proxy
@@ -116,6 +122,10 @@ networks:
 
 # Alternative: Direct Docker socket mount (simpler, less secure)
 # Replace the services above with this if you prefer not to use a socket proxy.
+# The image runs as a non-root user, which cannot read the root:docker-owned
+# socket by default — so this variant adds the host's docker group via group_add.
+# Find the gid with: getent group docker | cut -d: -f3   (commonly 999 on Debian/
+# Ubuntu). The socket-proxy path above needs none of this (it talks TCP).
 #
 # services:
 #   gluetun-monitor:
@@ -123,6 +133,8 @@ networks:
 #     container_name: gluetun-monitor
 #     restart: unless-stopped
 #     network_mode: none  # No network needed - communicates via Docker socket only
+#     group_add:
+#       - "999"  # <- your host's `docker` group gid; lets the non-root user read the socket
 #     environment:
 #       - TZ=UTC
 #       - GLUETUN_CONTAINER=gluetun

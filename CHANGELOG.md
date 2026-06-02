@@ -38,7 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probe), `DEPENDENT_VIABILITY_SAMPLES` (default 1; sites each dependent tests per
   loop — `N` or `-1` for all), `MAX_JITTER_MS` (default 0; opt-in per-dispatch jitter),
   `DRY_RUN` (default off; observe-only — detect + log intended actions but never
-  restart/recreate, for soak-testing alongside an active monitor).
+  restart/recreate, for soak-testing alongside an active monitor),
+  `WGET_TRIES` (default 1; attempts per `wget` probe), `LOG_MAX_BYTES` /
+  `LOG_BACKUP_COUNT` (log rotation), and `LOG_FILE` (log path; also always to stdout).
+- **One standardized `TIMEOUT` (and `WGET_TRIES`) across every probe** — the same
+  per-request timeout/retries now apply identically to gluetun's site tests, the
+  dependent-container viability `wget`, and the post-restart DNS-readiness probe
+  (which previously hard-coded a 5 s timeout). Set `TIMEOUT=10` once and it reaches
+  the `wget` run *inside* the dependents too.
 - **`SITES` env var** — comma-separated test URLs, **unioned** (de-duplicated)
   with `sites.conf`, for config-via-env parity with the other knobs. Either
   source works; at least one site total is required. `sites.conf` is re-read each
@@ -102,6 +109,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can lie). When a container has *no* usable resolver tool (e.g. distroless), DNS
   is reported **UNVALIDATED** — logged once, falling back to the interface check,
   rather than silently passing.
+
+### Security & robustness
+- **Runs as a non-root user** (uid 10001) in the image. The real privilege is the
+  Docker API it talks to, not its in-container uid — but there's no reason to run
+  as root. Make the `/logs` mount writable by it (e.g. `chown 10001:10001 ./logs`);
+  if it isn't, the monitor still runs and logs to stdout. The direct-socket compose
+  variant adds `group_add` for the host `docker` group (the socket-proxy path needs
+  nothing).
+- **Site entries can no longer be turned into command-line options.** A
+  `sites.conf` / `SITES` entry like `--directory-prefix=/etc` was appended bare to
+  `wget`/`getent`/`ping`; GNU wget would parse it as a flag (and could write files
+  inside a probed container). Exec arg-lists now place a `--` end-of-options guard
+  before the URL/host, and parsing drops leading-dash / hostless entries with a
+  startup warning.
+- **Numeric config dials are range-validated.** Parseable-but-nonsensical values
+  are now fatal rather than silently creating bugs: `TIMEOUT=0` (infinite wget),
+  `WGET_TRIES=0`, `CHECK_INTERVAL=0` (busy loop), `FAIL_THRESHOLD=0`,
+  `ADVISORY_DOMINANCE>1` (never fires), `DEPENDENT_VIABILITY_SAMPLES=0`, etc.
+  Documented sentinels stay valid (`STATS_RETENTION_DAYS=0` = keep forever,
+  `LOG_MAX_BYTES=0` = no rotation, `DEPENDENT_VIABILITY_SAMPLES=-1` = all).
+- **Thread-safe site shuffle.** Dependents are probed in a thread pool; the
+  load-bearing per-dependent site shuffle now draws from the RNG under a lock, so
+  concurrent probes can't interleave and bias it.
+- **A corrupt stats sidecar can never crash startup** — any malformed shape
+  (wrong top-level/`sites`/`monitor` type, truncation, garbage) is tolerated and
+  the monitor starts fresh, honoring the best-effort contract.
 
 ### Changed (behavior)
 - **Configuration is now validated; bad config is fatal (exit non-zero) instead

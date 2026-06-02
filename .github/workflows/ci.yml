@@ -28,7 +28,9 @@ jobs:
         run: mypy gluetun_monitor
 
       - name: Pytest (incl. differential vs. legacy bash)
-        run: pytest --cov=gluetun_monitor --cov-report=term-missing
+        # Floor is set below the current ~99% so a real regression fails the build
+        # without flaking on trivial churn.
+        run: pytest --cov=gluetun_monitor --cov-report=term-missing --cov-fail-under=95
 
   shellcheck:
     name: Shellcheck (legacy script)
