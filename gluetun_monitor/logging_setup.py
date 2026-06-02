@@ -12,6 +12,7 @@ from __future__ import annotations
 import itertools
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TextIO
 
@@ -72,6 +73,8 @@ class Logger:
         level: str = "INFO",
         *,
         stream: TextIO | None = None,
+        max_bytes: int = 10 * 1024 * 1024,
+        backup_count: int = 5,
     ) -> None:
         # A private, non-propagating logger per instance keeps handlers isolated
         # (no duplicate lines, no interference with docker-py's own loggers).
@@ -89,7 +92,16 @@ class Logger:
         if log_file:
             try:
                 Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-                file_handler = logging.FileHandler(log_file, encoding="utf-8")
+                file_handler: logging.Handler
+                if max_bytes > 0:
+                    # Size-capped rotation so the watchdog never fills its own disk
+                    # (Tenet 7). ~max_bytes x backup_count total.
+                    file_handler = RotatingFileHandler(
+                        log_file, maxBytes=max_bytes, backupCount=backup_count,
+                        encoding="utf-8",
+                    )
+                else:
+                    file_handler = logging.FileHandler(log_file, encoding="utf-8")
                 file_handler.setFormatter(formatter)
                 self._logger.addHandler(file_handler)
             except OSError:

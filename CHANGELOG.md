@@ -66,9 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   90). Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, `ADVISORY_DOMINANCE`,
   `STATS_RETENTION_DAYS`.
 - **Per-dependent interface check is now shown at DEBUG** — each dependent logs
-  its L3 route check (`interface=live [eth0,lo,tun0]` / `stranded [lo]` /
-  `unknown`) alongside the DNS viability result, so "can it route out" is visible
-  every loop.
+  its L3 route check (`interface check: live [eth0,lo,tun0]` / `stranded [lo]` /
+  `unknown`) *before* its DNS/connect viability line, so "can it route out" is
+  visible every loop. Every test line is tagged with the container's role +
+  name — `[gateway:<gluetun>]` (site tests, run through the tunnel) or
+  `[dependent:<name>]` — and the viability label is honest about depth
+  (`resolved + connected (HTTP 200)` vs `resolved (DNS lookup only)`).
+- **Log files are rotated** so the watchdog can't fill its own disk: the `/logs`
+  file is size-capped (`LOG_MAX_BYTES` ≈10 MB × `LOG_BACKUP_COUNT` 5; `0`
+  disables). The compose example also caps the Docker/stderr stream
+  (`logging: max-size/max-file`), which Docker does *not* rotate on its own.
 
 ### Fixed
 - **Per-dependent viability no longer false-fails on busybox-wget dependents.**

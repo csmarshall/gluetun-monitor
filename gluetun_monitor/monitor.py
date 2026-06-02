@@ -116,33 +116,35 @@ class Monitor:
                                           self.config.timeout)
         )
 
-        # Site tests run *inside the gluetun container* (through the tunnel) — tag
-        # each line with that container so it's unambiguous where the test ran.
-        g = self.config.gluetun_container
+        # Site tests run *inside the gluetun container* (the VPN gateway, through
+        # the tunnel). Tag each line with the role + container — "[gateway:<name>]"
+        # — so it's unambiguous what kind of container and which one (cf.
+        # "[dependent:<name>]" below). Greppable: `grep gateway:` / `grep dependent:`.
+        gw = f"gateway:{self.config.gluetun_container}"
         failed: list[str] = []
         for result in results:
             if record:
                 self.stats.record_poll(result.url, result.ok)
             if result.ok:
                 self.site_failures.reset(result.url)
-                self.log.debug(f"[{g}] site {result.url}: ok ({result.duration_ms}ms)")
+                self.log.debug(f"[{gw}] site {result.url}: ok ({result.duration_ms}ms)")
                 continue
             count = self.site_failures.fail(result.url)
             if count >= self.config.fail_threshold:
                 failed.append(result.url)
                 self.log.warn(
-                    f"[{g}] site {result.url}: FAILED {count}x consecutive - "
+                    f"[{gw}] site {result.url}: FAILED {count}x consecutive - "
                     f"THRESHOLD REACHED - {result.reason}"
                 )
             else:
                 remaining = self.config.fail_threshold - count
                 self.log.debug(
-                    f"[{g}] site {result.url}: failed ({count}/{self.config.fail_threshold}, "
+                    f"[{gw}] site {result.url}: failed ({count}/{self.config.fail_threshold}, "
                     f"{remaining} more to restart) - {result.reason}"
                 )
 
         if failed:
-            self.log.error(f"[{g}] failed sites (exceeded threshold): {' '.join(failed)}")
+            self.log.error(f"[{gw}] failed sites (exceeded threshold): {' '.join(failed)}")
         return failed
 
     # ----- dependent phase (nodes 6-19) -----
@@ -289,14 +291,15 @@ class Monitor:
         to_remediate: list[tuple[str, str]] = []
         for probe in probes:
             dep = probe.name
+            tag = f"dependent:{dep}"  # role + name, mirrors "[gateway:<name>]"
             self.log.debug(
-                f"[{dep}] interface check: {probe.status.name.lower()} [{probe.interfaces}]"
+                f"[{tag}] interface check: {probe.status.name.lower()} [{probe.interfaces}]"
             )
             if probe.status is InterfaceStatus.STRANDED:
                 to_remediate.append((dep, probe.reason))
                 continue
             if probe.status is InterfaceStatus.UNKNOWN:
-                self.log.debug(f"[{dep}] {probe.reason} (running={probe.running})")
+                self.log.debug(f"[{tag}] {probe.reason} (running={probe.running})")
                 if not probe.running:
                     to_remediate.append((dep, "not running (interface check unavailable)"))
                 continue
@@ -305,29 +308,29 @@ class Monitor:
                     # Can't run any DNS tool in this container — say so loudly once,
                     # and rely on the interface check (don't guess; Tenet 1).
                     self.log.warn(
-                        f"[{dep}] cannot validate DNS ({probe.reason}); "
+                        f"[{tag}] cannot validate DNS ({probe.reason}); "
                         f"relying on interface check only"
                     )
                     self._warned_dns_unvalidated.add(dep)
                 else:
-                    self.log.debug(f"[{dep}] viability: {probe.reason}")
+                    self.log.debug(f"[{tag}] viability: {probe.reason}")
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
             self._warned_dns_unvalidated.discard(dep)
             if probe.viability_ok:
                 self.dependent_failures.reset(dep)
-                self.log.debug(f"[{dep}] viability: {probe.reason} [fails 0]")
+                self.log.debug(f"[{tag}] viability: {probe.reason} [fails 0]")
                 continue
             count = self.dependent_failures.fail(dep)
             threshold = self.config.dependent_container_failures
             if count >= threshold:
                 to_remediate.append((dep, f"{count} consecutive viability failures"))
                 self.log.warn(
-                    f"[{dep}] viability: {probe.reason} [fails {count}/{threshold} -> remediate]"
+                    f"[{tag}] viability: {probe.reason} [fails {count}/{threshold} -> remediate]"
                 )
             else:
                 self.log.debug(
-                    f"[{dep}] viability: {probe.reason} [fails {count}/{threshold}]"
+                    f"[{tag}] viability: {probe.reason} [fails {count}/{threshold}]"
                 )
 
         for dep, reason in to_remediate:

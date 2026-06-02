@@ -97,6 +97,33 @@ def test_unwritable_file_degrades_gracefully() -> None:
     assert "[INFO] still works" in stream.getvalue()
 
 
+def test_log_file_rotates_at_max_bytes(tmp_path: Path) -> None:
+    """The file handler rotates so the watchdog can't fill its own disk: with a
+    tiny max_bytes, writing past it creates a .1 backup and the active file stays
+    bounded."""
+    log_file = tmp_path / "monitor.log"
+    log = Logger(log_file=str(log_file), level="INFO", stream=io.StringIO(),
+                 max_bytes=1024, backup_count=2)
+    for i in range(200):
+        log.info(f"line {i} " + "x" * 60)  # ~80 bytes each -> well past 1KB
+    assert (tmp_path / "monitor.log.1").exists()  # rotated
+    assert log_file.stat().st_size <= 4096  # active file is bounded, not unbounded
+    # backup_count respected: never more than .1 and .2
+    assert not (tmp_path / "monitor.log.3").exists()
+
+
+def test_log_rotation_disabled_with_zero_max_bytes(tmp_path: Path) -> None:
+    """max_bytes=0 disables rotation (plain FileHandler) — opt-out for users who
+    manage rotation externally (logrotate, etc.)."""
+    log_file = tmp_path / "monitor.log"
+    log = Logger(log_file=str(log_file), level="INFO", stream=io.StringIO(),
+                 max_bytes=0, backup_count=5)
+    for i in range(50):
+        log.info(f"line {i}")
+    assert log_file.exists()
+    assert not (tmp_path / "monitor.log.1").exists()  # no rotation
+
+
 def test_install_bash_format_on_root_formats_third_party() -> None:
     """Library logs (via the root logger) render in the bash format, not Python's
     default 'WARNING:name:msg' — so the container's output stays uniform."""

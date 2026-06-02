@@ -125,7 +125,12 @@ def main() -> int:
     Returns a process exit code: 0 on clean shutdown, 1 if startup fails.
     """
     config = Config.from_env()
-    logger = Logger(log_file=config.log_file, level=config.log_level)
+    logger = Logger(
+        log_file=config.log_file,
+        level=config.log_level,
+        max_bytes=config.log_max_bytes,
+        backup_count=config.log_backup_count,
+    )
     install_bash_format_on_root()  # make stray docker-py/urllib3 logs match our format
     _install_signal_handlers(logger)
     _announce_banner(config, logger)

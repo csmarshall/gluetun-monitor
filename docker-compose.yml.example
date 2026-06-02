@@ -16,6 +16,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - docker-proxy
+    logging:  # the proxy's access log is chatty; cap it too
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   gluetun-monitor:
     # Pin the major (:2) for production: all v2.x patches, no surprise future major.
@@ -78,13 +83,24 @@ services:
       # - DNS_WAIT_TIMEOUT=30
       # DEBUG to include per-site / per-dependent detail lines
       # - LOG_LEVEL=INFO
+      # The /logs file is size-rotated by the monitor itself (LOG_MAX_BYTES x
+      # LOG_BACKUP_COUNT). Defaults ~10MB x 5; 0 disables rotation.
+      # - LOG_MAX_BYTES=10485760
+      # - LOG_BACKUP_COUNT=5
     volumes:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
-      # Persistent logs
+      # Persistent logs (the monitor rotates the file inside this dir)
       - ./logs:/logs
     networks:
       - docker-proxy
+    # Cap the *Docker* (stderr) log too — Docker's default json-file driver does
+    # NOT rotate on its own. Without this, `docker logs` grows unbounded.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   docker-proxy:

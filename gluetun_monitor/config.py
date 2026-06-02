@@ -90,6 +90,10 @@ class Config:
     # Seconds to wait for gluetun DNS to stabilize after a restart (ADR-0003).
     dns_wait_timeout: int = 30
     log_level: str = "INFO"
+    # Rotate the log file at this size, keeping this many backups (so the watchdog
+    # never fills its own disk). ~10 MB x 5 backups ≈ 60 MB cap. 0 = no rotation.
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
     # Optional comma-separated test URLs, unioned with sites.conf (config-via-env
     # parity with the other knobs). None = not set. Unlike the file, this is fixed
     # at process start (no live reload).
@@ -161,6 +165,8 @@ class Config:
             auto_recreate=_env_bool("AUTO_RECREATE", True, errors),
             dns_wait_timeout=_env_int("DNS_WAIT_TIMEOUT", 30, errors),
             log_level=log_level,
+            log_max_bytes=_env_int("LOG_MAX_BYTES", 10 * 1024 * 1024, errors),
+            log_backup_count=_env_int("LOG_BACKUP_COUNT", 5, errors),
             sites_env=os.environ.get("SITES") or None,
             exclude_containers=os.environ.get("EXCLUDE_CONTAINERS", ""),
             dependent_viability=_env_bool("DEPENDENT_VIABILITY", True, errors),

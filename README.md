@@ -187,6 +187,8 @@ docker compose up -d
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
+| `LOG_MAX_BYTES` | `10485760` | Rotate the `/logs` file at this size (≈10 MB); `0` disables rotation |
+| `LOG_BACKUP_COUNT` | `5` | How many rotated log backups to keep (≈60 MB total at defaults) |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
 ### Configuration is validated — sane defaults, but bad config is fatal
@@ -572,17 +574,21 @@ gluetun container (through the tunnel); each dependent logs its interface/route
 check, then its viability result.
 ```
 [2025-01-15 10:00:00] [CHECK] Start
-[2025-01-15 10:00:02] [DEBUG] [gluetun] site https://www.google.com: ok (769ms)
-[2025-01-15 10:00:02] [DEBUG] [gluetun] site https://cloudflare.com: ok (1768ms)
-[2025-01-15 10:00:04] [DEBUG] [qbittorrent] interface check: live [eth0,lo,tun0]
-[2025-01-15 10:00:04] [DEBUG] [qbittorrent] viability: https://cloudflare.com: resolved + connected (HTTP 200) [wget] [fails 0]
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] site https://www.google.com: ok (769ms)
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] site https://cloudflare.com: ok (1768ms)
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] interface check: live [eth0,lo,tun0]
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] viability: https://cloudflare.com: resolved + connected (HTTP 200) [wget] [fails 0]
 [2025-01-15 10:00:04] [CHECK] End - Sleeping 30s
 ```
 
+Each test line is tagged `[gateway:<name>]` (the gluetun VPN container, where the
+site tests run — through the tunnel) or `[dependent:<name>]`, so you can tell at a
+glance what kind of container a line is about (`grep gateway:` / `grep dependent:jackett`).
+
 ### Gluetun connectivity failure + recovery
 ```
-[2025-01-15 10:10:00] [WARN] [gluetun] site https://example.com: FAILED 2x consecutive - THRESHOLD REACHED - Network failure (DNS or connection)
-[2025-01-15 10:10:00] [ERROR] [gluetun] failed sites (exceeded threshold): https://example.com
+[2025-01-15 10:10:00] [WARN] [gateway:gluetun] site https://example.com: FAILED 2x consecutive - THRESHOLD REACHED - Network failure (DNS or connection)
+[2025-01-15 10:10:00] [ERROR] [gateway:gluetun] failed sites (exceeded threshold): https://example.com
 [2025-01-15 10:10:00] [WARN] Health check failed, initiating recovery...
 [2025-01-15 10:10:00] [ENDPOINT] Status: FAILING | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Site connectivity test failed
 [2025-01-15 10:10:05] [INFO] Restarting gluetun to force new endpoint...
@@ -600,6 +606,22 @@ check, then its viability result.
 [2025-01-15 11:00:02] [INFO] qbittorrent recreated as 7a1b2c3d4e5f and started
 [2025-01-15 11:00:04] [INFO] qbittorrent verified healthy after remediation
 ```
+
+### Log rotation (both sinks)
+
+The monitor logs to **two** places, and both are bounded so a long-running
+watchdog never fills the disk:
+
+- **The `/logs` file** is **size-rotated by the monitor itself** —
+  `LOG_MAX_BYTES` (≈10 MB) × `LOG_BACKUP_COUNT` (5) ≈ 60 MB cap. Set
+  `LOG_MAX_BYTES=0` to disable (e.g. if you run external `logrotate`).
+- **The Docker/stderr stream** (`docker logs`) is **not rotated by Docker
+  automatically** — its default `json-file` driver grows unbounded. The compose
+  example sets a `logging:` cap (`max-size`/`max-file`) on the services; keep it,
+  or configure rotation globally in `daemon.json`.
+
+At `LOG_LEVEL=DEBUG` the per-site/per-dependent lines are verbose (good for
+soak-testing); `INFO` is much quieter for steady-state.
 
 ## Requirements
 
