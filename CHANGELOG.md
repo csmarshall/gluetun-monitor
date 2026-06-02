@@ -61,7 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("X of the last Y restarts were this site over the last <window> — review it").
   By design it still applies the cheap restart fix and escalates to a human rather
   than auto-suppressing the site. Per-site metrics also include the **longest
-  failure streak** (worst consecutive run of failed polls). The file is written
+  failure streak**, a **failure-reason breakdown** (dns/tls/timeout/connection/
+  http-error/other), **response-latency** of successful polls (avg/min/max +
+  **p50/p90/p99**), and **restart-effectiveness** (fraction of a site's restarts
+  that actually cleared it — a site-vs-VPN signal). The file is written
   every loop, crash/power-loss-safely (temp file + fsync + atomic rename), and a
   site removed from `sites.conf` is pruned after `STATS_RETENTION_DAYS` (default
   90). Knobs: `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, `ADVISORY_DOMINANCE`,

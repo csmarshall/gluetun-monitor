@@ -42,11 +42,18 @@ fragile.
    `FAIL_THRESHOLD` and the per-loop flow are unchanged.
 2. **Record persistent per-site stats** in a human-readable JSON sidecar
    (`STATS_FILE`, default `/logs/site-stats.json`), loaded on startup and written
-   periodically (not every loop). Per site: total polls, total failures (→ rate),
-   failure **episodes** and total failure-polls (→ average episode length in
-   polls), restarts triggered, and first-seen / last-failure / last-success
-   timestamps. Plus a bounded **recent-restarts** ring buffer (timestamp + site)
-   to answer windowed questions. Corrupt/missing file → start fresh, never crash.
+   every loop (a small atomic write). Per site: total polls, total failures (→ rate),
+   failure **episodes** (→ average episode length in polls; every failing poll is
+   in exactly one episode, so avg = total_failures / episodes), the longest such
+   streak, a **failure-reason breakdown** (dns/tls/timeout/connection/http-error/
+   other), **response-latency** of successful polls over a bounded ring
+   (avg/min/max + **p50/p90/p99** — slowness often precedes failure), restarts
+   triggered and **restart-effectiveness** (fraction that actually cleared the
+   site on re-verify — distinguishes a site fault from a VPN fault), and
+   first-seen / last-failure / last-success timestamps. Plus a bounded
+   **recent-restarts** ring buffer for the windowed advisory. The saved JSON also
+   includes the computed metrics (rates, percentiles) so it reads at a glance.
+   Corrupt/missing file → start fresh, never crash.
 3. **Emit a flaky-site advisory.** When one site accounts for a dominant share of
    the gluetun restarts within a recent window — default: ≥ `ADVISORY_MIN_RESTARTS`
    restarts in `ADVISORY_WINDOW`, of which ≥ `ADVISORY_DOMINANCE` fraction are that

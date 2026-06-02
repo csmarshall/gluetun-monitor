@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gluetun_monitor.site_stats import SiteStatsStore, format_window
+from gluetun_monitor.site_stats import SiteStatsStore, categorize_failure, format_window
 
 
 class _Clock:
@@ -171,6 +171,94 @@ def test_recent_restarts_bounded() -> None:
         s.record_restart("b.com")
     assert len(s.recent_restarts) == 10
     assert s.sites["b.com"].restarts_triggered == 25  # lifetime count is not capped
+
+
+def test_latency_summary_avg_min_max_and_percentiles() -> None:
+    """Successful-poll durations feed avg/min/max + p50/p75/p99 (median vs mean)."""
+    s = SiteStatsStore(None)
+    # 1..100 ms on passing polls (failures don't contribute latency).
+    for ms in range(1, 101):
+        s.record_poll("b.com", True, duration_ms=ms)
+    lat = s.sites["b.com"].latency_summary()
+    assert lat["samples"] == 100
+    assert lat["min"] == 1 and lat["max"] == 100
+    assert lat["avg"] == 50  # round(50.5) -> 50
+    assert lat["p50"] == 50
+    assert lat["p90"] == 90
+    assert lat["p99"] == 99
+
+
+def test_latency_ring_is_bounded() -> None:
+    s = SiteStatsStore(None, latency_ring_max=50)
+    for ms in range(1, 201):
+        s.record_poll("b.com", True, duration_ms=ms)
+    lat = s.sites["b.com"]
+    assert len(lat.recent_latencies) == 50
+    assert lat.recent_latencies[-1] == 200  # newest retained
+
+
+def test_failed_polls_do_not_add_latency() -> None:
+    s = SiteStatsStore(None)
+    s.record_poll("b.com", False, duration_ms=9999, reason="timed out")
+    assert s.sites["b.com"].recent_latencies == []
+
+
+def test_failure_reason_breakdown() -> None:
+    """Failures are bucketed by category from the reason text."""
+    s = SiteStatsStore(None)
+    s.record_poll("b.com", False, reason="Read error (Operation timed out)")
+    s.record_poll("b.com", False, reason="Unable to establish SSL connection")
+    s.record_poll("b.com", False, reason="wget: bad address 'b.com'")
+    s.record_poll("b.com", False, reason="can't connect: Connection refused")
+    fr = s.sites["b.com"].failure_reasons
+    assert fr == {"timeout": 1, "tls": 1, "dns": 1, "connection": 1}
+
+
+def test_categorize_failure_buckets() -> None:
+    assert categorize_failure("Read error (Operation timed out)") == "timeout"
+    assert categorize_failure("Unable to establish SSL connection") == "tls"
+    assert categorize_failure("wget: bad address 'x'") == "dns"
+    assert categorize_failure("Connection refused") == "connection"
+    assert categorize_failure("server returned error: HTTP/1.1 500") == "http-error"
+    assert categorize_failure("something weird") == "other"
+
+
+def test_restart_effectiveness() -> None:
+    """Of a site's restarts, the fraction that cleared it on re-verify."""
+    s = SiteStatsStore(None)
+    for _ in range(4):
+        s.record_restart("b.com")
+    s.record_restart_outcome("b.com", cleared=True)
+    s.record_restart_outcome("b.com", cleared=True)
+    s.record_restart_outcome("b.com", cleared=False)
+    s.record_restart_outcome("b.com", cleared=False)
+    st = s.sites["b.com"]
+    assert st.restarts_triggered == 4
+    assert st.restarts_cleared == 2
+    assert st.restart_effectiveness == 0.5
+
+
+def test_new_metrics_persist_round_trip(tmp_path: Path) -> None:
+    path = str(tmp_path / "stats.json")
+    s1 = SiteStatsStore(path)
+    s1.record_poll("b.com", True, duration_ms=42)
+    s1.record_poll("b.com", False, reason="timed out")
+    s1.record_restart("b.com")
+    s1.record_restart_outcome("b.com", cleared=True)
+    assert s1.save() is True
+
+    s2 = SiteStatsStore(path)
+    st = s2.sites["b.com"]
+    assert st.recent_latencies == [42]
+    assert st.failure_reasons == {"timeout": 1}
+    assert st.restarts_cleared == 1
+
+    # The saved JSON also carries human-readable computed metrics.
+    import json as _json
+    data = _json.loads((tmp_path / "stats.json").read_text())
+    site = data["sites"]["b.com"]
+    assert "latency_ms" in site and site["latency_ms"]["avg"] == 42
+    assert "restart_effectiveness" in site and "failure_rate" in site
 
 
 def test_format_window() -> None:

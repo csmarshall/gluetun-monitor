@@ -420,9 +420,13 @@ it keeps a **persistent, rear-looking record** of how each site behaves and
 It writes a human-readable JSON sidecar (`STATS_FILE`, default
 `/logs/site-stats.json`) with, per site: total polls, total failures (→ failure
 rate), failure **episodes** and the average episode length in polls (how long it
-typically stays down when it breaks), the **longest** such streak, how many
-gluetun restarts it triggered, and first-seen / last-good / last-failure
-timestamps. It's written **every loop, crash- and power-loss-safely** (temp file
+typically stays down when it breaks), the **longest** such streak, a
+**failure-reason breakdown** (dns / tls / timeout / connection / http-error /
+other), **response-latency** of successful polls (avg/min/max + **p50/p90/p99**, so
+you see median vs mean — a site getting slow often precedes it failing), how many
+gluetun restarts it triggered and the **restart-effectiveness** (fraction of those
+restarts that actually cleared it — a low number means it's the site, not the VPN),
+and first-seen / last-good / last-failure timestamps. It's written **every loop, crash- and power-loss-safely** (temp file
 + fsync + atomic rename), survives monitor restarts, and is best-effort (a
 missing/unwritable/corrupt file never blocks the monitor). A site removed from
 `sites.conf` is kept for `STATS_RETENTION_DAYS` (default 90) then pruned.

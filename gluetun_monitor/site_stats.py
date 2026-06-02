@@ -18,14 +18,40 @@ episode length (in polls) is simply total_failures / failure_episodes.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 Clock = Callable[[], float]
+
+
+def categorize_failure(reason: str) -> str:
+    """Bucket a wget failure ``reason`` into a coarse category for the breakdown."""
+    low = reason.lower()
+    if "bad address" in low or "resolve" in low or "name or service" in low or "dns" in low:
+        return "dns"
+    if "ssl" in low or "tls" in low or "certificate" in low:
+        return "tls"
+    if "timed out" in low or "timeout" in low:
+        return "timeout"
+    if "refused" in low or "can't connect" in low or "cannot connect" in low or "connection" in low:
+        return "connection"
+    if "http" in low or "server returned" in low:
+        return "http-error"
+    return "other"
+
+
+def _percentile(values: list[int], p: float) -> int:
+    """Nearest-rank percentile (p in 0..100) of ``values``; 0 if empty."""
+    if not values:
+        return 0
+    s = sorted(values)
+    k = min(len(s) - 1, max(0, math.ceil(p / 100.0 * len(s)) - 1))
+    return s[k]
 
 
 @dataclass
@@ -39,9 +65,14 @@ class SiteStat:
     failure_episodes: int = 0  # count of distinct consecutive-failure runs
     longest_fail_streak: int = 0  # longest run of consecutive failed polls ever
     restarts_triggered: int = 0
+    restarts_cleared: int = 0  # restarts after which this site recovered (effectiveness)
     current_fail_streak: int = 0
     last_failure: float | None = None
     last_success: float | None = None
+    # Latency (ms) of recent *successful* polls — a bounded ring for percentiles.
+    recent_latencies: list[int] = field(default_factory=list)
+    # Failure counts bucketed by category (dns/tls/timeout/connection/http-error/other).
+    failure_reasons: dict[str, int] = field(default_factory=dict)
 
     @property
     def failure_rate(self) -> float:
@@ -50,6 +81,30 @@ class SiteStat:
     @property
     def avg_episode_polls(self) -> float:
         return self.total_failures / self.failure_episodes if self.failure_episodes else 0.0
+
+    @property
+    def restart_effectiveness(self) -> float:
+        """Fraction of this site's restarts after which it recovered on re-verify."""
+        return self.restarts_cleared / self.restarts_triggered if self.restarts_triggered else 0.0
+
+    def latency_summary(self) -> dict[str, int]:
+        """min/avg/max + p50/p90/p99 (ms) over the recent successful-poll samples.
+
+        p90 is the actionable tail; p99 is the robust extreme (unlike max, it
+        ignores the top outliers); p50 is the median (vs the mean in `avg`).
+        """
+        lat = self.recent_latencies
+        if not lat:
+            return {"samples": 0, "avg": 0, "min": 0, "max": 0, "p50": 0, "p90": 0, "p99": 0}
+        return {
+            "samples": len(lat),
+            "avg": round(sum(lat) / len(lat)),
+            "min": min(lat),
+            "max": max(lat),
+            "p50": _percentile(lat, 50),
+            "p90": _percentile(lat, 90),
+            "p99": _percentile(lat, 99),
+        }
 
 
 @dataclass
@@ -71,27 +126,40 @@ class SiteStatsStore:
         *,
         clock: Clock = time.time,
         recent_restarts_max: int = 500,
+        latency_ring_max: int = 200,
     ) -> None:
         self._path = Path(path) if path else None
         self._clock = clock
         self._recent_max = recent_restarts_max
+        self._latency_max = latency_ring_max
         self.sites: dict[str, SiteStat] = {}
         self.recent_restarts: list[dict[str, object]] = []  # {"ts": float, "site": str}
         self._load()
 
-    # ----- recording -----
-
-    def record_poll(self, site: str, ok: bool) -> None:
-        """Record one test of ``site`` (a primary loop poll; not the re-verify)."""
-        now = self._clock()
+    def _stat(self, site: str) -> SiteStat:
         st = self.sites.get(site)
         if st is None:
-            st = self.sites[site] = SiteStat(first_seen=now)
+            st = self.sites[site] = SiteStat(first_seen=self._clock())
+        return st
+
+    # ----- recording -----
+
+    def record_poll(self, site: str, ok: bool, duration_ms: int = 0, reason: str = "") -> None:
+        """Record one test of ``site`` (a primary loop poll; not the re-verify).
+
+        On success the response time feeds the latency ring (for percentiles); on
+        failure the reason is bucketed into the failure-reason breakdown.
+        """
+        now = self._clock()
+        st = self._stat(site)
         st.last_seen = now
         st.total_polls += 1
         if ok:
             st.current_fail_streak = 0
             st.last_success = now
+            st.recent_latencies.append(int(duration_ms))
+            if len(st.recent_latencies) > self._latency_max:
+                del st.recent_latencies[: -self._latency_max]
         else:
             st.total_failures += 1
             if st.current_fail_streak == 0:
@@ -99,17 +167,23 @@ class SiteStatsStore:
             st.current_fail_streak += 1
             st.longest_fail_streak = max(st.longest_fail_streak, st.current_fail_streak)
             st.last_failure = now
+            cat = categorize_failure(reason)
+            st.failure_reasons[cat] = st.failure_reasons.get(cat, 0) + 1
 
     def record_restart(self, site: str) -> None:
         """Record that ``site`` triggered a gluetun restart (attribution)."""
         now = self._clock()
-        st = self.sites.get(site)
-        if st is None:
-            st = self.sites[site] = SiteStat(first_seen=now)
-        st.restarts_triggered += 1
+        self._stat(site).restarts_triggered += 1
         self.recent_restarts.append({"ts": now, "site": site})
         if len(self.recent_restarts) > self._recent_max:
             del self.recent_restarts[: -self._recent_max]
+
+    def record_restart_outcome(self, site: str, cleared: bool) -> None:
+        """Record whether ``site`` recovered after the restart it triggered (the
+        post-restart re-verify). Drives restart-effectiveness — a site whose
+        restarts rarely clear it is the site's fault, not the VPN's."""
+        if cleared:
+            self._stat(site).restarts_cleared += 1
 
     def prune_stale(self, retention_seconds: float) -> list[str]:
         """Drop sites not polled within ``retention_seconds`` (e.g. removed from
@@ -165,9 +239,14 @@ class SiteStatsStore:
                     failure_episodes=raw.get("failure_episodes", 0),
                     longest_fail_streak=raw.get("longest_fail_streak", 0),
                     restarts_triggered=raw.get("restarts_triggered", 0),
+                    restarts_cleared=raw.get("restarts_cleared", 0),
                     current_fail_streak=raw.get("current_fail_streak", 0),
                     last_failure=raw.get("last_failure"),
                     last_success=raw.get("last_success"),
+                    recent_latencies=[int(x) for x in raw.get("recent_latencies", [])
+                                      if isinstance(x, int | float)],
+                    failure_reasons={str(k): int(v) for k, v in
+                                     (raw.get("failure_reasons") or {}).items()},
                 )
             recent = data.get("recent_restarts", [])
             self.recent_restarts = [
@@ -191,10 +270,20 @@ class SiteStatsStore:
         """
         if self._path is None:
             return False
+        # Persist raw counters (asdict) + computed metrics, so the file is both
+        # reloadable and human-readable at a glance.
+        sites_out = {}
+        for url, st in self.sites.items():
+            raw = asdict(st)
+            raw["failure_rate"] = round(st.failure_rate, 4)
+            raw["avg_episode_polls"] = round(st.avg_episode_polls, 2)
+            raw["restart_effectiveness"] = round(st.restart_effectiveness, 4)
+            raw["latency_ms"] = st.latency_summary()
+            sites_out[url] = raw
         payload = {
             "version": 1,
             "updated": self._clock(),
-            "sites": {url: asdict(st) for url, st in self.sites.items()},
+            "sites": sites_out,
             "recent_restarts": self.recent_restarts,
         }
         try:

@@ -124,7 +124,7 @@ class Monitor:
         failed: list[str] = []
         for result in results:
             if record:
-                self.stats.record_poll(result.url, result.ok)
+                self.stats.record_poll(result.url, result.ok, result.duration_ms, result.reason)
             if result.ok:
                 self.site_failures.reset(result.url)
                 self.log.debug(f"[{gw}] site {result.url}: ok ({result.duration_ms}ms)")
@@ -420,7 +420,12 @@ class Monitor:
             return
 
         # Re-verify without recording (so the loop counts one poll per site, not two).
-        if self.check_gluetun_sites(sites, record=False):
+        reverify_breached = self.check_gluetun_sites(sites, record=False)
+        # Restart effectiveness: did each site that triggered this restart recover?
+        still = set(reverify_breached)
+        for site in breached:
+            self.stats.record_restart_outcome(site, cleared=site not in still)
+        if reverify_breached:
             self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
             self.site_failures.reset_all()
             return
