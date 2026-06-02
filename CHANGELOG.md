@@ -85,6 +85,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart-effectiveness) plus monitor-wide totals. Sortable (`--sort`), with a
   `--json` mode for jq/dashboards. Reads the same file via the same code the
   monitor uses, so the numbers always match; touches no Docker API.
+- **All-time latency percentiles** alongside the recent window. A per-site
+  bounded **histogram** (DDSketch-style, [ADR-0009](docs/adr/0009-all-time-latency-histogram.md))
+  records every successful poll's latency for the site's whole life — within 5%
+  relative error at a few dozen buckets/site — so you get a *lifetime* baseline,
+  not just the last 200 samples (the recent ring). Exact count/avg/min/max are
+  kept too. View it with `gluetun-monitor-stats --lifetime`; `--json` includes both
+  windows. Survives restarts (mergeable bucket counts) and is best-effort like the
+  rest of the sidecar.
 - **Concise, consistent per-loop log grammar.** Each line reads
   `[<role>:<name>] <dim> <verdict>: <target> (<detail>) [tool] [n/threshold → action]`.
   The dimension is `link` (the L3 interface/route check, shown *before* the

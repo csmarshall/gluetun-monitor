@@ -37,3 +37,4 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0006](0006-per-dependent-viability-testing.md) | Per-dependent connectivity + DNS viability testing (gluetun root + one shuffled name per dependent per loop) | Accepted |
 | [0007](0007-reimplement-in-python.md) | Reimplement the monitor in Python (v2.0.0) — docker-py seam, characterization + differential no-regressions gate | Accepted |
 | [0008](0008-persistent-site-stats-and-advisory.md) | Persistent per-site stats + a flaky-site advisory (keep restart-first; record + advise, don't auto-quarantine) | Accepted |
+| [0009](0009-all-time-latency-histogram.md) | All-time latency percentiles via a bounded DDSketch-style histogram (lifetime view alongside the recent ring) | Accepted |

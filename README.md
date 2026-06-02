@@ -509,8 +509,17 @@ latency in ms; eff% = restart-effectiveness (n/a = no restarts triggered)
 ```
 
 Sites are sorted by `p90` (worst tail first) by default; `--sort` accepts
-`p90|p99|avg|max|p50|rate|polls|name`. Add `--json` to emit the same data for
+`p90|p99|avg|max|p50|rate|polls|eff|name`. Add `--json` to emit the same data for
 `jq`/dashboards, and `--file PATH` if your `STATS_FILE` lives elsewhere.
+
+The latency columns show the **recent** window (last ~200 polls) by default. Add
+`--lifetime` for **all-time** percentiles — these come from a bounded per-site
+histogram (DDSketch-style, within 5% relative error at a few dozen buckets/site;
+see [ADR-0009](docs/adr/0009-all-time-latency-histogram.md)) that records every
+successful poll for the site's whole life, so you get a lifetime baseline rather
+than just "recently." `--json` includes both windows (`latency_ms` and
+`lifetime_latency_ms`). Exact avg/min/max are kept either way; only the percentiles
+are approximate.
 
 ## Docker Compose Example
 

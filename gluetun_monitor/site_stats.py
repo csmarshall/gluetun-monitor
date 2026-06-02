@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import __version__
+from .histogram import LatencyHistogram
 
 Clock = Callable[[], float]
 
@@ -73,6 +74,9 @@ class SiteStat:
     last_success: float | None = None
     # Latency (ms) of recent *successful* polls — a bounded ring for percentiles.
     recent_latencies: list[int] = field(default_factory=list)
+    # All-time latency percentiles in bounded memory (DDSketch-style; complements
+    # the recent ring — "lifetime" vs "now"). See histogram.py.
+    lifetime_latency: LatencyHistogram = field(default_factory=LatencyHistogram)
     # Failure counts bucketed by category (dns/tls/timeout/connection/http-error/other).
     failure_reasons: dict[str, int] = field(default_factory=dict)
 
@@ -187,6 +191,7 @@ class SiteStatsStore:
             st.recent_latencies.append(int(duration_ms))
             if len(st.recent_latencies) > self._latency_max:
                 del st.recent_latencies[: -self._latency_max]
+            st.lifetime_latency.add(int(duration_ms))  # all-time percentiles
         else:
             st.total_failures += 1
             if st.current_fail_streak == 0:
@@ -294,6 +299,7 @@ class SiteStatsStore:
                     last_success=raw.get("last_success"),
                     recent_latencies=[int(x) for x in raw.get("recent_latencies", [])
                                       if isinstance(x, int | float)],
+                    lifetime_latency=LatencyHistogram.from_dict(raw.get("lifetime_latency")),
                     failure_reasons={str(k): int(v) for k, v in
                                      (raw.get("failure_reasons") or {}).items()},
                 )
@@ -345,7 +351,11 @@ class SiteStatsStore:
             raw["avg_episode_polls"] = round(st.avg_episode_polls, 2)
             eff = st.restart_effectiveness
             raw["restart_effectiveness"] = round(eff, 4) if eff is not None else None
-            raw["latency_ms"] = st.latency_summary()
+            raw["latency_ms"] = st.latency_summary()  # recent ring (computed, human view)
+            # All-time histogram: store the reloadable sketch (string bucket keys)
+            # plus a human-readable lifetime summary.
+            raw["lifetime_latency"] = st.lifetime_latency.to_dict()
+            raw["lifetime_latency_ms"] = st.lifetime_latency.summary()
             sites_out[url] = raw
         now = self._clock()
         monitor_out = asdict(self.monitor)

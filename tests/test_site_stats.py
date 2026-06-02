@@ -245,6 +245,38 @@ def test_restart_effectiveness_none_when_no_restarts() -> None:
     assert s.sites["b.com"].restart_effectiveness is None
 
 
+def test_lifetime_histogram_fed_and_persists(tmp_path: Path) -> None:
+    """Successful polls feed the all-time histogram, which survives a save/reload."""
+    path = str(tmp_path / "stats.json")
+    s1 = SiteStatsStore(path)
+    for ms in (100, 200, 300, 400, 500):
+        s1.record_poll("b.com", True, duration_ms=ms)
+    hist1 = s1.sites["b.com"].lifetime_latency
+    assert hist1.count == 5 and hist1.summary()["avg"] == 300
+    assert s1.save() is True
+
+    s2 = SiteStatsStore(path)
+    hist2 = s2.sites["b.com"].lifetime_latency
+    assert hist2.count == 5
+    assert hist2.summary() == hist1.summary()  # percentiles + exacts survive reload
+
+    # And the human-readable lifetime summary is in the JSON.
+    import json as _json
+    data = _json.loads((tmp_path / "stats.json").read_text())
+    assert "lifetime_latency_ms" in data["sites"]["b.com"]
+    assert data["sites"]["b.com"]["lifetime_latency_ms"]["samples"] == 5
+
+
+def test_lifetime_histogram_outlives_recent_ring(tmp_path: Path) -> None:
+    """The ring is bounded (recent view); the histogram keeps all-time count."""
+    s = SiteStatsStore(None, latency_ring_max=10)
+    for ms in range(1, 101):  # 100 successful polls
+        s.record_poll("b.com", True, duration_ms=ms * 10)
+    st = s.sites["b.com"]
+    assert len(st.recent_latencies) == 10  # ring capped
+    assert st.lifetime_latency.count == 100  # histogram kept them all
+
+
 def test_new_metrics_persist_round_trip(tmp_path: Path) -> None:
     path = str(tmp_path / "stats.json")
     s1 = SiteStatsStore(path)

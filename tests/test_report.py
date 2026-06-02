@@ -80,6 +80,21 @@ def test_table_empty_store() -> None:
     assert "no sites recorded yet" in table
 
 
+def test_report_includes_lifetime_latency() -> None:
+    rep = build_report(_store_with_data())
+    slow = next(r for r in rep["sites"] if r["site"] == "https://slow.com")
+    assert "lifetime_latency_ms" in slow
+    assert slow["lifetime_latency_ms"]["samples"] == 4  # 4 successful polls
+
+
+def test_table_lifetime_window_label_and_data() -> None:
+    rep = build_report(_store_with_data())
+    recent = format_table(rep, lifetime=False)
+    lifetime = format_table(rep, lifetime=True)
+    assert "latency window: recent" in recent
+    assert "latency window: all-time" in lifetime
+
+
 def test_main_json_output(tmp_path: Path, capsys) -> None:
     path = str(tmp_path / "stats.json")
     s = _store_with_data()
