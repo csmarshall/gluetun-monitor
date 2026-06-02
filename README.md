@@ -566,10 +566,23 @@ Note: This gives the container full read access to the Docker API. The socket pr
 [2025-01-15 10:00:00] [ENDPOINT] Status: STARTUP | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Monitor starting
 ```
 
+### A normal check cycle (DEBUG)
+Every test line is tagged with the container it ran in: site tests run inside the
+gluetun container (through the tunnel); each dependent logs its interface/route
+check, then its viability result.
+```
+[2025-01-15 10:00:00] [CHECK] Start
+[2025-01-15 10:00:02] [DEBUG] [gluetun] site https://www.google.com: ok (769ms)
+[2025-01-15 10:00:02] [DEBUG] [gluetun] site https://cloudflare.com: ok (1768ms)
+[2025-01-15 10:00:04] [DEBUG] [qbittorrent] interface check: live [eth0,lo,tun0]
+[2025-01-15 10:00:04] [DEBUG] [qbittorrent] viability: https://cloudflare.com: resolved + connected (HTTP 200) [wget] [fails 0]
+[2025-01-15 10:00:04] [CHECK] End - Sleeping 30s
+```
+
 ### Gluetun connectivity failure + recovery
 ```
-[2025-01-15 10:10:00] [WARN] Site https://example.com failed 2 consecutive times - THRESHOLD REACHED - Network failure (DNS or connection)
-[2025-01-15 10:10:00] [ERROR] Failed sites (exceeded threshold): https://example.com
+[2025-01-15 10:10:00] [WARN] [gluetun] site https://example.com: FAILED 2x consecutive - THRESHOLD REACHED - Network failure (DNS or connection)
+[2025-01-15 10:10:00] [ERROR] [gluetun] failed sites (exceeded threshold): https://example.com
 [2025-01-15 10:10:00] [WARN] Health check failed, initiating recovery...
 [2025-01-15 10:10:00] [ENDPOINT] Status: FAILING | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Site connectivity test failed
 [2025-01-15 10:10:05] [INFO] Restarting gluetun to force new endpoint...

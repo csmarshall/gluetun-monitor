@@ -45,6 +45,28 @@ def test_wget_dns_failure_is_broken() -> None:
     assert r.status is DnsStatus.BROKEN and r.tool == "wget"
 
 
+def test_wget_resolved_but_no_http_is_ok() -> None:
+    """wget resolved DNS but couldn't complete (connection refused) → still OK
+    (DNS is the only per-container fault), and the reason says so honestly rather
+    than claiming a full connection."""
+    fake = _client(lambda n, c: ExecResult(1, "Connecting to x (1.2.3.4)\n"
+                                              "wget: can't connect: Connection refused\n"))
+    r = validate_dns(fake, "dep", "https://x", "x", 5)
+    assert r.status is DnsStatus.OK and r.tool == "wget"
+    assert "no HTTP response" in r.reason
+
+
+def test_wget_broken_short_circuits_the_cascade() -> None:
+    """A definitive DNS failure from wget must NOT fall through to getent/ping —
+    we already know resolution failed. (getent here would say OK if consulted.)"""
+    fake = _client(_cascade({
+        "wget": ExecResult(1, "wget: bad address 'x'\n"),
+        "getent": ExecResult(0, "1.2.3.4 x\n"),  # would say OK if (wrongly) consulted
+    }))
+    r = validate_dns(fake, "dep", "https://x", "x", 5)
+    assert r.status is DnsStatus.BROKEN and r.tool == "wget"
+
+
 # ----- cascade past an absent wget -----
 
 

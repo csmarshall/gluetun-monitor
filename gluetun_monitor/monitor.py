@@ -116,30 +116,33 @@ class Monitor:
                                           self.config.timeout)
         )
 
+        # Site tests run *inside the gluetun container* (through the tunnel) — tag
+        # each line with that container so it's unambiguous where the test ran.
+        g = self.config.gluetun_container
         failed: list[str] = []
         for result in results:
             if record:
                 self.stats.record_poll(result.url, result.ok)
             if result.ok:
                 self.site_failures.reset(result.url)
-                self.log.debug(f"Site {result.url} passed ({result.duration_ms}ms)")
+                self.log.debug(f"[{g}] site {result.url}: ok ({result.duration_ms}ms)")
                 continue
             count = self.site_failures.fail(result.url)
             if count >= self.config.fail_threshold:
                 failed.append(result.url)
                 self.log.warn(
-                    f"Site {result.url} failed {count} consecutive times - "
+                    f"[{g}] site {result.url}: FAILED {count}x consecutive - "
                     f"THRESHOLD REACHED - {result.reason}"
                 )
             else:
                 remaining = self.config.fail_threshold - count
                 self.log.debug(
-                    f"Site {result.url} failed ({count}/{self.config.fail_threshold}) - "
-                    f"{remaining} more to trigger restart - {result.reason}"
+                    f"[{g}] site {result.url}: failed ({count}/{self.config.fail_threshold}, "
+                    f"{remaining} more to restart) - {result.reason}"
                 )
 
         if failed:
-            self.log.error(f"Failed sites (exceeded threshold): {' '.join(failed)}")
+            self.log.error(f"[{g}] failed sites (exceeded threshold): {' '.join(failed)}")
         return failed
 
     # ----- dependent phase (nodes 6-19) -----
@@ -228,7 +231,10 @@ class Monitor:
             return DependentProbe(dep, status, True, None, f"{host}: {dns.reason}",
                                   dns_unvalidated=True, interfaces=ifs)
         viable = dns.status is DnsStatus.OK
-        detail = f"{host}: DNS ok ({dns.tool})" if viable else f"{host}: DNS FAILED ({dns.reason})"
+        if viable:
+            detail = f"{host}: {dns.reason} [{dns.tool}]"  # what was actually validated
+        else:
+            detail = f"{host}: DNS FAILED — {dns.reason} [{dns.tool}]"
         return DependentProbe(dep, status, True, viable, detail, interfaces=ifs)
 
     def _resolve_dependents(self) -> list[str]:
@@ -276,54 +282,52 @@ class Monitor:
             dependents, lambda d: self._probe_dependent(d, gluetun_id, resolvable, ips)
         )
 
-        # State mutation + remediation decisions are single-threaded. Every
-        # dependent logs its L3 interface check (which interfaces / can it route)
-        # at DEBUG each loop, plus the L7 viability detail when applicable.
+        # State mutation + remediation decisions are single-threaded. Each
+        # dependent logs two ordered DEBUG lines: first the L3 network-path check
+        # (which interfaces / can it route out), THEN the L7 viability result —
+        # so the logs show the path was validated before the DNS/connect test.
         to_remediate: list[tuple[str, str]] = []
         for probe in probes:
-            iface = f"interface={probe.status.name.lower()} [{probe.interfaces}]"
+            dep = probe.name
+            self.log.debug(
+                f"[{dep}] interface check: {probe.status.name.lower()} [{probe.interfaces}]"
+            )
             if probe.status is InterfaceStatus.STRANDED:
-                self.log.debug(f"Dependent {probe.name}: {iface} -> {probe.reason}")
-                to_remediate.append((probe.name, probe.reason))
+                to_remediate.append((dep, probe.reason))
                 continue
             if probe.status is InterfaceStatus.UNKNOWN:
-                self.log.debug(
-                    f"Dependent {probe.name}: {iface}, running={probe.running} — {probe.reason}"
-                )
+                self.log.debug(f"[{dep}] {probe.reason} (running={probe.running})")
                 if not probe.running:
-                    to_remediate.append((probe.name, "not running (interface check unavailable)"))
+                    to_remediate.append((dep, "not running (interface check unavailable)"))
                 continue
             if probe.viability_ok is None:
-                if probe.dns_unvalidated and probe.name not in self._warned_dns_unvalidated:
+                if probe.dns_unvalidated and dep not in self._warned_dns_unvalidated:
                     # Can't run any DNS tool in this container — say so loudly once,
                     # and rely on the interface check (don't guess; Tenet 1).
                     self.log.warn(
-                        f"Cannot validate DNS for {probe.name} ({probe.reason}); "
+                        f"[{dep}] cannot validate DNS ({probe.reason}); "
                         f"relying on interface check only"
                     )
-                    self._warned_dns_unvalidated.add(probe.name)
+                    self._warned_dns_unvalidated.add(dep)
                 else:
-                    self.log.debug(f"Dependent {probe.name}: {iface}, {probe.reason}")
+                    self.log.debug(f"[{dep}] viability: {probe.reason}")
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
-            self._warned_dns_unvalidated.discard(probe.name)
+            self._warned_dns_unvalidated.discard(dep)
             if probe.viability_ok:
-                self.dependent_failures.reset(probe.name)
-                self.log.debug(f"Dependent {probe.name}: {iface}, {probe.reason} [fails 0]")
+                self.dependent_failures.reset(dep)
+                self.log.debug(f"[{dep}] viability: {probe.reason} [fails 0]")
                 continue
-            count = self.dependent_failures.fail(probe.name)
+            count = self.dependent_failures.fail(dep)
             threshold = self.config.dependent_container_failures
             if count >= threshold:
-                to_remediate.append(
-                    (probe.name, f"{count} consecutive viability failures")
-                )
+                to_remediate.append((dep, f"{count} consecutive viability failures"))
                 self.log.warn(
-                    f"Dependent {probe.name}: {iface}, {probe.reason} "
-                    f"[fails {count}/{threshold} -> remediate]"
+                    f"[{dep}] viability: {probe.reason} [fails {count}/{threshold} -> remediate]"
                 )
             else:
                 self.log.debug(
-                    f"Dependent {probe.name}: {iface}, {probe.reason} [fails {count}/{threshold}]"
+                    f"[{dep}] viability: {probe.reason} [fails {count}/{threshold}]"
                 )
 
         for dep, reason in to_remediate:
