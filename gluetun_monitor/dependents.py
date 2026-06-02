@@ -67,7 +67,10 @@ def get_dependents(client: DockerClient, config: Config, logger: Logger) -> list
     if config.dependent_containers == "auto":
         discovered = discover_dependents(client, config.gluetun_container)
         if discovered:
-            logger.info(f"Discovered dependent containers: {','.join(discovered)}")
+            # DEBUG, not INFO: the per-loop INFO heartbeat already reports the
+            # dependent count ("dependents: N/M ok"), so naming them every loop
+            # is redundant noise at the default level.
+            logger.debug(f"Discovered dependent containers: {','.join(discovered)}")
         else:
             logger.warn("No dependent containers discovered")
         return discovered

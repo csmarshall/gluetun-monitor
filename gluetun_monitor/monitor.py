@@ -165,6 +165,24 @@ class Monitor:
 
         if failed:
             self.log.error(f"[{gw}] restart triggered by: {' '.join(failed)}")
+
+        # One-line INFO heartbeat so the default log level explains each loop
+        # without the per-site DEBUG detail. Only on the primary poll (not the
+        # post-restart re-verify, which has its own "verified" line).
+        if record:
+            ok_results = [r for r in results if r.ok]
+            failing = [hostname_of(r.url) for r in results if not r.ok]
+            if failing:
+                self.log.info(
+                    f"[{gw}] sites: {len(ok_results)}/{len(results)} ok — "
+                    f"failing: {', '.join(failing)}"
+                )
+            else:
+                slowest = max(results, key=lambda r: r.duration_ms)
+                self.log.info(
+                    f"[{gw}] sites: {len(ok_results)}/{len(results)} ok "
+                    f"(slowest {slowest.duration_ms}ms: {hostname_of(slowest.url)})"
+                )
         return failed
 
     # ----- dependent phase (nodes 6-19) -----
@@ -381,6 +399,16 @@ class Monitor:
                 )
             else:
                 self.log.debug(f"[{tag}] reach fail: {probe.reason} [{count}/{threshold}]")
+
+        # INFO heartbeat for the dependent phase (mirrors the gateway summary).
+        healthy = len(probes) - len(to_remediate)
+        if to_remediate:
+            self.log.info(
+                f"dependents: {healthy}/{len(probes)} ok — "
+                f"remediating: {', '.join(dep for dep, _ in to_remediate)}"
+            )
+        else:
+            self.log.info(f"dependents: {healthy}/{len(probes)} ok")
 
         for dep, reason in to_remediate:
             if self.config.dry_run:
