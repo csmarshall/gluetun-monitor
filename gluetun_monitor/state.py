@@ -46,6 +46,11 @@ class Counter:
         """Current consecutive-failure count for ``key`` (0 if never seen)."""
         return self._counts.get(key, 0)
 
+    def discard(self, key: str) -> None:
+        """Forget ``key`` entirely (e.g. a site removed from the config), so a
+        later re-add starts clean rather than resuming a stale count."""
+        self._counts.pop(key, None)
+
     def reset_all(self) -> None:
         """Zero every counter (post-recovery, per v1.x ``handle_failure``)."""
         for key in self._counts:

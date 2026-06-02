@@ -53,4 +53,4 @@ def test_added_site_is_picked_up_without_restart(tmp_path: Path) -> None:
     mon.run_once()
 
     assert "https://c.example" in tested  # the new site is now tested
-    assert "Site count changed from 2 to 3" in stream.getvalue()
+    assert "Sites changed: added https://c.example (now 3)" in stream.getvalue()

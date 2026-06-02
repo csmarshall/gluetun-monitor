@@ -96,7 +96,7 @@ class Monitor:
         self._advised_site: str | None = None  # dedup the flaky-site advisory
         self.site_failures = Counter()
         self.dependent_failures = Counter()
-        self._last_site_count: int | None = None
+        self._last_sites: set[str] | None = None
         # Dependents seen at least once. A dependent stranded by a gluetun
         # *recreate* still points at the dead old id, so current-id discovery no
         # longer matches it — but we remember it from before the recreate and
@@ -123,12 +123,28 @@ class Monitor:
             self.log.warn("No sites configured to test")
             return []
 
-        if self._last_site_count != len(sites):
-            if self._last_site_count is None:
-                self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
-            else:
-                self.log.info(f"Site count changed from {self._last_site_count} to {len(sites)}")
-            self._last_site_count = len(sites)
+        # Track the site *set* (not just the count) so a runtime sites.conf edit is
+        # logged with the actual names — including a same-count swap, which a
+        # count-only check would miss entirely. record=False is the post-restart
+        # re-verify (same set), so skip the diff there.
+        current = set(sites)
+        if record and self._last_sites is None:
+            self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
+            self._last_sites = current
+        elif record and current != self._last_sites:
+            added = sorted(current - self._last_sites) if self._last_sites else sorted(current)
+            removed = sorted(self._last_sites - current) if self._last_sites else []
+            parts = []
+            if added:
+                parts.append(f"added {', '.join(added)}")
+            if removed:
+                parts.append(f"removed {', '.join(removed)}")
+            self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(sites)})")
+            # A removed site keeps no live failure counter — a later re-add starts
+            # clean rather than resuming near the threshold.
+            for site in removed:
+                self.site_failures.discard(site)
+            self._last_sites = current
 
         results = self._fan_out(
             sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
