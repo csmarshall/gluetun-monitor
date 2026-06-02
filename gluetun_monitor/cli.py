@@ -9,7 +9,7 @@ from types import FrameType
 from .config import Config
 from .dependents import parse_csv_names
 from .docker_client import DockerClient, DockerPyClient
-from .logging_setup import Logger
+from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
 from .sites import load_sites
 
@@ -126,6 +126,7 @@ def main() -> int:
     """
     config = Config.from_env()
     logger = Logger(log_file=config.log_file, level=config.log_level)
+    install_bash_format_on_root()  # make stray docker-py/urllib3 logs match our format
     _install_signal_handlers(logger)
     _announce_banner(config, logger)
 

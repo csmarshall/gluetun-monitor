@@ -95,3 +95,21 @@ def test_unwritable_file_degrades_gracefully() -> None:
     log = Logger(log_file="/proc/cannot/create/here.log", level="INFO", stream=stream)
     log.info("still works")
     assert "[INFO] still works" in stream.getvalue()
+
+
+def test_install_bash_format_on_root_formats_third_party() -> None:
+    """Library logs (via the root logger) render in the bash format, not Python's
+    default 'WARNING:name:msg' — so the container's output stays uniform."""
+    import logging as _logging
+
+    from gluetun_monitor.logging_setup import install_bash_format_on_root
+
+    install_bash_format_on_root("WARNING")
+    root = _logging.getLogger()
+    assert len(root.handlers) == 1
+    fmt = root.handlers[0].formatter
+    assert fmt is not None
+    rec = _logging.LogRecord("urllib3", _logging.WARNING, "x", 1, "pool full", None, None)
+    line = fmt.format(rec)
+    assert _LINE_RE.match(line), line   # [ts] [WARN] pool full
+    assert "[WARN]" in line

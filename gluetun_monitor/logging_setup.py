@@ -36,6 +36,9 @@ _TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S"
 _instance_counter = itertools.count()
 
 
+_BASH_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"
+
+
 class _BashFormatter(logging.Formatter):
     """Render ``[ts] [LEVEL] msg``, displaying WARNING as WARN (v1.x parity)."""
 
@@ -44,6 +47,20 @@ class _BashFormatter(logging.Formatter):
         if record.levelname == "WARNING":
             record.levelname = "WARN"
         return super().format(record)
+
+
+def install_bash_format_on_root(level: str = "WARNING") -> None:
+    """Route stray third-party logs (docker-py / urllib3) through the bash format
+    too, so the container's stderr is uniform — not a mix of our
+    ``[ts] [LEVEL] msg`` and Python's default ``WARNING:urllib3...``. Our own
+    Logger doesn't propagate, so this only affects library logging."""
+    root = logging.getLogger()
+    root.setLevel(_LEVEL_BY_NAME.get(level.upper(), logging.WARNING))
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_BashFormatter(_BASH_FORMAT, _TIMESTAMP_FMT))
+    root.addHandler(handler)
 
 
 class Logger:
@@ -63,7 +80,7 @@ class Logger:
         self._logger.propagate = False
         self._logger.handlers.clear()
 
-        formatter = _BashFormatter("[%(asctime)s] [%(levelname)s] %(message)s", _TIMESTAMP_FMT)
+        formatter = _BashFormatter(_BASH_FORMAT, _TIMESTAMP_FMT)
 
         stream_handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
         stream_handler.setFormatter(formatter)
