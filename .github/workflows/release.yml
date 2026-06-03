@@ -71,3 +71,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          # v1 is EOL: never claim the GitHub "Latest release" badge — that stays
+          # on the current major (v2+), same as the Docker :latest tag.
+          make_latest: false
