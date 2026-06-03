@@ -75,7 +75,8 @@ def _parse_http_code(output: str) -> str:
 
 def _extract_error(output: str, exit_code: int) -> str:
     """The real failure reason: wget's own last diagnostic line if we can find it,
-    otherwise the decoded exit code. Avoids the useless bare 'Generic error'."""
+    otherwise the decoded exit code. Avoids the useless bare 'Generic error'.
+    """
     for line in reversed([ln.strip() for ln in output.splitlines() if ln.strip()]):
         low = line.lower()
         if any(hint in low for hint in _ERROR_HINTS):

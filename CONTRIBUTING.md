@@ -34,14 +34,21 @@ CI runs exactly these (plus a Docker build, an integration smoke test, and
 `pip-audit` for dependency CVEs) on every PR. All must pass. Coverage is
 **branch** coverage with a **95% floor** — new code needs tests.
 
-## Code style (PEP 8 + types)
+## Code style — the standards we follow
 
-- **PEP 8 via ruff** (line length 100). The enabled rule sets are in
-  `pyproject.toml` (`[tool.ruff.lint]`): pycodestyle/pyflakes, isort, bugbear,
-  pyupgrade, comprehensions, simplify, return, pathlib, Ruff. Let ruff format your
-  imports (`known-first-party = ["gluetun_monitor"]`).
-- **Type hints everywhere**, checked by `mypy --strict` (with `warn_unreachable`
-  and `warn_redundant_casts`). No untyped defs.
+| Standard | What | Enforced by |
+|---|---|---|
+| **PEP 8** | style | ruff (E/W) — **line length 120** (wide-screen, not an 80s terminal) |
+| **PEP 257** | docstring conventions | ruff `D` (pydocstyle) — *presence* on every public module/class/method/function, plus formatting |
+| **PEP 484** | type hints | `mypy --strict` (+ `warn_unreachable`, `warn_redundant_casts`) — no untyped defs |
+| **PEP 517/518/621** | packaging | `pyproject.toml` |
+
+- The enabled ruff rule sets live in `pyproject.toml` (`[tool.ruff.lint]`):
+  pycodestyle/pyflakes, isort, bugbear, pyupgrade, comprehensions, simplify,
+  return, pathlib, **pydocstyle**, Ruff. We deliberately **exempt three** pydocstyle
+  rules (documented inline): `D107` (`__init__` — class docstring covers it),
+  `D205` (blank line after summary), `D401` (imperative mood) — our docstrings are
+  already clear and we don't reflow them for those.
 - **Docstrings explain _why_, not just _what_** — the non-obvious reasoning,
   trade-offs, and tenet/ADR references. Self-documenting names; comment only
   non-obvious logic. Remove dead code.

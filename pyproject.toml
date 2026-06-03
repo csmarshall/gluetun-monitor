@@ -35,13 +35,15 @@ dev = [
 packages = ["gluetun_monitor"]
 
 [tool.ruff]
-line-length = 100
+# 120, not 80 — modern wide displays, not a 1980s terminal. Wide enough to not
+# fight you; a guardrail for diffs/side-by-side review, not a straitjacket.
+line-length = 120
 target-version = "py313"
 src = ["gluetun_monitor", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E", "F", "W",   # pycodestyle + pyflakes
+    "E", "F", "W",   # pycodestyle + pyflakes (PEP 8)
     "I",             # isort
     "B",             # bugbear
     "UP",            # pyupgrade
@@ -49,14 +51,24 @@ select = [
     "SIM",           # simplify
     "RET",           # return
     "PTH",           # prefer pathlib
+    "D",             # pydocstyle (PEP 257 docstring conventions)
     "RUF",
 ]
 ignore = [
     "SIM105",  # contextlib.suppress over try/except/pass — try/except reads fine here
+    # pydocstyle: we enforce docstring *presence* + formatting, but exempt the three
+    # most commonly-waived stylistic rules (our docstrings are already clear):
+    "D107",    # __init__ docstring — the class docstring already covers it
+    "D205",    # blank line between summary and description — we wrap summaries
+    "D401",    # imperative mood — "True if…"/"Whether…" reads fine for predicates
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]
+# Tests: don't require docstrings on every test fn (module docstrings still apply).
+"tests/*" = ["B011", "D"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["gluetun_monitor"]

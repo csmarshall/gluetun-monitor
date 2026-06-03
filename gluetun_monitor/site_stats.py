@@ -82,17 +82,20 @@ class SiteStat:
 
     @property
     def failure_rate(self) -> float:
+        """Fraction of all polls that failed (0.0 if never polled)."""
         return self.total_failures / self.total_polls if self.total_polls else 0.0
 
     @property
     def avg_episode_polls(self) -> float:
+        """Average length, in failed polls, of a failure episode (0.0 if none)."""
         return self.total_failures / self.failure_episodes if self.failure_episodes else 0.0
 
     @property
     def restart_effectiveness(self) -> float | None:
         """Fraction of this site's restarts after which it recovered on re-verify,
         or None when the site has triggered no restarts (so callers render 'n/a'
-        rather than a misleading 0% that reads as 'restarts never worked')."""
+        rather than a misleading 0% that reads as 'restarts never worked').
+        """
         if not self.restarts_triggered:
             return None
         return self.restarts_cleared / self.restarts_triggered
@@ -212,7 +215,8 @@ class SiteStatsStore:
 
     def record_loop(self) -> None:
         """Mark one check cycle: accumulate running time + bump the loop count.
-        Downtime between runs isn't counted (the tick resets on restart)."""
+        Downtime between runs isn't counted (the tick resets on restart).
+        """
         now = self._clock()
         self.monitor.total_runtime_seconds += max(0.0, now - self._last_tick)
         self._last_tick = now
@@ -220,12 +224,14 @@ class SiteStatsStore:
 
     def record_gluetun_restart(self) -> None:
         """One gluetun restart initiated (monitor-wide count; counted when the
-        action is taken, not gated on it clearing the failure)."""
+        action is taken, not gated on it clearing the failure).
+        """
         self.monitor.total_gluetun_restarts += 1
 
     def record_dependent_remediation(self) -> None:
         """One dependent remediation initiated — restart/recreate (monitor-wide
-        count; counted when the action is taken, not gated on it succeeding)."""
+        count; counted when the action is taken, not gated on it succeeding).
+        """
         self.monitor.total_dependent_remediations += 1
 
     def record_advisory(self) -> None:
@@ -235,14 +241,16 @@ class SiteStatsStore:
     def record_restart_outcome(self, site: str, cleared: bool) -> None:
         """Record whether ``site`` recovered after the restart it triggered (the
         post-restart re-verify). Drives restart-effectiveness — a site whose
-        restarts rarely clear it is the site's fault, not the VPN's."""
+        restarts rarely clear it is the site's fault, not the VPN's.
+        """
         if cleared:
             self._stat(site).restarts_cleared += 1
 
     def prune_stale(self, retention_seconds: float) -> list[str]:
         """Drop sites not polled within ``retention_seconds`` (e.g. removed from
         sites.conf 90+ days ago). Returns the pruned site names. A non-positive
-        retention disables pruning (keep forever)."""
+        retention disables pruning (keep forever).
+        """
         if retention_seconds <= 0:
             return []
         cutoff = self._clock() - retention_seconds

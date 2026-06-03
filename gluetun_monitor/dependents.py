@@ -35,7 +35,8 @@ def _ids_match(a: str, b: str) -> bool:
 def is_container_id(value: str) -> bool:
     """True if ``value`` looks like a Docker container id (12-64 hex chars), as
     opposed to a container *name* (used to tell id-form NetworkMode targets apart
-    from name-form ones)."""
+    from name-form ones).
+    """
     return bool(_CONTAINER_ID_RE.match(value))
 
 
@@ -88,7 +89,8 @@ def parse_csv_names(value: str) -> list[str]:
 
 def list_interfaces(client: DockerClient, dep_name: str) -> set[str] | None:
     """Return the dependent's network interfaces (``ls /sys/class/net``), or None
-    if it couldn't be determined (exec failed / no shell / empty output)."""
+    if it couldn't be determined (exec failed / no shell / empty output).
+    """
     try:
         result = client.exec_run(dep_name, ["ls", "/sys/class/net"])
     except Exception:
@@ -101,7 +103,8 @@ def list_interfaces(client: DockerClient, dep_name: str) -> set[str] | None:
 
 def classify_interfaces(interfaces: set[str] | None) -> InterfaceStatus:
     """LIVE if a non-loopback interface is present, STRANDED if only ``lo``,
-    UNKNOWN if we couldn't read them (ADR-0004, node 7)."""
+    UNKNOWN if we couldn't read them (ADR-0004, node 7).
+    """
     if not interfaces:
         return InterfaceStatus.UNKNOWN
     return InterfaceStatus.LIVE if (interfaces - {"lo"}) else InterfaceStatus.STRANDED

@@ -106,7 +106,8 @@ def _install_signal_handlers(logger: Logger) -> None:
 
 def _announce_banner(config: Config, logger: Logger) -> None:
     """The startup banner, logged before prerequisites (v1.x order) so it is
-    visible even when the prereq check then fails."""
+    visible even when the prereq check then fails.
+    """
     logger.info("Gluetun Monitor starting...")
     logger.info(
         f"Config: CHECK_INTERVAL={config.check_interval}s, TIMEOUT={config.timeout}s, "

@@ -63,7 +63,8 @@ def _fmt_reach(host: str, r: DnsResult) -> str:
 
 def _link_line(status: str, interfaces: str) -> str:
     """L3 link verdict + interface list: ``live: eth0,lo,tun0`` / ``stranded: lo``
-    / ``unknown`` (no list when the interfaces couldn't be read)."""
+    / ``unknown`` (no list when the interfaces couldn't be read).
+    """
     return f"{status}: {interfaces}" if interfaces and interfaces != "unknown" else status
 
 
@@ -545,7 +546,8 @@ class Monitor:
 
     def _save_stats(self) -> None:
         """Prune stale sites (retention), then persist — every loop (best-effort;
-        a few-KB atomic write, so no throttle needed)."""
+        a few-KB atomic write, so no throttle needed).
+        """
         pruned = self.stats.prune_stale(self.config.stats_retention_days * 86400)
         if pruned:
             self.log.info(

@@ -54,7 +54,8 @@ def install_bash_format_on_root(level: str = "WARNING") -> None:
     """Route stray third-party logs (docker-py / urllib3) through the bash format
     too, so the container's stderr is uniform — not a mix of our
     ``[ts] [LEVEL] msg`` and Python's default ``WARNING:urllib3...``. Our own
-    Logger doesn't propagate, so this only affects library logging."""
+    Logger doesn't propagate, so this only affects library logging.
+    """
     root = logging.getLogger()
     root.setLevel(_LEVEL_BY_NAME.get(level.upper(), logging.WARNING))
     for handler in list(root.handlers):

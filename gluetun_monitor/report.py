@@ -43,7 +43,8 @@ def build_report(store: SiteStatsStore) -> dict[str, Any]:
     """A plain-data snapshot of the store: monitor totals + one row per site.
 
     Pure and JSON-serializable — the table renderer and ``--json`` share it, so
-    the two views can never drift."""
+    the two views can never drift.
+    """
     m = store.monitor
     sites: list[dict[str, Any]] = []
     for url, st in store.sites.items():
@@ -161,6 +162,7 @@ def format_table(report: dict[str, Any], sort: str = "p90", *, lifetime: bool = 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for ``gluetun-monitor-stats``; returns a process exit code."""
     parser = argparse.ArgumentParser(
         prog="gluetun-monitor-stats",
         description="Render the gluetun-monitor site-stats sidecar (read-only).",

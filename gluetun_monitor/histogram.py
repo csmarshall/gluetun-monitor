@@ -35,7 +35,8 @@ def _bucket_key(value: int) -> int:
 
 def _bucket_value(key: int) -> int:
     """Representative value for a bucket — the midpoint that bounds the relative
-    error of every value in the bucket at ALPHA (2*gamma**k / (gamma+1))."""
+    error of every value in the bucket at ALPHA (2*gamma**k / (gamma+1)).
+    """
     return round(2 * _GAMMA**key / (_GAMMA + 1))
 
 
@@ -51,7 +52,8 @@ class LatencyHistogram:
 
     def add(self, ms: int) -> None:
         """Record one latency sample (ms). Values < 1 ms are clamped to 1 ms
-        (sub-millisecond resolution is meaningless for this monitor)."""
+        (sub-millisecond resolution is meaningless for this monitor).
+        """
         v = max(1, int(ms))
         key = _bucket_key(v)
         self.buckets[key] = self.buckets.get(key, 0) + 1
@@ -76,7 +78,7 @@ class LatencyHistogram:
         return _bucket_value(max(self.buckets))  # unreachable; defensive
 
     def summary(self) -> dict[str, int]:
-        """samples + exact avg/min/max + approximate p50/p90/p99 (ms)."""
+        """Samples + exact avg/min/max + approximate p50/p90/p99 (ms)."""
         if self.count == 0:
             return {"samples": 0, "avg": 0, "min": 0, "max": 0, "p50": 0, "p90": 0, "p99": 0}
         return {
@@ -113,7 +115,8 @@ class LatencyHistogram:
     @classmethod
     def from_dict(cls, data: object) -> LatencyHistogram:
         """Rebuild from :meth:`to_dict` output; anything malformed yields empty
-        (the stats sidecar is best-effort — a bad file must never crash startup)."""
+        (the stats sidecar is best-effort — a bad file must never crash startup).
+        """
         if not isinstance(data, dict):
             return cls()
         try:
