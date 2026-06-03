@@ -1,7 +1,7 @@
 # gluetun-monitor v2 — Python (ADR-0007). docker-py talks the Docker API
 # directly (honoring DOCKER_HOST / the socket proxy), so the docker CLI is no
 # longer needed in the image.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # gosu lets the entrypoint drop privileges to PUID:PGID when the operator opts in
 # (LSIO-style). With no PUID/PGID the container runs as root — a drop-in match for
