@@ -89,8 +89,9 @@ boots cleanly against a socket proxy as part of testing.
 - **`:2`** — **recommended for production**: you get every v2.x patch and never a
   surprise future major.
 - `:2.0.0` — fully pinned to one release (reproducible; you update deliberately).
-- `:latest` — always the newest release; **will** eventually roll to a future v3
-  major, so don't use it for unattended updates of a container-restarting watchdog.
+- `:latest` — always the newest **stable** release (excludes pre-releases, and an
+  EOL v1 patch can't drag it back); **will** eventually roll to a future v3 major,
+  so don't use it for unattended updates of a container-restarting watchdog.
 - **`:1`** — frozen v1, kept only as a **rollback anchor**; unsupported (EOL).
 
 **Two behavior changes to know about** (the config interface is compatible, but

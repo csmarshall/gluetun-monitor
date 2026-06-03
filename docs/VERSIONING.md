@@ -15,10 +15,21 @@ Every release publishes, to both GHCR and Docker Hub:
 | `MAJOR.MINOR.PATCH` | `2.0.0` | never (frozen) | reproducible / fully pinned deploys |
 | `MAJOR.MINOR` | `2.0` | latest patch of that minor | pinning to a feature line |
 | **`MAJOR`** | **`2`** | latest release within that major | **recommended for production** |
-| `latest` | — | newest release, **including the next major** | "always newest", attended updates |
+| `latest` | — | newest **stable** release, **including across a major** | "always newest", attended updates |
+
+`:latest` tracks the newest **non-pre-release** version only (the workflow uses
+`latest=auto`). Two guarantees follow, both enforced in CI config rather than by
+discipline:
+
+- A **pre-release** (`-rc`, etc.) never moves `:latest`.
+- An **EOL/older-major patch never claims `:latest`.** When v1 is EOL and we still
+  ship a v1 patch (e.g. an end-of-life notice), that build sets `latest=false`, so
+  it updates only `:1` / `:1.x` and **cannot** drag `:latest` back off v2. So once
+  `:latest` is on a major, it only ever moves forward.
 
 The previous major's `MAJOR` tag (e.g. `1`) is **retained but frozen** as a
-rollback anchor after it goes EOL — it is never deleted.
+rollback anchor after it goes EOL — it is never deleted, and an EOL patch to it
+(see above) still won't disturb the current `:latest`.
 
 ### Why `:MAJOR` is the recommended pin
 This is a privileged watchdog: it holds Docker `POST` rights and will
@@ -29,9 +40,9 @@ a major boundary — exactly the kind of surprise a container-restarting tool
 should avoid (Tenet 1: first, do no harm).
 
 `:latest` is still published for people who explicitly want the newest thing and
-update attentively. We do **not** use a `stable` tag today; if pre-releases
-(`-rc`) are ever published, `stable` would be introduced to mean "newest full
-release" and `latest` would include pre-releases.
+update attentively — but it is **newest *stable***, so it's safe from half-baked
+pre-releases. If a pre-release channel is ever wanted, it would get its own
+explicit tag (e.g. `:edge`/`:rc`); `:latest` would keep meaning "newest stable".
 
 ## What each bump means
 
