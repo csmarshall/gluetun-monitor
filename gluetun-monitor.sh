@@ -487,6 +487,11 @@ check_prerequisites() {
 
 main() {
     log "INFO" "Gluetun Monitor starting..."
+    # End-of-life notice: v1 (this bash implementation) is EOL. v2 is a drop-in
+    # upgrade (same env vars/files/socket perms) that also detects + heals the
+    # dependent containers behind gluetun. This v1 image still works and is kept
+    # only as a rollback anchor; please move to v2 when you can.
+    log "WARN" "gluetun-monitor v1 is END-OF-LIFE — v2 is a drop-in upgrade (just change the image tag to :2). See https://github.com/csmarshall/gluetun-monitor/blob/main/CHANGELOG.md"
     log "INFO" "Config: CHECK_INTERVAL=${CHECK_INTERVAL}s, TIMEOUT=${TIMEOUT}s, FAIL_THRESHOLD=${FAIL_THRESHOLD}"
     log "INFO" "Monitoring container: $GLUETUN_CONTAINER"
 

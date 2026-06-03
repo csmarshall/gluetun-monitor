@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-06-03
+
+### Changed
+- **v1 is end-of-life.** This release adds a one-time **EOL notice** at startup
+  pointing to v2, and is the final v1 build. v1 stays pullable at the frozen `:1`
+  tag as a rollback anchor; it will not receive further changes.
+- **v2 is a drop-in upgrade** — change the image tag to `:2` (same env vars,
+  files, and socket-proxy permissions) to also get dependent-aware health +
+  self-healing. See the v2 CHANGELOG/README on `main`.
+
+### Note
+- This v1.x release publishes only the `:1` / `:1.1` / `:1.1.2` tags — it does
+  **not** update `:latest` (which tracks the current major, v2).
+
 ## [1.1.1] - 2026-05-16
 
 ### Fixed

@@ -12,6 +12,15 @@
   <a href="https://buymeacoffee.com/cs_marshall"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
+> [!WARNING]
+> **gluetun-monitor v1 is end-of-life.** This is the original Bash implementation,
+> kept only as a rollback anchor at the `:1` image tag. **v2 is a drop-in upgrade**
+> — change your image tag to `ghcr.io/csmarshall/gluetun-monitor:2` (or
+> `chasmarshall/gluetun-monitor:2`) and it keeps working with the same env vars,
+> files, and socket-proxy permissions, **plus** it detects and heals the dependent
+> containers behind gluetun (which v1 misses). See the
+> [CHANGELOG](https://github.com/csmarshall/gluetun-monitor/blob/main/CHANGELOG.md).
+
 A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
 
 ## Links

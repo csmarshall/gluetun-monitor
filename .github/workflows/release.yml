@@ -46,11 +46,15 @@ jobs:
           images: |
             ghcr.io/${{ github.repository }}
             docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          # v1 is EOL: publish only the v1.x tags (:1, :1.1, :1.1.2). Never claim
+          # :latest — that belongs to the current major (v2+). The default major
+          # tag (:1) stays a frozen rollback anchor.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
 
       - name: Build and push
         uses: docker/build-push-action@v7
