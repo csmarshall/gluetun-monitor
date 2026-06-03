@@ -1,164 +1,105 @@
 # Development Notes
 
-This document provides context for future development and AI assistance.
+Context for working on gluetun-monitor. The **why** behind the architecture
+lives in [`docs/`](docs/): start with [`docs/TENETS.md`](docs/TENETS.md), then
+the ADRs ([`docs/adr/`](docs/adr/)) and the per-loop state machine in
+[ADR-0006](docs/adr/0006-per-dependent-viability-testing.md). This file covers
+the **how**: layout, toolchain, and testing.
 
-## Problem Statement
+## v2 at a glance
 
-When using Gluetun as a VPN gateway for other containers (via `network_mode: container:gluetun`), there are several operational challenges:
+v2 (ADR-0007) is a Python package, `gluetun_monitor`. It does everything v1.x did
+and adds dependent-aware health + self-healing (issue #20). The legacy
+`gluetun-monitor.sh` remains in the tree as the **differential oracle** and
+rollback anchor (`:1` image) — not for further feature work.
 
-1. **VPN endpoint failures** - Some VPN servers may become slow, blocked, or unresponsive
-2. **Dependent container restarts** - When Gluetun restarts, containers using its network lose connectivity and often need to be restarted
-3. **Manual intervention** - Without monitoring, users must manually detect issues and restart services
-4. **Lack of visibility** - No logging of which VPN endpoints work or fail
+The single most important design idea: **all Docker access goes through one
+seam** (`docker_client.DockerClient`, implemented over docker-py). Tests inject a
+`FakeDockerClient`, so the entire monitor — including the destructive-adjacent
+recreate path — is exercised without a live daemon.
 
-## Solution Design
-
-### Architecture
-
-```
-┌─────────────────────┐
-│   gluetun-monitor   │
-│   (this container)  │
-└──────────┬──────────┘
-           │ Docker Socket
-           ▼
-┌─────────────────────┐     ┌─────────────────────┐
-│      Gluetun        │◄────│  Dependent Containers│
-│   (VPN gateway)     │     │  (network_mode:      │
-└─────────────────────┘     │   container:gluetun) │
-                            └─────────────────────┘
-```
-
-### Key Design Decisions
-
-#### 1. Parallel Site Testing
-- **Problem:** Sequential testing takes `num_sites × timeout` seconds
-- **Solution:** Launch all site tests as background jobs, wait for all to complete
-- **Implementation:** Uses bash background jobs (`&`) and `wait`
-- **Result:** Total test time = single timeout, regardless of site count
-
-#### 2. Auto-Discovery of Dependent Containers
-- **Problem:** Hard-coding container names is brittle and requires manual updates
-- **Solution:** Query Docker API to find containers with matching `NetworkMode`
-- **Implementation:** `docker inspect --format='{{.HostConfig.NetworkMode}}'`
-- **Timing:** Discovery runs at startup (for logging) and immediately before each restart operation
-
-#### 3. Consecutive Failure Threshold
-- **Problem:** Transient network blips could cause unnecessary restarts
-- **Solution:** Require N consecutive failures before triggering restart
-- **Implementation:** Per-site failure counters, reset on success or after restart
-
-#### 4. Memory-Safe Site Testing
-- **Problem:** Large HTTP responses could consume memory
-- **Solution:** Use `wget --spider` (headers only) with output discarded
-- **Implementation:** `wget --spider ... >/dev/null 2>&1`
-
-#### 5. Smart Failure Detection
-- **Problem:** HTTP 4xx/5xx errors don't indicate VPN failure - the site responded
-- **Solution:** Only treat actual connectivity failures as failures
-- **Implementation:** Check wget exit codes:
-  - Exit 0, 6, 8 → PASS (site responded, VPN working)
-  - Exit 4, 5, others → FAIL (connectivity issue)
-- **Rationale:** A 403 Forbidden means the VPN tunnel works; DNS resolved and TCP connected
-
-#### 6. DNS Stabilization Wait
-- **Problem:** Gluetun may report "healthy" before DNS is fully operational
-- **Solution:** After health check passes, verify DNS actually works
-- **Implementation:** `nslookup google.com` + `wget https://1.1.1.1` before proceeding
-- **Timeout:** 30 seconds with 2-second polling
-
-#### 7. VPN Endpoint Logging
-- **Problem:** Need visibility into which endpoints fail/succeed
-- **Solution:** Parse Gluetun logs for server, country, city, IP information
-- **Implementation:** Grep patterns for known Gluetun log formats
-
-## Code Structure
+## Package layout
 
 ```
-gluetun-monitor.sh
-├── Configuration variables (lines 8-18)
-├── log() - Timestamped logging (to stderr and log file)
-├── log_endpoint_info() - Extract VPN details from Gluetun logs
-├── get_gluetun_health() - Query container health status
-├── discover_dependent_containers() - Find containers using Gluetun's network
-├── get_dependent_containers() - Wrapper for auto/manual mode
-├── wait_for_gluetun_healthy() - Poll until healthy or timeout
-├── wait_for_dns_ready() - Verify DNS works after restart
-├── decode_wget_exit_code() - Human-readable wget error messages
-├── test_site_async() - Background job for single site test
-├── test_all_sites() - Parallel test orchestration
-├── restart_gluetun() - Restart with logging
-├── restart_dependent_containers() - Discover and restart dependents
-├── handle_failure() - Recovery orchestration with connectivity verification
-├── check_prerequisites() - Startup validation
-└── main() - Main loop
+gluetun_monitor/
+├── __main__.py       # python -m gluetun_monitor
+├── cli.py            # main(): config + logger + client, prereqs, run loop
+├── config.py         # Config dataclass, from_env() (the env-var contract)
+├── logging_setup.py  # stdlib logging, formatted to the v1.x line format
+├── docker_client.py  # the seam: DockerClient Protocol + DockerPyClient + ContainerInfo
+├── sites.py          # sites.conf parsing, trim, resolvable-vs-IP classification
+├── connectivity.py   # probe_site() — wget --spider, the v1.x exit-code map (0/6/8 pass)
+├── endpoint.py       # parse gluetun logs for IP/location/server (issue #17 safe)
+├── dependents.py     # discovery, interface check, restart-vs-recreate decision
+├── recreate.py       # build_create_body() (pure) + recreate_dependent() — ADR-0005
+├── recovery.py       # gluetun restart waits + dependent remediation/verify
+├── state.py          # consecutive-failure Counter + enums
+└── monitor.py        # Monitor: the per-loop state machine (ADR-0006 nodes 1-22)
 ```
 
-## Testing Considerations
-
-### Manual Testing
+## Toolchain
 
 ```bash
-# Test site connectivity through Gluetun
-docker exec gluetun wget --spider --timeout=10 https://google.com
+python -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'
 
-# Check container network mode
-docker inspect --format='{{.HostConfig.NetworkMode}}' <container>
-
-# View Gluetun logs for endpoint info
-docker logs gluetun 2>&1 | grep -E "server|country|city|public IP"
+ruff check gluetun_monitor tests   # lint (replaces shellcheck for the Python)
+mypy gluetun_monitor               # types — strict
+pytest                             # unit + differential
+pytest --cov=gluetun_monitor --cov-report=term-missing
 ```
 
-### Simulating Failures
+CI runs all three on every PR (`.github/workflows/ci.yml`), plus shellcheck and
+the legacy bats suite against `gluetun-monitor.sh`, plus a Docker build +
+container-start integration check.
+
+## Testing strategy
+
+- **Unit tests** (`tests/test_*.py`) — each module against the `FakeDockerClient`
+  (`tests/fakes.py`). State mutation in the monitor is single-threaded, so these
+  are deterministic; the shuffle RNG is injected (`random.Random(0)`).
+- **Recreate tests** (`tests/test_recreate.py`) — the highest-risk logic. The
+  field-stripping and the **anonymous-volume data-preservation** guarantee are
+  pinned because `build_create_body` is a pure function.
+- **Characterization / differential** (`tests/test_characterization.py`, marked
+  `differential`) — executes the *actual* legacy bash functions and asserts the
+  Python port matches (`trim`, `decode_wget_exit_code`, env defaults). This is
+  the no-regressions gate from ADR-0007. Run just these with
+  `pytest -m differential`.
+
+### Manual / live testing
 
 ```bash
-# Block outbound traffic in Gluetun (requires exec into container)
-docker exec gluetun iptables -A OUTPUT -j DROP
+# Connectivity through gluetun (what probe_site does):
+docker exec gluetun wget --spider -S --timeout=10 --tries=1 -q https://google.com; echo $?
 
-# Or restart Gluetun to force new endpoint
-docker restart gluetun
+# A dependent's interface check (what the interface check does):
+docker exec <dependent> ls /sys/class/net      # only "lo" => stranded
+
+# A dependent's NetworkMode target vs gluetun's id (the recreate selector):
+docker inspect --format='{{.HostConfig.NetworkMode}}' <dependent>
+docker inspect --format='{{.Id}}' gluetun
 ```
 
-## Potential Enhancements
+### Simulating the #20 strand
 
-### Not Yet Implemented
+```bash
+docker restart gluetun     # same id -> dependents stranded, recover via restart
+docker compose up -d --force-recreate gluetun   # new id -> recover via recreate
+```
 
-1. **Metrics/Prometheus endpoint** - Export check results as metrics
-2. **Webhook notifications** - Alert on failures/recoveries
-3. **Endpoint blocklist** - Remember and avoid problematic endpoints
-4. **Graceful dependent restart** - SIGTERM with timeout before SIGKILL
-5. **Health endpoint** - HTTP endpoint for external monitoring
-6. **Configuration hot-reload** - Reload sites.conf without restart
+## Conventions
 
-### Considered and Rejected
+- `mypy --strict` and `ruff` must stay green; keep public functions typed +
+  docstring'd.
+- New env vars: add to `Config`, document in `README.md`, and (if it changes the
+  contract) extend the characterization suite.
+- Docker behavior is added to the `DockerClient` Protocol **and** the
+  `FakeDockerClient`, never reached for directly — that keeps everything testable.
+- Significant/hard-to-reverse decisions get an ADR; tunable heuristics go in
+  `TENETS.md` or the code (see [`docs/adr/README.md`](docs/adr/README.md)).
 
-1. **Using curl instead of wget** - wget is available in Gluetun's Alpine image
-2. **Running tests from monitor container** - Need to test through VPN, requires exec into Gluetun
-3. **Docker Compose integration** - Would limit to single-compose deployments
+## Backlog
 
-## Compatibility Notes
-
-- **Gluetun versions:** Tested with qmcgaw/gluetun, log parsing patterns may need adjustment for other versions
-- **Docker API:** Uses Docker CLI, should work with any Docker version supporting `docker inspect`
-- **Shell:** Requires bash (not sh) for associative arrays and other bashisms
-
-## Log Levels
-
-| Level | Usage |
-|-------|-------|
-| `INFO` | Normal operations (startup, restarts, discoveries) |
-| `WARN` | Non-critical issues (single failure, unhealthy status, threshold reached) |
-| `ERROR` | Critical issues (threshold exceeded, restart failed) |
-| `DEBUG` | Detailed info (individual site results, timing, health checks) |
-| `CHECK` | Check cycle start/end markers |
-| `ENDPOINT` | VPN endpoint information (startup, failing, new) |
-
-## Contributing
-
-When modifying this project:
-
-1. Maintain bash compatibility (no external dependencies beyond docker CLI)
-2. Keep memory usage minimal (no storing response bodies)
-3. Preserve parallel testing behavior
-4. Update README.md for any new configuration options
-5. Test with multiple VPN providers if possible
+The notification layer and socket-proxy hardening are tracked in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).

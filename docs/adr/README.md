@@ -15,6 +15,16 @@ or in the code, not here.
 
 Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superseded.
 
+> **v1.x → v2.0.0 note.** ADRs 0001–0006 were written against the original
+> **bash** implementation (`gluetun-monitor.sh`). [ADR-0007](0007-reimplement-in-python.md)
+> reimplemented the monitor in **Python** (the `gluetun_monitor` package) for
+> v2.0.0. Their *decisions* still hold, but bash-era specifics — `gluetun-monitor.sh:NNN`
+> line citations, shell function names (`test_site_async`, `handle_failure`,
+> `wait_for_gluetun_healthy`, …), the `docker:*-cli` base image, and the
+> `jq`/`curl` approach — describe the v1.x code and now map onto the Python
+> package (which talks the Docker API via docker-py). The bash script is retained
+> only as the rollback anchor and differential-test oracle.
+
 ## Index
 
 | # | Decision | Status |
@@ -25,3 +35,6 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0004](0004-dependent-aware-health.md) | Health is dependent-aware; recovery is conditional on gluetun's identity (restart if same ID, recreate if changed) | Accepted |
 | [0005](0005-recreate-mechanism.md) | Recreate mechanism — Docker-API reconstruct, default-on + capability-gated (`AUTO_RECREATE=0` to disable), non-destructive (validated) | Accepted |
 | [0006](0006-per-dependent-viability-testing.md) | Per-dependent connectivity + DNS viability testing (gluetun root + one shuffled name per dependent per loop) | Accepted |
+| [0007](0007-reimplement-in-python.md) | Reimplement the monitor in Python (v2.0.0) — docker-py seam, characterization + differential no-regressions gate | Accepted |
+| [0008](0008-persistent-site-stats-and-advisory.md) | Persistent per-site stats + a flaky-site advisory (keep restart-first; record + advise, don't auto-quarantine) | Accepted |
+| [0009](0009-all-time-latency-histogram.md) | All-time latency percentiles via a bounded DDSketch-style histogram (lifetime view alongside the recent ring) | Accepted |

@@ -12,7 +12,7 @@ are healthy: a dependent can be stranded loopback-only (netns) or carry a
 **per-container** fault — most notably a broken `/etc/resolv.conf`, which is
 per-container filesystem and **not** shared by the netns. The #20 lesson is to
 stop inferring stack health from the gateway and **measure each dependent
-directly** (Tenet 5), without becoming trigger-happy (Tenet 2).
+directly** (Tenet 6), without becoming trigger-happy (Tenet 3).
 
 Two physical facts shape the design:
 - All dependents **share gluetun's netns**, so a test from a dependent egresses
@@ -37,7 +37,7 @@ Each loop, in order:
    itself is the problem → gluetun-restart recovery (ADR-0003), which
    **re-verifies the full set after the restart** and only proceeds to the
    dependent phase if the tunnel is restored; if still failing, dependents are
-   left untouched until next cycle (don't churn them into a dead tunnel — Tenet 4).
+   left untouched until next cycle (don't churn them into a dead tunnel — Tenet 5).
 3. **Per-dependent viability test — one shuffled name per loop.** Build the
    **resolvable-name pool** (the hostname URLs). For each live dependent, pick
    **one shuffled name** from the pool and test resolve+connect *from inside that
@@ -61,7 +61,7 @@ Each loop, in order:
    nodes 2–5), so a container-only failure is still correctly attributed to the
    container — the root test is the disambiguator, so a tiny pool is not a
    false-positive risk.
-5. **Reaction — one knob, two failure classes (Tenet 7).**
+5. **Reaction — one knob, two failure classes (Tenet 8).**
    - **`DEPENDENT_CONTAINER_FAILURES`** (default `$FAIL_THRESHOLD`) — consecutive
      per-container failures before remediation. It mirrors gluetun's retry count
      so there is one mental model and one default for the whole stack; override
@@ -85,7 +85,7 @@ Each loop, in order:
    - **Asymmetry, deliberate:** gluetun tests the **full set** each loop (root,
      comprehensive); each dependent tests **one shuffled name** per loop (spread
      load across many containers — see Load).
-   - **FAILED state (Tenet 6):** when recovery can't restore health — gluetun
+   - **FAILED state (Tenet 7):** when recovery can't restore health — gluetun
      won't come back after its restart, a dependent's post-recovery verify fails,
      or recreate is disabled/denied — the monitor enters an explicit **FAILED**
      state: report unhealthy loudly (and fire a notification once that layer
@@ -156,8 +156,41 @@ paths is the per-loop reset.
 per loop** (plus gluetun's full set). That's inherent: each container is verified
 independently (you can't prove container X via container Y). It is O(#live deps)
 per loop, **not** O(#deps × names), because each dependent runs a single name
-test. A concurrency cap (`MAX_PARALLEL_CHECKS`, default ~6) + per-dispatch jitter
-bound the burst on host CPU (one `docker exec` fork per job) and the shared tunnel.
+test. A concurrency cap (`MAX_PARALLEL_CHECKS`, default 6) bounds the burst on
+host CPU (one `docker exec` fork per job) and the shared tunnel.
+
+> **Implementation note (v2.0.0):** the cap is the primary bound and is sufficient
+> at homelab scale (≤6 trivial header requests at a time). Per-dispatch jitter
+> ships as an opt-in knob (`MAX_JITTER_MS`) that **defaults to 0 (off)** — it only
+> de-synchronizes start times within the already-capped burst, so it's available
+> for anyone who wants to spread load further, not on by default (Tenet 9 —
+> simple beats clever). The viability layer itself is opt-out via
+> `DEPENDENT_VIABILITY` (default on); the interface check is never optional.
+
+> **Implementation note (v2.0.0) — what "viability failure" means.** A live
+> dependent (passed the interface check) **shares gluetun's netns**, so its L3/L4
+> egress *is* gluetun's — already proven by the root test — and the orphaned/
+> stranded case is caught upstream by the interface check (loopback-only). The
+> only fault left that is genuinely **per-container is DNS** (its own
+> `resolv.conf`). So viability **fails only on a positively-identified DNS
+> resolution failure**; any HTTP response (incl. 4xx/5xx) *or* a
+> resolved-but-unreached site (connection refused / timeout / TLS) counts as
+> viable — those are the remote's business, not a dependent fault, and treating
+> them as failures caused spurious restarts (a busybox-wget dependent returns
+> exit 1 for a harmless 404; found in dogfooding). The strict "did it respond"
+> signal is retained separately for gluetun's *root* test (tunnel-down detection).
+>
+> DNS is validated with a **cascade of getaddrinfo-faithful tools** (`gluetun_monitor/dns_check.py`):
+> **wget → getent → ping**, stopping at the first one present in the container.
+> These resolve the way the application does (libc `getaddrinfo`/nsswitch);
+> `nslookup`/`dig`/`host` are deliberately **excluded** — they query DNS servers
+> directly, bypassing nsswitch/`hosts`/libc, so they can report "resolves" when
+> the app's `getaddrinfo` does not. The check has **three** outcomes: OK, BROKEN
+> (a tool ran and resolution failed → the fault we act on), and **UNVALIDATED**
+> (no usable tool in the container — e.g. distroless): we don't guess, we log it
+> once and fall back to the interface check. A fully portable **injected** static
+> probe is the long-term improvement that also covers the UNVALIDATED case (see
+> ROADMAP).
 
 **Degradation:** 0 live dependents → gluetun only (today's behavior). **No
 resolvable names** (all IP-literals) → `WARN` + dependents tested against one
@@ -166,11 +199,15 @@ this config — a documented limitation). **distroless/scratch** dependents (no
 shell to exec) can't be viability-tested → fall back to ADR-0004's
 interface/inspect signals for those.
 
-Per-dependent results log at DEBUG, e.g. (generic placeholders):
+Per-dependent results log (generic placeholders; the actual v2.0.0 format). Each
+dependent logs two ordered DEBUG lines — the L3 interface/route check first, then
+the L7 viability result — each prefixed with the container the test ran in, so
+"can it route out" and "what did we actually validate" are both visible:
 
 ```
-[DEBUG] Dependent app1: https://example.com ok (1064ms) [fails 0/2]
-[DEBUG] Dependent app1: https://example.org FAILED (DNS) [fails 2/2 -> remediate]
+[dependent:app1] link live: eth0,lo,tun0
+[dependent:app1] reach ok: example.com (HTTP 200) [wget]
+[dependent:app1] reach fail: example.org (bad address) [wget] [2/2 → remediate]   (WARN)
 ```
 
 ## Consequences
@@ -182,7 +219,7 @@ Per-dependent results log at DEBUG, e.g. (generic placeholders):
   *different* name each loop is what turns the consecutive-failure count into a
   container-health signal instead of a URL-uptime signal. Testing the same name
   repeatedly would be a bug.
-- **Reaction stays conservative** (Tenet 7): the hard netns strand acts fast
+- **Reaction stays conservative** (Tenet 8): the hard netns strand acts fast
   (single re-check); the soft DNS/connect fault waits `DEPENDENT_CONTAINER_FAILURES`
   loops so a transient blip never recreates a container.
 - Requires `docker exec` into dependents (already required for gluetun, ADR-0001)
@@ -194,5 +231,5 @@ Per-dependent results log at DEBUG, e.g. (generic placeholders):
   (2) per-dependent viability test + the `DEPENDENT_CONTAINER_FAILURES` gate.
 - New knobs: `DEPENDENT_CONTAINER_FAILURES` (default `$FAIL_THRESHOLD`),
   `MAX_PARALLEL_CHECKS` (~6), jitter window, and an **opt-out** for the dependent
-  viability layer — it is **on by default** (Tenet 7); the interface check is not
+  viability layer — it is **on by default** (Tenet 8); the interface check is not
   optional.

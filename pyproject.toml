@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gluetun-monitor"
+version = "2.0.0"
+description = "Dependent-aware connectivity monitor and self-healer for gluetun VPN stacks"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.13"
+authors = [{ name = "Charles Marshall" }]
+keywords = ["gluetun", "vpn", "docker", "monitoring", "healthcheck"]
+dependencies = [
+    "docker>=7.0,<8",
+]
+
+[project.urls]
+Homepage = "https://github.com/csmarshall/gluetun-monitor"
+Issues = "https://github.com/csmarshall/gluetun-monitor/issues"
+
+[project.scripts]
+gluetun-monitor = "gluetun_monitor.cli:main"
+gluetun-monitor-stats = "gluetun_monitor.report:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.setuptools]
+packages = ["gluetun_monitor"]
+
+[tool.ruff]
+# 120, not 80 — modern wide displays, not a 1980s terminal. Wide enough to not
+# fight you; a guardrail for diffs/side-by-side review, not a straitjacket.
+line-length = 120
+target-version = "py313"
+src = ["gluetun_monitor", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes (PEP 8)
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "C4",            # comprehensions
+    "SIM",           # simplify
+    "RET",           # return
+    "PTH",           # prefer pathlib
+    "D",             # pydocstyle (PEP 257 docstring conventions)
+    "RUF",
+]
+ignore = [
+    "SIM105",  # contextlib.suppress over try/except/pass — try/except reads fine here
+    # pydocstyle: we enforce docstring *presence* + formatting, but exempt the three
+    # most commonly-waived stylistic rules (our docstrings are already clear):
+    "D107",    # __init__ docstring — the class docstring already covers it
+    "D205",    # blank line between summary and description — we wrap summaries
+    "D401",    # imperative mood — "True if…"/"Whether…" reads fine for predicates
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: don't require docstrings on every test fn (module docstrings still apply).
+"tests/*" = ["B011", "D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gluetun_monitor"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+# docker-py ships partial/loose stubs; don't fail the build on its internals.
+[[tool.mypy.overrides]]
+module = "docker.*"
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+markers = [
+    "integration: tests that require a live Docker daemon (deselect with -m 'not integration')",
+    "differential: compares the legacy bash implementation against the Python port",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["gluetun_monitor"]
+omit = ["gluetun_monitor/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    # Protocol method stubs are never executed (definition-only).
+    "^\\s*\\.\\.\\.$",
+    'if __name__ == .__main__.:',
+]

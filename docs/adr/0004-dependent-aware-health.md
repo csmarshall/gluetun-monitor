@@ -19,7 +19,7 @@ only interface is `lo`.)
 Because the monitor tests connectivity *only from inside gluetun* (ADR-0001),
 every site check passes and the monitor reports healthy while the dependents are
 cut off from the network entirely. This is the core complaint: the watchdog
-reports green while the stack is broken (violates Tenet 6).
+reports green while the stack is broken (violates Tenet 7).
 
 We validated the mechanics empirically on rosa (Docker 29.1.3,
 `issue20-netns-experiment.sh`): Q1 a dependent's `HostConfig.NetworkMode` is
@@ -57,12 +57,38 @@ must therefore be evaluated **per dependent**, not as a single global flag.
      — a dependent showing only `lo` is **stranded loopback-only**. This is
      ground truth and catches it regardless of cause. (Connectivity + DNS
      verification is layered on top in ADR-0006.)
-   - **Inspect (pre-filter, branch-selector, fallback):** track gluetun's **ID**
-     + `.State.StartedAt` across cycles and compare **each** dependent's
-     `NetworkMode` target-ID to gluetun's current ID. This cheaply flags
-     *suspect* dependents, **selects the recovery branch** (below), catches a
-     strand that predates the monitor's own startup, and is the **fallback** when
-     a dependent can't be exec'd (distroless/scratch).
+   - **Inspect (pre-filter, branch-selector, fallback):** compare **each**
+     dependent's `NetworkMode` target-ID to gluetun's current **ID**. This cheaply
+     flags *suspect* dependents, **selects the recovery branch** (below), and is
+     the **fallback** when a dependent can't be exec'd (distroless/scratch).
+
+     > **Implementation note (v2.0.0):** this ADR originally also proposed
+     > tracking gluetun's `.State.StartedAt` across cycles. The v2 build does
+     > **not** — it tracks the current id only. `StartedAt` would detect a
+     > *same-id in-place restart*, but the **interface check is ground truth every
+     > loop** and already detects the resulting strand from *any* cause (same-id
+     > restart *and* recreate both strand dependents to `lo`, per Q2/Q3), while the
+     > id comparison selects restart-vs-recreate. `StartedAt` would only duplicate
+     > detection the interface check already does, so we dropped it rather than
+     > carry extra cross-cycle state (Tenets 8/9 — simple/stateless). Likewise the
+     > "catches a strand that predates the monitor's own startup" claim holds only
+     > for *discovered/known/explicitly-listed* dependents — a recreate-strand
+     > pre-dating startup needs an explicit `DEPENDENT_CONTAINERS` (see README).
+     > To partly recover the original intent, v2 logs a **startup WARN** for any
+     > running container stranded on a *dead* netns parent that it isn't managing,
+     > pointing the operator at `DEPENDENT_CONTAINERS` — but it does **not**
+     > auto-recreate such an orphan: with the parent gone it can't be confirmed as
+     > *this* gluetun's dependent, and acting on that guess could churn the wrong
+     > container (Tenet 1).
+     >
+     > What v2 *does* keep across cycles is a **remembered-dependent set**: the
+     > union of everything discovered (or listed) so far, pruned to containers
+     > that still exist. This is what lets a dependent stay tracked after gluetun
+     > is recreated under it (its `NetworkMode` now points at the dead old id, so
+     > current-id discovery no longer matches it — but we remember it). It is
+     > *discovery* memory, not failure/backoff state: it carries no counters, and
+     > a monitor restart resets it — so it stays within Tenet 8's "re-act rather
+     > than remember" (which is about not persisting *fault* state).
 2. **Recovery is conditional on gluetun's identity — per dependent, not a blanket
    recreate.** Read the stranded dependent's `NetworkMode` (`container:<X>`) and
    compare `<X>` to gluetun's current `.Id`:

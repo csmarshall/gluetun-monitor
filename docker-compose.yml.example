@@ -16,11 +16,18 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - docker-proxy
+    logging:  # the proxy's access log is chatty; cap it too
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    # Pin the major (:2) for production: all v2.x patches, no surprise future major.
+    # Alternatives: :latest (newest, may roll to v3), :2.0.0 (fully pinned). See docs/VERSIONING.md.
+    image: ghcr.io/csmarshall/gluetun-monitor:2
     # Or from Docker Hub:
-    # image: chasmarshall/gluetun-monitor:latest
+    # image: chasmarshall/gluetun-monitor:2
     # Or build locally from source:
     # build: .
     container_name: gluetun-monitor
@@ -29,27 +36,87 @@ services:
       - docker-socket-proxy
     environment:
       - TZ=UTC
+      # Run non-root (recommended, LSIO-style): the entrypoint chowns /logs and
+      # drops to this uid/gid. Leave unset to run as root (drop-in, like v1). Use
+      # your host user's ids (run `id`).
+      - PUID=1000
+      - PGID=1000
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       # Name of the gluetun container to monitor
       - GLUETUN_CONTAINER=gluetun
       # Dependent containers: "auto" to discover dynamically, or comma-separated list
       # Auto-discovery finds all containers using network_mode: container:<GLUETUN_CONTAINER>
+      # (an explicit list must name containers that exist at startup, or the monitor exits)
       - DEPENDENT_CONTAINERS=auto
+      # Denylist: containers to NEVER manage (skip checks + restart/recreate). Useful with
+      # auto = "discover everything except these". Exclude wins over an include on overlap.
+      # - EXCLUDE_CONTAINERS=some-batch-job,do-not-touch-me
+      # Test URLs may be supplied here (comma-separated) instead of / in addition to
+      # the mounted sites.conf below; the two are unioned. At least one site is required.
+      # Note: SITES is read once at startup; sites.conf is re-read live each loop.
+      # - SITES=https://www.google.com,https://cloudflare.com
       # Check interval in seconds
       - CHECK_INTERVAL=30
-      # Timeout for each site test (seconds)
+      # Per-request network timeout (seconds) — applied to every wget/ping probe,
+      # including the wget run inside the dependent containers.
       - TIMEOUT=10
+      # Attempts per wget probe (noise is handled by the shuffle + thresholds, not retries)
+      # - WGET_TRIES=1
       # Number of consecutive failures before triggering restart
       - FAIL_THRESHOLD=2
       # Max seconds to wait for gluetun to become healthy after restart
       - HEALTHY_WAIT_TIMEOUT=120
+      # --- v2 dependent-aware knobs (all optional; sensible defaults) ---
+      # Consecutive per-dependent viability failures before remediating it
+      # (defaults to FAIL_THRESHOLD if unset)
+      # - DEPENDENT_CONTAINER_FAILURES=2
+      # Cap on concurrent dependent probes per loop
+      # - MAX_PARALLEL_CHECKS=6
+      # Per-dependent L7 DNS/connectivity probe; 0 = interface/strand check only (no URL fetch)
+      # - DEPENDENT_VIABILITY=1
+      # Sites each dependent tests per loop: 1 (one shuffled), N (N distinct), -1 (all).
+      # >1 is largely redundant (dependents share gluetun's netns); the dial is for completeness.
+      # - DEPENDENT_VIABILITY_SAMPLES=1
+      # Optional per-dispatch jitter (ms) to spread the probe burst; 0 = off (cap already bounds it)
+      # - MAX_JITTER_MS=0
+      # Observe-only: detect + log intended actions but never restart/recreate (soak-testing)
+      # - DRY_RUN=0
+      # Persistent per-site stats sidecar (best-effort; survives restarts) + flaky-site advisory.
+      # The monitor records how each site behaves and warns when one site causes most restarts.
+      # - STATS_FILE=/logs/site-stats.json
+      # - STATS_RETENTION_DAYS=90    # drop a site's stats N days after it leaves sites.conf (0=keep)
+      # - ADVISORY_WINDOW=86400      # seconds (24h)
+      # - ADVISORY_MIN_RESTARTS=5
+      # - ADVISORY_DOMINANCE=0.5     # one site causing >=50% of recent restarts -> flag it
+      # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
+      # - AUTO_RECREATE=1
+      # Seconds to wait for gluetun DNS to stabilize after a restart
+      # - DNS_WAIT_TIMEOUT=30
+      # DEBUG to include per-site / per-dependent detail lines
+      # - LOG_LEVEL=INFO
+      # The /logs file is size-rotated by the monitor itself (LOG_MAX_BYTES x
+      # LOG_BACKUP_COUNT). Defaults ~10MB x 5; 0 disables rotation.
+      # - LOG_MAX_BYTES=10485760
+      # - LOG_BACKUP_COUNT=5
+      # Log file path inside the /logs mount (also always logged to stdout)
+      # - LOG_FILE=/logs/gluetun-monitor.log
     volumes:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
-      # Persistent logs
+      # Persistent logs + stats (the monitor rotates the file inside this dir).
+      # With PUID/PGID set above, the entrypoint chowns this mount for you — no
+      # manual step. (Without PUID/PGID the container runs as root and writes it as
+      # root; either way an unwritable dir just degrades to stdout, never a crash.)
       - ./logs:/logs
     networks:
       - docker-proxy
+    # Cap the *Docker* (stderr) log too — Docker's default json-file driver does
+    # NOT rotate on its own. Without this, `docker logs` grows unbounded.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   docker-proxy:
@@ -59,13 +126,19 @@ networks:
 
 # Alternative: Direct Docker socket mount (simpler, less secure)
 # Replace the services above with this if you prefer not to use a socket proxy.
+# The image runs as a non-root user, which cannot read the root:docker-owned
+# socket by default — so this variant adds the host's docker group via group_add.
+# Find the gid with: getent group docker | cut -d: -f3   (commonly 999 on Debian/
+# Ubuntu). The socket-proxy path above needs none of this (it talks TCP).
 #
 # services:
 #   gluetun-monitor:
-#     image: ghcr.io/csmarshall/gluetun-monitor:latest
+#     image: ghcr.io/csmarshall/gluetun-monitor:2
 #     container_name: gluetun-monitor
 #     restart: unless-stopped
 #     network_mode: none  # No network needed - communicates via Docker socket only
+#     group_add:
+#       - "999"  # <- your host's `docker` group gid; lets the non-root user read the socket
 #     environment:
 #       - TZ=UTC
 #       - GLUETUN_CONTAINER=gluetun

@@ -9,6 +9,10 @@ docker-compose.yml
 # Local overrides
 docker-compose.override.yml
 
+# Personal local backups of the live compose (may contain real names)
+docker-compose.yml.*-backup
+*.bak
+
 # Editor files
 *.swp
 *.swo
@@ -21,3 +25,20 @@ session-state.md
 
 # Local experiment/repro scripts (kept as reference, not committed)
 issue*.sh
+build-smoketest.sh
+rebuild-and-validate.sh
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/

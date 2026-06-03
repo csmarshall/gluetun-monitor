@@ -12,7 +12,15 @@
   <a href="https://buymeacoffee.com/cs_marshall"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
-A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures by restarting Gluetun and its dependent containers.
+A lightweight Docker container that monitors VPN connectivity through [Gluetun](https://github.com/qdm12/gluetun) and automatically recovers from connection failures — restarting Gluetun **and** healing dependent containers that get stranded when Gluetun's network namespace is rebuilt.
+
+> **v2.0.0** is a Python reimplementation that adds **dependent-aware health**:
+> the monitor now measures each dependent directly instead of inferring stack
+> health from the gateway, and self-heals a dependent that is stranded
+> loopback-only after a Gluetun restart/recreate (issue #20). Behavior and
+> configuration are backward compatible; see the [CHANGELOG](CHANGELOG.md) and
+> [ADR-0007](docs/adr/0007-reimplement-in-python.md). The design record lives in
+> [`docs/`](docs/) (tenets + ADRs + the per-loop state machine).
 
 ## Links
 
@@ -24,45 +32,90 @@ A lightweight Docker container that monitors VPN connectivity through [Gluetun](
 **Pull the image:**
 ```bash
 # From Docker Hub
-docker pull chasmarshall/gluetun-monitor:latest
+docker pull chasmarshall/gluetun-monitor:2
 
 # From GitHub Container Registry
-docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```
 
 ## Features
 
 - **Multi-site health checking** - Tests connectivity to multiple endpoints simultaneously
 - **Parallel testing** - All sites tested concurrently for fast detection (bounded by single timeout)
-- **Auto-discovery** - Automatically finds containers using Gluetun's network
-- **Automatic recovery** - Restarts Gluetun and dependent containers on failure
+- **Dependent-aware health (#20)** - Measures each dependent directly (interface check + a per-container DNS/connectivity probe) instead of trusting the gateway; stops reporting healthy when a dependent is stranded
+- **Self-healing dependents** - Restarts a dependent that shares Gluetun's current namespace; **non-destructively recreates** (volumes preserved) one stranded by a Gluetun *recreate* (new container id)
+- **Auto-discovery** - Automatically finds containers using Gluetun's network, and remembers them across cycles so a dependent isn't lost when Gluetun's id changes
+- **Automatic recovery** - Restarts Gluetun on connectivity failure and re-verifies before touching dependents
 - **Endpoint logging** - Logs VPN server details (server, country, city, IP) on failures and recoveries
-- **Change detection** - Logs when dependent containers are added or removed
-- **Configurable thresholds** - Consecutive failure count before triggering restart
-- **Low resource usage** - Uses `wget --spider` (headers only, no body download)
+- **Configurable thresholds** - Consecutive failure counts, independently tunable for Gluetun and for dependents
+- **Low resource usage** - Uses `wget --spider` (headers only, no body download), bounded dependent fan-out
 
 ## How It Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       Gluetun Monitor                           │
+│                       Gluetun Monitor (each loop)               │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Test sites through Gluetun's network (parallel)             │
-│  2. If failures exceed threshold:                               │
-│     a. Log current VPN endpoint info                            │
-│     b. Restart Gluetun                                          │
-│     c. Wait for Gluetun to become healthy                       │
-│     d. Log new VPN endpoint info                                │
-│     e. Auto-discover and restart dependent containers           │
+│  1. Test sites through Gluetun's network (the root signal)      │
+│  2. If site failures exceed FAIL_THRESHOLD:                     │
+│       restart Gluetun, wait healthy + DNS, re-verify the set    │
+│       (only proceed if the tunnel is actually restored)         │
+│  3. For each dependent (every loop — the #20 fix):              │
+│       a. Interface check: stranded loopback-only?               │
+│       b. Else probe one shuffled name (DNS + connectivity)      │
+│       c. On confirmed failure, remediate:                       │
+│            • shares Gluetun's current id → docker restart       │
+│            • Gluetun recreated (id moved) → recreate (volumes    │
+│              preserved); disabled/denied → report FAILED        │
+│       d. Verify (running + non-loopback interface)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The full per-loop state machine (22 nodes) is in
+[ADR-0006](docs/adr/0006-per-dependent-viability-testing.md); the
+restart-vs-recreate decision is [ADR-0004](docs/adr/0004-dependent-aware-health.md).
+
+## Upgrading from v1 (v1 is end-of-life)
+
+**v1 (the original bash implementation, image tag `:1`) is end-of-life.** v2 is
+the supported line — please move to it. The upgrade is a **drop-in config
+change**: v2 reads the **same env vars** (same names and defaults), the same
+`/config/sites.conf` and `/logs` paths, and needs the **same socket-proxy
+permissions** (`CONTAINERS` / `POST` / `EXEC`). In the common case you change
+only the image tag and it keeps working — we validate that the v1 env surface
+boots cleanly against a socket proxy as part of testing.
+
+**Image tags** (full policy: [docs/VERSIONING.md](docs/VERSIONING.md)):
+- **`:2`** — **recommended for production**: you get every v2.x patch and never a
+  surprise future major.
+- `:2.0.0` — fully pinned to one release (reproducible; you update deliberately).
+- `:latest` — always the newest **stable** release (excludes pre-releases, and an
+  EOL v1 patch can't drag it back); **will** eventually roll to a future v3 major,
+  so don't use it for unattended updates of a container-restarting watchdog.
+- **`:1`** — frozen v1, kept only as a **rollback anchor**; unsupported (EOL).
+
+**Two behavior changes to know about** (the config interface is compatible, but
+v2 does more):
+1. **It now heals dependents by default** (the #20 fix): a stranded dependent is
+   restarted (same gluetun id) or **recreated** (id changed — volumes preserved;
+   see [data safety](#what-it-will-and-wont-do-and-why-your-data-is-safe)). To
+   stay close to v1's behavior, set `AUTO_RECREATE=0` (log a loud alert line
+   instead of recreating) and/or `DEPENDENT_VIABILITY=0` (interface/strand check
+   only, no L7 probing).
+2. **Config is validated; bad config is now fatal.** v2 refuses to start on a
+   few things v1 tolerated silently — an empty `sites.conf`, a malformed env
+   value, or an explicit `DEPENDENT_CONTAINERS` naming a container that doesn't
+   exist. If startup fails after the upgrade, the error message says exactly what
+   to fix (see [Configuration is validated](#configuration-is-validated--sane-defaults-but-bad-config-is-fatal)).
+
+**Rollback** is one step: repin the image to `:1`.
 
 ## Quick Start
 
 ### 1. Pull the image
 
 ```bash
-docker pull ghcr.io/csmarshall/gluetun-monitor:latest
+docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```
 
 ### 2. Copy example configs
@@ -89,6 +142,18 @@ https://1.1.1.1
 # Add sites you need to reach through VPN
 ```
 
+Alternatively (or in addition), you can provide sites entirely via the **`SITES`**
+environment variable — handy if you'd rather not mount a file:
+
+```yaml
+environment:
+  - SITES=https://www.google.com,https://cloudflare.com
+```
+
+The two sources are **unioned** (file + env, de-duplicated). At least one site is
+required — see [Configuration](#configuration). The monitor must reach a real
+endpoint set to do its job, so it refuses to start with none.
+
 ### 4. Deploy
 
 ```bash
@@ -101,16 +166,74 @@ docker compose up -d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `PUID` / `PGID` | *(unset → root)* | Run non-root (recommended): the entrypoint chowns `/logs` and drops to this uid/gid (LSIO-style). Unset = runs as root (drop-in). See [Running as non-root](#running-as-non-root-recommended) |
 | `DOCKER_HOST` | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
-| `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor |
-| `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list |
+| `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor (must exist, else fatal) |
+| `CONFIG_FILE` | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
+| `SITES` | *(unset)* | Comma-separated test URLs, **unioned** with the sites file. Set at startup (not live-reloaded) |
+| `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
+| `EXCLUDE_CONTAINERS` | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
 | `CHECK_INTERVAL` | `30` | Seconds between health checks |
-| `TIMEOUT` | `10` | Seconds to wait for each site test |
-| `FAIL_THRESHOLD` | `2` | Consecutive failures before triggering restart |
+| `TIMEOUT` | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W` |
+| `WGET_TRIES` | `1` | Attempts per `wget` probe (the shuffle + consecutive-failure thresholds, not retries, are how noise is tolerated) |
+| `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
 | `HEALTHY_WAIT_TIMEOUT` | `120` | Max seconds to wait for Gluetun to become healthy after restart |
+| `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
+| `MAX_PARALLEL_CHECKS` | `6` | Cap on concurrent `docker exec` probes across dependents per loop |
+| `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
+| `DEPENDENT_VIABILITY_SAMPLES` | `1` | Sites each dependent tests per loop: `1` (one shuffled), `N` (N distinct), or `-1` (all). >1 is largely redundant (dependents share gluetun's netns), at `N` execs/dependent/loop |
+| `MAX_JITTER_MS` | `0` | Optional per-dispatch jitter (ms) to spread the dependent probe burst. `0` = off (the concurrency cap already bounds it) |
+| `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
+| `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort, atomic; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
+| `STATS_RETENTION_DAYS` | `90` | Drop a site's stats if it hasn't been tested (e.g. removed from `sites.conf`) for this many days; `0` keeps them forever |
+| `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
+| `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
+| `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
+| `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
+| `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
+| `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
+| `LOG_MAX_BYTES` | `10485760` | Rotate the `/logs` file at this size (≈10 MB); `0` disables rotation |
+| `LOG_BACKUP_COUNT` | `5` | How many rotated log backups to keep (≈60 MB total at defaults) |
+| `LOG_FILE` | `/logs/gluetun-monitor.log` | Path to the log file inside the `/logs` mount. Logs always go to stdout (`docker logs`) too; if this path isn't writable the monitor degrades to stdout-only rather than failing |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
+### Configuration is validated — sane defaults, but bad config is fatal
+
+The design goal is **good results with zero extra config**: with a container named
+`gluetun` and a site to test, everything else has a sane default. But to protect
+the wider system, the monitor **refuses to start** (exits non-zero) rather than
+*guess* around misconfiguration:
+
+- **Malformed env value** (a non-integer `CHECK_INTERVAL`, an unrecognized
+  `AUTO_RECREATE`, an invalid `LOG_LEVEL`, …) → fatal. An *unset* variable is just
+  its default; a *set-but-unparseable* one is an error we won't paper over.
+- **No testable sites** (no `sites.conf` *and* no `SITES`, or both empty) → fatal.
+  A monitor that tests nothing would report fake-green forever.
+- **`GLUETUN_CONTAINER` doesn't exist** → fatal (nothing to monitor).
+- **Explicit `DEPENDENT_CONTAINERS` names a container that doesn't exist** → fatal.
+  You told us exactly what to manage; we won't silently drop or guess around a
+  name we can't find (it could mean acting on the wrong container). `auto` finding
+  zero is fine — that's gluetun-only monitoring, a valid setup.
+
 ### Variable Details
+
+#### Sites — `CONFIG_FILE` + `SITES`
+Test URLs come from two **unioned** sources (de-duplicated):
+- **`CONFIG_FILE`** (default `/config/sites.conf`) — one URL per line, `#` comments
+  allowed. **Re-read every loop**, so adding/removing a URL takes effect on the
+  next check with no restart.
+- **`SITES`** — a comma-separated list in the environment, for config-via-env
+  parity with the other knobs (no file mount needed). Fixed at process start —
+  changing it requires a container restart.
+
+Provide either, or both. At least one URL total is required or the monitor won't
+start (see above).
+
+Entries are sanity-checked: a URL with no host, or one that looks like a
+command-line flag (leading `-`, which could otherwise be parsed as an option by
+the in-container `wget`/`ping`), is **dropped with a startup warning** rather than
+probed. The probes also pass URLs/hosts after a `--` end-of-options separator, so
+a stray value can never be interpreted as a flag.
 
 #### `DOCKER_HOST`
 When unset, the Docker CLI connects via the local socket (`/var/run/docker.sock`). Set this to `tcp://<proxy-host>:2375` to connect through a [Docker socket proxy](#docker-socket-proxy) instead of mounting the socket directly. See the [Docker Socket Proxy](#docker-socket-proxy) section for setup details.
@@ -123,36 +246,75 @@ The name of your Gluetun container as shown in `docker ps`. This is the containe
 - Used to extract VPN endpoint information from logs
 
 #### `DEPENDENT_CONTAINERS`
-Controls which containers are restarted after Gluetun recovers:
-- `auto` - Automatically discovers containers using `network_mode: "container:<GLUETUN_CONTAINER>"`
-- `container1,container2` - Comma-separated list of container names to restart
+Controls which dependents are watched and healed:
+- `auto` - Automatically discovers containers using `network_mode: "container:<GLUETUN_CONTAINER>"` (queries the Docker API for each running container's `NetworkMode`). Discovering zero is fine — gluetun-only monitoring.
+- `container1,container2` - Comma-separated list of container names. **Every name must exist at startup or the monitor exits** — an explicit list is a contract, and we won't guess around a missing name. If your dependents start alongside the monitor, order startup (`depends_on:`) so they exist first, or use `auto`.
 
-Auto-discovery queries the Docker API to inspect each running container's `NetworkMode` setting.
+#### `EXCLUDE_CONTAINERS`
+A comma-separated **denylist** of containers the monitor must **never** manage —
+never interface-checked, viability-tested, restarted, or recreated. Most useful
+with `auto` ("discover everything *except* these") so you keep auto-discovery of
+new dependents while protecting specific ones. It also subtracts from an explicit
+`DEPENDENT_CONTAINERS` list.
+
+If a name appears in **both** `DEPENDENT_CONTAINERS` and `EXCLUDE_CONTAINERS`,
+**exclude wins** and the monitor warns — the contradiction resolves toward *not*
+touching the container ("first, do no harm") rather than failing. An exclude name
+that matches no container warns too (likely a typo — the container you meant to
+protect would otherwise still be managed).
 
 #### `CHECK_INTERVAL`
-Time in seconds between health check cycles. Each cycle tests all configured sites in parallel.
+Time in seconds between health check cycles.
 
-**Note:** The actual interval is `CHECK_INTERVAL` + up to `TIMEOUT` seconds (for parallel site tests).
+**Note:** sites are tested concurrently, bounded by `MAX_PARALLEL_CHECKS` (default 6). With ≤6 sites a cycle's tests finish within one `TIMEOUT`; with more, they run in batches, so a cycle can take up to `ceil(sites / MAX_PARALLEL_CHECKS) × TIMEOUT`.
 
 #### `TIMEOUT`
-Maximum seconds to wait for each site to respond. Since tests run in parallel, this is the maximum time for the entire test batch, not per-site.
+Maximum seconds to wait for each site to respond. Tests run concurrently (up to `MAX_PARALLEL_CHECKS` at a time), so this bounds each batch rather than each individual site.
 
 Uses `wget --spider` which only fetches headers (no response body downloaded).
 
+### Timeouts & retries — one model, everywhere
+
+There is **one per-request timeout knob, `TIMEOUT`**, and it is applied identically
+to every network probe the monitor makes:
+
+| where | command | uses |
+|---|---|---|
+| gluetun site tests (through the tunnel) | `wget --spider --timeout=$TIMEOUT --tries=$WGET_TRIES` | `TIMEOUT`, `WGET_TRIES` |
+| dependent viability (inside each dependent) | the same `wget …` | `TIMEOUT`, `WGET_TRIES` |
+| DNS fallback (`ping`) | `ping -W $TIMEOUT` | `TIMEOUT` |
+| post-restart DNS-readiness probe | the same `wget …` | `TIMEOUT`, `WGET_TRIES` |
+
+So setting `TIMEOUT=10` **does** flow straight down to the `wget` run inside the
+dependent containers (busybox or GNU — both honor `--timeout`). `getent`/`nslookup`
+have no timeout flag and fall back to the container's resolver config (the cascade
+moves on if a tool is slow/absent).
+
+Don't confuse the **per-request** `TIMEOUT` with the **overall wait budgets** used
+only after a gluetun restart: `HEALTHY_WAIT_TIMEOUT` (wait for gluetun's
+healthcheck) and `DNS_WAIT_TIMEOUT` (poll for DNS to stabilize). Those are loops;
+`TIMEOUT` is each individual request inside them.
+
+**How the monitor "hunts" for a good result — and why `WGET_TRIES` defaults to 1.**
+Reliability comes from *breadth and repetition over time*, not from retrying a
+single request: gluetun tests the **whole site set** each loop and only acts after
+`FAIL_THRESHOLD` **consecutive** loops fail; each dependent tests **one shuffled
+site per loop** (so over loops it covers many names) and only acts after
+`DEPENDENT_CONTAINER_FAILURES` consecutive failures. That shuffle-and-threshold
+design already absorbs a flaky site, so a single fast attempt (`WGET_TRIES=1`) is
+the right default — raise it only if your links are lossy enough that one in-loop
+retry meaningfully helps.
+
 ### Site Test Success/Failure Logic
 
-The monitor distinguishes between **connectivity failures** (VPN broken) and **site errors** (VPN working, site returned an error):
+The monitor distinguishes between **connectivity failures** (VPN broken) and **site errors** (VPN working, site returned an error). The decision is **HTTP-response-first**, not exit-code-based:
 
-| wget Exit Code | Meaning | Treated As | Rationale |
-|----------------|---------|------------|-----------|
-| 0 | Success (HTTP 2xx/3xx) | **PASS** | Site responded successfully |
-| 6 | Authentication required | **PASS** | Site responded (VPN working) |
-| 8 | Server error (HTTP 4xx/5xx) | **PASS** | Site responded (VPN working) |
-| 4 | Network failure | **FAIL** | DNS or connection failed |
-| 5 | SSL verification failure | **FAIL** | Possible MITM or connectivity issue |
-| 1-3, 7 | Other errors | **FAIL** | Various connectivity issues |
+- **Any HTTP response = PASS** — including 401/403/404/5xx. A status line proves DNS resolved, the connection traversed the tunnel, and a server answered, so the tunnel is up regardless of *what* the server said (Tenet 3 — a broken tunnel is not a sad website).
+- **Only a failure to get any HTTP response = FAIL** — DNS failure, connection refused, TLS error, or timeout.
 
-**Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working - the site just doesn't like the request. Only actual network/DNS failures indicate a VPN problem.
+This is also why it's correct across wget implementations: gluetun ships **GNU wget** (HTTP errors → exit 6/8), but dependent containers commonly run **busybox wget** (exit 1 for *any* HTTP error). Keying on "did we get an HTTP status?" rather than on the exit code means a busybox dependent's harmless 404 is read as a PASS, not a spurious failure. The wget exit code is used only as a **fallback** when no HTTP status line was captured at all (GNU's `0/6/8` = "responded").
+
+**Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working — the site just doesn't like the request. Only actual network/DNS/TLS/timeout failures indicate a VPN problem.
 
 #### `FAIL_THRESHOLD`
 Number of **consecutive** failures for a site before triggering a restart. This prevents restarts from transient network blips.
@@ -188,6 +350,183 @@ environment:
   - DEPENDENT_CONTAINERS=container1,container2,container3
 ```
 
+## Dependent-Aware Health (issue #20)
+
+Dependents that use `network_mode: "service:gluetun"` (or `container:gluetun`)
+share Gluetun's **network namespace**, and that share is bound to a specific
+container **instance**. When Gluetun is restarted or recreated (e.g. a Watchtower
+image update), those dependents are left **stranded loopback-only** — `Running`,
+but with only the `lo` interface and no route to the internet. Because v1.x
+tested connectivity *only from inside Gluetun*, every check passed and the
+monitor reported healthy while the stack was broken.
+
+v2 closes that blind spot by measuring each dependent directly, every loop:
+
+1. **Interface check** — `ls /sys/class/net` inside the dependent. Only `lo` ⇒
+   stranded (a hard failure; re-checked once because it won't self-heal).
+2. **Viability probe** — for a live dependent, one **shuffled** resolvable name
+   from your `sites.conf` is fetched *from inside that container*, proving its own
+   DNS + connectivity. A different name each loop means
+   `DEPENDENT_CONTAINER_FAILURES` consecutive failures = "this container can't
+   reach N *different* names" (a container fault), not "one URL was down". If
+   `sites.conf` has only IP literals, the monitor warns that dependent DNS can't
+   be validated and falls back to a connectivity-only IP probe.
+3. **Remediation** — keyed on the dependent's `NetworkMode` target vs Gluetun's
+   current container id:
+   - **same id** (incl. the monitor's own Gluetun restart) → `docker restart` the
+     dependent — it rejoins the rebuilt namespace. Cheap, no new permissions.
+   - **id changed** (Gluetun was replaced) → **recreate** the dependent.
+     `NetworkMode` is immutable, so there is no in-place fix. The recreate is
+     **non-destructive**: all mounts — named, bind, and **anonymous** volumes —
+     are carried forward by source and the old container is removed *without*
+     `-v`, so only the ephemeral writable layer is lost.
+   - recreate **disabled** (`AUTO_RECREATE=0`) or denied → the dependent is
+     reported **FAILED** loudly rather than papered over.
+
+A dependent that fails counts up per-container and resets on any passing loop —
+counters are in-memory with no backoff (recovery is cheap and non-destructive, so
+the monitor simply re-acts each cycle). distroless/scratch dependents with no
+shell can't be exec-probed and fall back to the inspect-based signals.
+
+> **Note on discovery + recreate:** a dependent stranded by a Gluetun *recreate*
+> still points at the dead old id, so auto-discovery (which matches Gluetun's
+> *current* id/name) no longer recognizes it. A running monitor remembers
+> dependents across cycles and handles this automatically. If you start the
+> monitor *after* such a strand already exists, name the dependents explicitly
+> via `DEPENDENT_CONTAINERS` so they're tracked from the first loop. At startup
+> the monitor logs a **WARN** naming any running container stranded on a
+> now-dead netns parent, so you know which ones to add — it won't auto-recreate
+> them, since an orphan whose parent is gone can't be confirmed as *this*
+> gluetun's dependent (first, do no harm).
+
+## What it will and won't do (and why your data is safe)
+
+gluetun-monitor is a watchdog that *restarts and recreates containers*, so it
+owes you a clear contract about exactly what it touches — and what it can't.
+
+### It WILL
+- Restart **gluetun** on a confirmed connectivity failure (to force a new endpoint).
+- Restart a **dependent** that shares gluetun's *current* network namespace.
+- **Recreate** a dependent stranded by a gluetun *recreate* (its netns id moved) —
+  non-destructively (see below). On by default; `AUTO_RECREATE=0` disables it.
+- Report a loud, explicit **FAILED** state when it can't heal — never fake-green.
+
+### It WON'T
+- Pull or build images, or change image tags/versions.
+- Edit your compose files, env, or container configuration.
+- **Delete volumes or data** (it never runs `docker rm -v`).
+- Touch containers that aren't gluetun dependents, or any you list in
+  `EXCLUDE_CONTAINERS`.
+- Act on targets you didn't choose — sites you didn't configure, or an orphan it
+  can't confidently attribute to gluetun (Tenet 1).
+- Start at all on malformed config — it fails loud instead of guessing.
+
+### Why your data is safe across a recreate
+A "recreate" replaces the container **object**, not its data. Docker volumes are
+owned by the daemon, not the container, so:
+
+- **Named volumes, bind mounts, and even anonymous volumes are carried forward** —
+  the monitor reads the old container's mounts and re-attaches the *same* volumes
+  by source on the new container, then removes the old container **without `-v`**.
+  No volume is ever deleted. (Mechanism + empirical data-loss test: [ADR-0005](docs/adr/0005-recreate-mechanism.md).)
+- The **only** thing lost is the container's ephemeral **writable layer** — files
+  written *inside* the container that aren't on a volume. That layer is ephemeral
+  by design (recreated from the image). Anything you care about lives on a volume,
+  and volumes survive.
+
+### What's actually at risk vs. what only sounds risky
+
+| Sounds alarming | The reality |
+|---|---|
+| "It *recreates* my container!" | New container **ID** and a **brief downtime** during the swap. Volume data is preserved. |
+| "A watchdog with Docker access" | Behind the default socket-proxy it's limited to container ops (list/inspect/logs/restart/exec/create/remove) — no image pull/build, no host access. |
+| "Reconstruction might drop a setting" | The genuine residual risk: a recreate copies the container's config + mounts, and a fidelity bug could drop a *non-volume* setting. Mitigations: it **verifies** after recreating, `AUTO_RECREATE=0` disables recreate entirely, and `EXCLUDE_CONTAINERS` protects specific containers. |
+
+### Your controls
+- **`AUTO_RECREATE=0`** — never recreate; log a loud alert line instead
+  (restart-only recovery). ("alert" here, and the flaky-site "advisory" below,
+  mean a **log line** — there is no external notification yet; that's on the
+  [roadmap](docs/ROADMAP.md).)
+- **`EXCLUDE_CONTAINERS=...`** — a denylist of containers to never touch.
+- **Socket proxy** (default) — cap the Docker API surface the monitor can use.
+
+## Site stats & flaky-site advisory
+
+A single flaky **test site** (one that intermittently times out or SSL-errors)
+can trip `FAIL_THRESHOLD` and trigger a gluetun restart — even though the tunnel
+is fine (your other sites pass). Restarting *can* fix a genuinely blocked
+endpoint, so the monitor still tries it; but to stop you chasing the wrong thing,
+it keeps a **persistent, rear-looking record** of how each site behaves and
+**tells you** which one is the troublemaker.
+
+It writes a human-readable JSON sidecar (`STATS_FILE`, default
+`/logs/site-stats.json`) with, per site: total polls, total failures (→ failure
+rate), failure **episodes** and the average episode length in polls (how long it
+typically stays down when it breaks), the **longest** such streak, a
+**failure-reason breakdown** (dns / tls / timeout / connection / http-error /
+other), **response-latency** of successful polls (avg/min/max + **p50/p90/p99**, so
+you see median vs mean — a site getting slow often precedes it failing), how many
+gluetun restarts it triggered and the **restart-effectiveness** (fraction of those
+restarts that actually cleared it — a low number means it's the site, not the VPN),
+and first-seen / last-good / last-failure timestamps. It's written **every loop, crash- and power-loss-safely** (temp file
++ fsync + atomic rename), survives monitor restarts, and is best-effort (a
+missing/unwritable/corrupt file never blocks the monitor). A site removed from
+`sites.conf` is kept for `STATS_RETENTION_DAYS` (default 90) then pruned.
+
+The file also has a top-level **`monitor`** section with monitor-wide totals:
+version, first-/last-started, current uptime, **total loops**, **total runtime**
+(accumulated, excluding downtime), and cumulative **gluetun restarts**,
+**dependent remediations**, and **advisories** raised.
+
+When one site dominates the recent restarts, the monitor logs a **flaky-site
+advisory** (once, not per loop):
+
+```
+[WARN] FLAKY SITE: https://dognzb.cr caused 17 of the last 22 gluetun restarts
+over the last 24h — it may be flaky; consider reviewing or removing it from sites.conf
+```
+
+That's the signal to prune that site from `sites.conf` (which is re-read live, so
+no restart needed). Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
+`ADVISORY_DOMINANCE`. See [ADR-0008](docs/adr/0008-persistent-site-stats-and-advisory.md).
+
+> **By design, the monitor does not auto-suppress a flaky site** — it keeps
+> applying the cheap restart fix and escalates to you. (A future automatic
+> back-off is possible; it would be opt-in.)
+
+### Viewing the stats: `gluetun-monitor-stats`
+
+The image ships a read-only command that renders the sidecar as a per-site matrix
+(it reads the same file the monitor writes, using the same code, so the numbers
+always match). It touches no Docker API and never mutates state — safe to run any
+time:
+
+```console
+$ docker exec gluetun-monitor gluetun-monitor-stats
+monitor v2.0.0  loops=205  runtime=2.0h  gluetun_restarts=0  remediations=0  advisories=0
+tracking since 2026-06-02 14:24
+
+site                     polls  fails  rate%   avg   p50   p90   p99   max  eff%  last_fail
+-----------------------  -----  -----  -----  ----  ----  ----  ----  ----  ----  ---------
+https://thepiratebay.org   319      0   0.00  2255  2191  2527  2679  3136   n/a  —
+https://www.google.com     319      0   0.00   716   631   911  1238  1274   n/a  —
+...
+latency in ms; eff% = restart-effectiveness (n/a = no restarts triggered)
+```
+
+Sites are sorted by `p90` (worst tail first) by default; `--sort` accepts
+`p90|p99|avg|max|p50|rate|polls|eff|name`. Add `--json` to emit the same data for
+`jq`/dashboards, and `--file PATH` if your `STATS_FILE` lives elsewhere.
+
+The latency columns show the **recent** window (last ~200 polls) by default. Add
+`--lifetime` for **all-time** percentiles — these come from a bounded per-site
+histogram (DDSketch-style, within 5% relative error at a few dozen buckets/site;
+see [ADR-0009](docs/adr/0009-all-time-latency-histogram.md)) that records every
+successful poll for the site's whole life, so you get a lifetime baseline rather
+than just "recently." `--json` includes both windows (`latency_ms` and
+`lifetime_latency_ms`). Exact avg/min/max are kept either way; only the percentiles
+are approximate.
+
 ## Docker Compose Example
 
 ### Minimal Configuration (with socket proxy)
@@ -208,8 +547,8 @@ services:
       - docker-proxy
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
-    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     depends_on:
@@ -248,21 +587,29 @@ services:
       - docker-proxy
 
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
-    # Or from Docker Hub: chasmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
+    # Or from Docker Hub: chasmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     depends_on:
       - docker-socket-proxy
     environment:
       - TZ=UTC
+      - PUID=1000                      # run non-root (recommended); unset = root (drop-in)
+      - PGID=1000
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - GLUETUN_CONTAINER=gluetun
       - DEPENDENT_CONTAINERS=auto      # auto-discovery (default)
       - CHECK_INTERVAL=30              # seconds between checks
       - TIMEOUT=10                     # seconds per site test
-      - FAIL_THRESHOLD=2               # consecutive failures to trigger restart
+      - FAIL_THRESHOLD=2               # consecutive site failures to restart gluetun
       - HEALTHY_WAIT_TIMEOUT=120       # seconds to wait for healthy status
+      # --- v2 dependent-aware knobs (all optional) ---
+      - DEPENDENT_CONTAINER_FAILURES=2 # consecutive per-dependent failures to remediate (default = FAIL_THRESHOLD)
+      - MAX_PARALLEL_CHECKS=6          # cap on concurrent dependent probes
+      - AUTO_RECREATE=1                # recreate a dependent stranded by a gluetun recreate (0 to disable)
+      - DNS_WAIT_TIMEOUT=30            # seconds to wait for gluetun DNS after restart
+      - LOG_LEVEL=INFO                 # DEBUG for per-site/per-dependent detail
     volumes:
       - ./sites.conf:/config/sites.conf:ro
       - ./logs:/logs
@@ -281,7 +628,7 @@ If you prefer a simpler setup without the socket proxy, you can mount the Docker
 ```yaml
 services:
   gluetun-monitor:
-    image: ghcr.io/csmarshall/gluetun-monitor:latest
+    image: ghcr.io/csmarshall/gluetun-monitor:2
     container_name: gluetun-monitor
     restart: unless-stopped
     network_mode: none
@@ -300,7 +647,7 @@ Note: This gives the container full read access to the Docker API. The socket pr
 ### Startup
 ```
 [2025-01-15 10:00:00] [INFO] Gluetun Monitor starting...
-[2025-01-15 10:00:00] [INFO] Config: CHECK_INTERVAL=30s, TIMEOUT=10s, FAIL_THRESHOLD=2
+[2025-01-15 10:00:00] [INFO] Config: CHECK_INTERVAL=30s, TIMEOUT=10s, FAIL_THRESHOLD=2, DEPENDENT_CONTAINER_FAILURES=2, AUTO_RECREATE=1
 [2025-01-15 10:00:00] [INFO] Monitoring container: gluetun
 [2025-01-15 10:00:00] [INFO] Prerequisites check passed
 [2025-01-15 10:00:00] [INFO] Docker connection: socket proxy (tcp://docker-socket-proxy:2375)
@@ -308,24 +655,93 @@ Note: This gives the container full read access to the Docker API. The socket pr
 [2025-01-15 10:00:00] [ENDPOINT] Status: STARTUP | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Monitor starting
 ```
 
-### Failure and Recovery
+### A normal check cycle (DEBUG)
+Every test line is tagged with the container it ran in: site tests run inside the
+gluetun container (through the tunnel); each dependent logs its interface/route
+check, then its viability result.
 ```
-[2025-01-15 10:10:00] [WARN] Site https://example.com failed 2 consecutive times - THRESHOLD REACHED - Network failure (DNS or connection)
-[2025-01-15 10:10:00] [ERROR] Failed sites (exceeded threshold): https://example.com
-[2025-01-15 10:10:00] [WARN] Health check failed, initiating recovery...
+[2025-01-15 10:00:00] [CHECK] Start
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] reach ok: https://www.google.com (HTTP 200, 769ms)
+[2025-01-15 10:00:02] [DEBUG] [gateway:gluetun] reach ok: https://cloudflare.com (HTTP 200, 1768ms)
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] link live: eth0,lo,tun0
+[2025-01-15 10:00:04] [DEBUG] [dependent:qbittorrent] reach ok: cloudflare.com (HTTP 200) [wget]
+[2025-01-15 10:00:04] [CHECK] End - Sleeping 30s
+```
+
+Each line reads `[<role>:<name>] <dim> <verdict>: <target> (<detail>)`. The
+dimension is `link` (the L3 interface/route check) or `reach` (DNS + connectivity);
+the verdict is `ok` / `fail` / `stranded` / `?` (couldn't verify). A healthy line
+omits the failure counter — a failing one shows `[2/2 → restart]`.
+
+Each test line is tagged `[gateway:<name>]` (the gluetun VPN container, where the
+site tests run — through the tunnel) or `[dependent:<name>]`, so you can tell at a
+glance what kind of container a line is about (`grep gateway:` / `grep dependent:jackett`).
+
+### Gluetun connectivity failure + recovery
+```
+[2025-01-15 10:10:00] [WARN] [gateway:gluetun] reach fail: https://example.com (Network failure (DNS or connection)) [2/2 → restart]
+[2025-01-15 10:10:00] [ERROR] [gateway:gluetun] restart triggered by: https://example.com
+[2025-01-15 10:10:00] [WARN] Gluetun unhealthy → restarting
 [2025-01-15 10:10:00] [ENDPOINT] Status: FAILING | IP: 203.x.x.x | Country: United States | City: New York | VPN Server: us123.vpn.com | Reason: Site connectivity test failed
-[2025-01-15 10:10:05] [INFO] Restarting gluetun-nordvpn-wg to force new endpoint...
-[2025-01-15 10:10:35] [INFO] gluetun-nordvpn-wg is healthy after 30s
+[2025-01-15 10:10:05] [INFO] Restarting gluetun to force new endpoint...
+[2025-01-15 10:10:35] [INFO] gluetun is healthy after 30s
+[2025-01-15 10:10:38] [INFO] DNS and connectivity verified after 3s
 [2025-01-15 10:10:40] [ENDPOINT] Status: NEW | IP: 89.x.x.x | Country: Germany | City: Frankfurt | VPN Server: de456.vpn.com | Reason: After restart
-[2025-01-15 10:10:40] [INFO] Discovering and restarting dependent containers...
-[2025-01-15 10:10:41] [INFO] Discovered dependent containers: app1,app2
-[2025-01-15 10:10:42] [INFO] Restarting app1...
-[2025-01-15 10:10:44] [INFO] app1 restarted successfully
-[2025-01-15 10:10:46] [INFO] Restarting app2...
-[2025-01-15 10:10:48] [INFO] app2 restarted successfully
-[2025-01-15 10:10:48] [INFO] Dependent container restart complete
-[2025-01-15 10:10:48] [INFO] Recovery complete
+[2025-01-15 10:10:40] [INFO] Connectivity verified after restart
 ```
+
+### Dependent stranded by a Gluetun recreate (self-healed)
+```
+[2025-01-15 11:00:00] [WARN] Remediating dependent qbittorrent: stranded loopback-only
+[2025-01-15 11:00:00] [WARN] qbittorrent netns moved (gluetun recreated) → recreate
+[2025-01-15 11:00:00] [WARN] Recreating qbittorrent (re-homing netns onto gluetun 9f3c1a2b4d5e)
+[2025-01-15 11:00:02] [INFO] qbittorrent recreated as 7a1b2c3d4e5f and started
+[2025-01-15 11:00:04] [INFO] qbittorrent verified healthy after remediation
+```
+
+### Log rotation (both sinks)
+
+The monitor logs to **two** places, and both are bounded so a long-running
+watchdog never fills the disk:
+
+- **The `/logs` file** is **size-rotated by the monitor itself** —
+  `LOG_MAX_BYTES` (≈10 MB) × `LOG_BACKUP_COUNT` (5) ≈ 60 MB cap. Set
+  `LOG_MAX_BYTES=0` to disable (e.g. if you run external `logrotate`).
+- **The Docker/stderr stream** (`docker logs`) is **not rotated by Docker
+  automatically** — its default `json-file` driver grows unbounded. The compose
+  example sets a `logging:` cap (`max-size`/`max-file`) on the services; keep it,
+  or configure rotation globally in `daemon.json`.
+
+At `LOG_LEVEL=DEBUG` the per-site/per-dependent lines are verbose (good for
+soak-testing); `INFO` is much quieter for steady-state.
+
+### Running as non-root (recommended)
+
+By default the container runs as **root** — a drop-in match for v1, with nothing to
+configure. Running it **non-root is recommended** (defense in depth), and it uses
+the same `PUID`/`PGID` knob the rest of your stack (the LinuxServer.io `*arr`
+images) already does:
+
+```yaml
+services:
+  gluetun-monitor:
+    environment:
+      - PUID=1000   # your host user's uid — run `id` to find it
+      - PGID=1000   # your host user's gid
+```
+
+When `PUID`/`PGID` are set, the entrypoint chowns the `/logs` mount to that user
+and drops privileges to it — **no manual chown**. Unset, it stays root and behaves
+exactly like v1 (so the upgrade is drop-in; non-root is opt-in). Either way the
+monitor's real privilege is the Docker API it talks to, not its in-container uid.
+
+> **Direct socket mount** (instead of the recommended socket proxy) **+ non-root:**
+> a non-root process can't read the root:docker-owned `/var/run/docker.sock`. With
+> the socket **proxy** (the default) this is a non-issue — it's reached over TCP.
+> If you insist on the direct mount *and* non-root, use Docker's native
+> `user: "<uid>:<gid>"` together with `group_add: ["<docker-gid>"]` instead of
+> `PUID`/`PGID` (the privilege-drop resets supplementary groups, so `group_add`
+> only composes with `user:`), or simply leave it as root there.
 
 ## Requirements
 
@@ -400,7 +816,10 @@ docker inspect --format='{{.HostConfig.NetworkMode}}' <container_id>
 ### When Discovery Runs
 
 - **At startup** - For logging which containers will be managed
-- **Before each restart** - To catch any containers added since startup
+- **Every loop** - So newly added containers are picked up promptly, and so a
+  dependent is re-checked each cycle. Discovered containers are also remembered
+  across cycles, so a dependent isn't lost when Gluetun's container id changes
+  (see [Dependent-Aware Health](#dependent-aware-health-issue-20)).
 
 This approach means no configuration is needed - containers are discovered dynamically based on their actual Docker configuration.
 
@@ -412,9 +831,9 @@ The recommended deployment uses a [Docker socket proxy](https://github.com/Tecna
 
 | Proxy Setting | Required For |
 |---------------|-------------|
-| `CONTAINERS=1` | Listing, inspecting, and reading logs of containers |
-| `POST=1` | Restarting containers (also enables other POST operations like stop/kill on any container) |
-| `EXEC=1` | Running connectivity tests inside the Gluetun container |
+| `CONTAINERS=1` | Listing, inspecting, and reading logs of containers; creating the replacement when recreating a stranded dependent |
+| `POST=1` | Restarting, removing, and starting containers (the recreate path rides on the same `POST` flag — no new permission) |
+| `EXEC=1` | Running connectivity/interface probes inside Gluetun and the dependents |
 
 The proxy and gluetun-monitor communicate over an isolated Docker network (`docker-proxy`). Only the proxy container has access to the Docker socket.
 
@@ -436,6 +855,27 @@ Or manually:
 ```bash
 docker build -t gluetun-monitor .
 ```
+
+## Development
+
+v2 is a Python package (`gluetun_monitor`). The whole monitor is unit-testable
+without a Docker daemon — a fake client is injected at the Docker seam.
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'
+
+ruff check gluetun_monitor tests     # lint
+mypy gluetun_monitor                 # types (strict)
+pytest                               # tests (incl. the differential suite vs. bash)
+pytest --cov=gluetun_monitor         # with coverage
+```
+
+The legacy `gluetun-monitor.sh` is retained as the **differential oracle**: the
+`differential`-marked tests execute its actual functions and assert the Python
+port matches (the no-regressions gate from
+[ADR-0007](docs/adr/0007-reimplement-in-python.md)). See
+[DEVELOPMENT.md](DEVELOPMENT.md) for more.
 
 ## License
 
