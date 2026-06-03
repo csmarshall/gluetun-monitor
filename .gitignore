@@ -27,6 +27,7 @@ session-state.md
 issue*.sh
 build-smoketest.sh
 rebuild-and-validate.sh
+deploy-v2.sh
 
 # Python
 __pycache__/
