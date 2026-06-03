@@ -36,6 +36,11 @@ services:
       - docker-socket-proxy
     environment:
       - TZ=UTC
+      # Run non-root (recommended, LSIO-style): the entrypoint chowns /logs and
+      # drops to this uid/gid. Leave unset to run as root (drop-in, like v1). Use
+      # your host user's ids (run `id`).
+      - PUID=1000
+      - PGID=1000
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       # Name of the gluetun container to monitor
       - GLUETUN_CONTAINER=gluetun
@@ -99,12 +104,9 @@ services:
       # Sites configuration file
       - ./sites.conf:/config/sites.conf:ro
       # Persistent logs + stats (the monitor rotates the file inside this dir).
-      # The image runs non-root (default uid/gid 1000 = the typical first host
-      # user), so a ./logs you created is usually already writable. If your user
-      # isn't 1000 (check: id), either chown it (sudo chown -R <uid>:<gid> ./logs)
-      # or run as your uid with `user: "1000:1000"` on this service. If it isn't
-      # writable the monitor still runs and logs to stdout (docker logs) — it just
-      # can't persist the file log / site-stats sidecar.
+      # With PUID/PGID set above, the entrypoint chowns this mount for you — no
+      # manual step. (Without PUID/PGID the container runs as root and writes it as
+      # root; either way an unwritable dir just degrades to stdout, never a crash.)
       - ./logs:/logs
     networks:
       - docker-proxy

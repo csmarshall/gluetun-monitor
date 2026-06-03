@@ -1,5 +1,16 @@
 version: 2
 updates:
+  # Python (the v2 package + dev tooling, via pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    assignees:
+      - "csmarshall"
+    open-pull-requests-limit: 99
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

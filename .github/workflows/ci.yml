@@ -27,6 +27,11 @@ jobs:
       - name: Mypy (strict types)
         run: mypy gluetun_monitor
 
+      - name: pip-audit (dependency CVEs)
+        run: |
+          pip install pip-audit
+          pip-audit
+
       - name: Pytest (incl. differential vs. legacy bash)
         # Floor is set below the current ~99% so a real regression fails the build
         # without flaking on trivial churn.
@@ -139,4 +144,23 @@ jobs:
           # Cleanup
           docker stop test-monitor-proxy test-socket-proxy || true
           docker rm test-monitor-proxy test-socket-proxy || true
+
+      - name: Test PUID/PGID drops privileges and chowns /logs
+        run: |
+          # Default (no PUID) runs as root = drop-in; setting PUID/PGID opts into
+          # non-root: the entrypoint chowns the /logs mount to that uid and drops.
+          echo "https://www.google.com" > sites.conf
+          mkdir -p puidlogs
+          docker run --rm \
+            -v $(pwd)/sites.conf:/config/sites.conf:ro \
+            -v $(pwd)/puidlogs:/logs \
+            -e DOCKER_HOST=tcp://127.0.0.1:1 \
+            -e GLUETUN_CONTAINER=nonexistent \
+            -e PUID=1000 -e PGID=1000 \
+            gluetun-monitor:test > puid.log 2>&1 || true
+
+          # Banner still prints (it started)...
+          grep -q "Gluetun Monitor starting" puid.log
+          # ...and the entrypoint chowned the mount to PUID before dropping.
+          test "$(stat -c %u ./puidlogs)" = "1000"
           docker network rm test-docker-proxy || true

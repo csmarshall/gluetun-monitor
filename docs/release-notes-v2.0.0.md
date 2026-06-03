@@ -2,9 +2,8 @@
 
 **v2 is a ground-up reimplementation that makes the monitor *dependent-aware*: it
 now detects and heals the containers behind gluetun, not just gluetun itself.**
-It is a near drop-in upgrade from v1 — same env vars, same files, same
-socket-proxy permissions (one note: it now runs as a non-root user, so make
-`./logs` writable by it — see Upgrading) — and **v1 is now end-of-life**.
+It is a drop-in upgrade from v1 — same env vars, same files, same socket-proxy
+permissions; just change the image tag — and **v1 is now end-of-life**.
 
 ## Why v2
 
@@ -66,19 +65,21 @@ same socket-proxy permissions (`CONTAINERS` / `POST` / `EXEC`).
 +    image: ghcr.io/csmarshall/gluetun-monitor:2
 ```
 
-Three behavior changes to know about:
+Two behavior changes to know about:
 1. v2 **heals dependents by default**. To stay close to v1, set `AUTO_RECREATE=0`
-   (alert instead of recreate) and/or `DEPENDENT_VIABILITY=0` (interface check
-   only).
+   (log a loud alert line instead of recreating) and/or `DEPENDENT_VIABILITY=0`
+   (interface check only). ("alert"/"advisory" = a log line; no external
+   notification yet — that's on the roadmap.)
 2. **Bad config is now fatal** (see above) — if it refuses to start after the
    upgrade, the log says exactly what to fix.
-3. v2 **runs as a non-root user** (default uid/gid 1000 — the typical first host
-   user). v1 ran as root, so existing `./logs` files are likely root-owned — run
-   `sudo chown -R 1000:1000 ./logs` (or override `user:` to match your uid) to keep
-   the file log + stats sidecar. If you skip this the monitor still runs and logs
-   to `docker logs`; it just can't persist them. Using the direct socket mount
-   instead of the proxy? Add your host `docker` group via `group_add` (see the
-   compose example).
+
+Optional, recommended security hygiene: v2 can **run as a non-root user**, using
+the same `PUID`/`PGID` knob as the LinuxServer.io `*arr` images. Set
+`PUID`/`PGID` and the entrypoint chowns `/logs` and drops privileges for you — no
+manual chown. Leave them unset and it runs as **root, exactly like v1** (which is
+why the upgrade is drop-in — non-root is opt-in). (Direct socket mount rather than
+the proxy, and want non-root? See the README note — use Docker's `user:` +
+`group_add` there, since the privilege drop resets supplementary groups.)
 
 **Rollback** is one step: repin `:1`.
 

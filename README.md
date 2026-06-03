@@ -98,8 +98,9 @@ v2 does more):
 1. **It now heals dependents by default** (the #20 fix): a stranded dependent is
    restarted (same gluetun id) or **recreated** (id changed — volumes preserved;
    see [data safety](#what-it-will-and-wont-do-and-why-your-data-is-safe)). To
-   stay close to v1's behavior, set `AUTO_RECREATE=0` (alert instead of recreate)
-   and/or `DEPENDENT_VIABILITY=0` (interface/strand check only, no L7 probing).
+   stay close to v1's behavior, set `AUTO_RECREATE=0` (log a loud alert line
+   instead of recreating) and/or `DEPENDENT_VIABILITY=0` (interface/strand check
+   only, no L7 probing).
 2. **Config is validated; bad config is now fatal.** v2 refuses to start on a
    few things v1 tolerated silently — an empty `sites.conf`, a malformed env
    value, or an explicit `DEPENDENT_CONTAINERS` naming a container that doesn't
@@ -164,6 +165,7 @@ docker compose up -d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `PUID` / `PGID` | *(unset → root)* | Run non-root (recommended): the entrypoint chowns `/logs` and drops to this uid/gid (LSIO-style). Unset = runs as root (drop-in). See [Running as non-root](#running-as-non-root-recommended) |
 | `DOCKER_HOST` | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
 | `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor (must exist, else fatal) |
 | `CONFIG_FILE` | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
@@ -440,7 +442,10 @@ owned by the daemon, not the container, so:
 | "Reconstruction might drop a setting" | The genuine residual risk: a recreate copies the container's config + mounts, and a fidelity bug could drop a *non-volume* setting. Mitigations: it **verifies** after recreating, `AUTO_RECREATE=0` disables recreate entirely, and `EXCLUDE_CONTAINERS` protects specific containers. |
 
 ### Your controls
-- **`AUTO_RECREATE=0`** — never recreate; alert instead (restart-only recovery).
+- **`AUTO_RECREATE=0`** — never recreate; log a loud alert line instead
+  (restart-only recovery). ("alert" here, and the flaky-site "advisory" below,
+  mean a **log line** — there is no external notification yet; that's on the
+  [roadmap](docs/ROADMAP.md).)
 - **`EXCLUDE_CONTAINERS=...`** — a denylist of containers to never touch.
 - **Socket proxy** (default) — cap the Docker API surface the monitor can use.
 
@@ -589,6 +594,8 @@ services:
       - docker-socket-proxy
     environment:
       - TZ=UTC
+      - PUID=1000                      # run non-root (recommended); unset = root (drop-in)
+      - PGID=1000
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - GLUETUN_CONTAINER=gluetun
       - DEPENDENT_CONTAINERS=auto      # auto-discovery (default)
@@ -707,26 +714,33 @@ watchdog never fills the disk:
 At `LOG_LEVEL=DEBUG` the per-site/per-dependent lines are verbose (good for
 soak-testing); `INFO` is much quieter for steady-state.
 
-### Running as non-root
+### Running as non-root (recommended)
 
-The image runs as a non-root user, default **uid/gid 1000** (the first real user
-on a typical single-user host). The real privilege the monitor holds is the Docker
-API, not its in-container uid — running unprivileged is just defense in depth.
-Three things follow:
+By default the container runs as **root** — a drop-in match for v1, with nothing to
+configure. Running it **non-root is recommended** (defense in depth), and it uses
+the same `PUID`/`PGID` knob the rest of your stack (the LinuxServer.io `*arr`
+images) already does:
 
-- **`/logs` must be writable by the runtime uid.** If your host user is `1000`
-  (the common case — check with `id`), a `./logs` you created is already owned by
-  it and just works. If it isn't writable the monitor still runs and logs to
-  `docker logs`; it just can't persist the file log or the site-stats sidecar.
-- **Different uid?** Override at runtime to match whoever owns `/logs` —
-  `user: "${UID}:${GID}"` (or e.g. `user: "1000:1000"`) in the compose service.
-  No image rebuild needed.
-- **Upgrading from v1** (which ran as root)? Your existing `./logs` files are
-  root-owned — `sudo chown -R 1000:1000 ./logs` (or to whatever uid you run as).
-- **Direct socket mount** (instead of the recommended socket proxy)? A non-root
-  process can't read the root:docker-owned `/var/run/docker.sock` by default — add
-  the host `docker` group via `group_add` (see the compose example). The
-  socket-proxy path talks TCP and needs none of this.
+```yaml
+services:
+  gluetun-monitor:
+    environment:
+      - PUID=1000   # your host user's uid — run `id` to find it
+      - PGID=1000   # your host user's gid
+```
+
+When `PUID`/`PGID` are set, the entrypoint chowns the `/logs` mount to that user
+and drops privileges to it — **no manual chown**. Unset, it stays root and behaves
+exactly like v1 (so the upgrade is drop-in; non-root is opt-in). Either way the
+monitor's real privilege is the Docker API it talks to, not its in-container uid.
+
+> **Direct socket mount** (instead of the recommended socket proxy) **+ non-root:**
+> a non-root process can't read the root:docker-owned `/var/run/docker.sock`. With
+> the socket **proxy** (the default) this is a non-issue — it's reached over TCP.
+> If you insist on the direct mount *and* non-root, use Docker's native
+> `user: "<uid>:<gid>"` together with `group_add: ["<docker-gid>"]` instead of
+> `PUID`/`PGID` (the privilege-drop resets supplementary groups, so `group_add`
+> only composes with `user:`), or simply leave it as root there.
 
 ## Requirements
 

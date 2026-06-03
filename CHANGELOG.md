@@ -132,13 +132,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than silently passing.
 
 ### Security & robustness
-- **Runs as a non-root user** (default uid/gid 1000 — the typical first host user)
-  in the image. The real privilege is the Docker API it talks to, not its
-  in-container uid — but there's no reason to run as root. A `/logs` owned by uid
-  1000 is writable as-is; otherwise override `user:` to match (or `chown` the dir).
-  If it isn't writable the monitor still runs and logs to stdout. The direct-socket
-  compose variant adds `group_add` for the host `docker` group (the socket-proxy
-  path needs nothing).
+- **Optional non-root via `PUID`/`PGID`** (LinuxServer.io-style). Set them and the
+  entrypoint chowns `/logs` and drops privileges to that uid/gid — no manual chown.
+  Unset, the container runs as **root, exactly like v1**, so the upgrade stays
+  drop-in (running non-root is recommended, not required). The real privilege is
+  the Docker API it talks to, not its in-container uid. (Direct socket mount +
+  non-root: use Docker's `user:` + `group_add` — the privilege drop resets
+  supplementary groups; the socket-proxy path needs nothing.)
 - **Site entries can no longer be turned into command-line options.** A
   `sites.conf` / `SITES` entry like `--directory-prefix=/etc` was appended bare to
   `wget`/`getent`/`ping`; GNU wget would parse it as a flag (and could write files
