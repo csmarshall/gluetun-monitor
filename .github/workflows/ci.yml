@@ -10,13 +10,19 @@ jobs:
   python:
     name: Python (lint, types, tests)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # We declare requires-python >=3.13, so test the range we support — and this
+      # is what lets us safely bump the image's base Python (e.g. to 3.14).
+      matrix:
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install package + dev tooling
         run: pip install -e '.[dev]'
