@@ -1,12 +1,14 @@
 version: 2
 updates:
-  # Python (the v2 package + dev tooling, via pyproject.toml)
+  # Python (the v2 package + dev tooling, via pyproject.toml + requirements-dev.txt)
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
     commit-message:
       prefix: "deps"
+    labels:
+      - "dependencies"
     assignees:
       - "csmarshall"
     open-pull-requests-limit: 99
@@ -18,6 +20,8 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci"
+    labels:
+      - "dependencies"
     assignees:
       - "csmarshall"
     open-pull-requests-limit: 99
@@ -29,6 +33,8 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "docker"
+    labels:
+      - "dependencies"
     assignees:
       - "csmarshall"
     open-pull-requests-limit: 99
