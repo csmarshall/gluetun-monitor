@@ -1,6 +1,11 @@
 name: Dependabot auto-merge
 
-# Auto-approve + enable auto-merge for LOW-RISK Dependabot PRs only.
+# Enable auto-merge for LOW-RISK Dependabot PRs only.
+#
+# We deliberately do NOT cast an approving review: branch protection here does not
+# require reviews, and letting GITHUB_TOKEN self-approve is both disallowed by
+# default ("Allow GitHub Actions to approve pull requests" is off, correctly) and
+# a review-bypass anti-pattern. Enabling auto-merge is all that's needed.
 #
 # "Auto-merge" still waits for every required status check (the 3.13/3.14 test
 # matrix, shellcheck, bats, build, integration) to go green — so a bump that
@@ -34,16 +39,14 @@ jobs:
         id: meta
         uses: dependabot/fetch-metadata@v2
 
-      - name: Approve + enable auto-merge (squash) for in-scope updates
+      - name: Enable auto-merge (squash) for in-scope updates
         if: >
           (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
            steps.meta.outputs.update-type == 'version-update:semver-minor') &&
           ((steps.meta.outputs.package-ecosystem == 'pip' &&
             steps.meta.outputs.dependency-type == 'direct:development') ||
            steps.meta.outputs.package-ecosystem == 'github_actions')
-        run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
