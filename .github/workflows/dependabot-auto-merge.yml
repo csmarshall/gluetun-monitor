@@ -37,7 +37,7 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
 
       - name: Enable auto-merge (squash) for in-scope updates
         if: >
