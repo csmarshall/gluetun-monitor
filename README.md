@@ -325,6 +325,8 @@ The monitor distinguishes between **connectivity failures** (VPN broken) and **s
 
 This is also why it's correct across wget implementations: gluetun ships **GNU wget** (HTTP errors → exit 6/8), but dependent containers commonly run **busybox wget** (exit 1 for *any* HTTP error). Keying on "did we get an HTTP status?" rather than on the exit code means a busybox dependent's harmless 404 is read as a PASS, not a spurious failure. The wget exit code is used only as a **fallback** when no HTTP status line was captured at all (GNU's `0/6/8` = "responded").
 
+**Probe method:** the check is `wget --spider` — a **HEAD** request (headers only, no body). On a server that rejects HEAD (405, or no HEAD support) GNU wget falls back to a **GET**, but still as a spider check — the response body is never downloaded either way. busybox wget's `--spider` is HEAD too. So the method is HEAD by default and GET only as a fallback, never a full content fetch; classification keys on the response, not the method.
+
 **Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working — the site just doesn't like the request. Only actual network/DNS/TLS/timeout failures indicate a VPN problem.
 
 #### `FAIL_THRESHOLD`
