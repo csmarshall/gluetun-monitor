@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Strip control characters from the country/city parsed out of gluetun's endpoint
+  logs before logging them (#30). That geo string comes from a third-party
+  IP-getter, so control chars / ANSI escapes in a malicious response could
+  otherwise reach the log file (cosmetic terminal-injection); Unicode place names
+  are preserved.
+
 ### Docs
 - Clarified the `sites.conf` live-reload contract (#33): "re-read every loop"
   reloads reliably only for **in-place** edits; with a single-file bind mount, an
