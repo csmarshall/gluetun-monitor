@@ -1,0 +1,11 @@
+# Pinned dev toolchain — the source of truth for CI.
+#
+# Exact pins (not ranges) so CI is reproducible and Dependabot opens one PR per
+# tool release, which dependabot-auto-merge.yml fast-tracks on patch/minor once
+# the full matrix is green. The loose ranges in pyproject's [project.optional-
+# dependencies].dev stay for local "just give me something recent" installs;
+# this file is what CI installs.
+ruff==0.15.15
+mypy==2.1.0
+pytest==9.0.3
+pytest-cov==7.1.0

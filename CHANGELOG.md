@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI / tooling
+- Pinned dev toolchain in `requirements-dev.txt` (ruff/mypy/pytest/pytest-cov),
+  installed by CI for reproducible runs and tracked per-release by Dependabot (#23).
+- Scoped Dependabot auto-merge: low-risk bumps (dev tooling + github-actions,
+  patch/minor only) auto-merge **after** the full matrix passes; majors, the
+  runtime `docker` lib, and Docker base-image bumps still require human review (#23).
+
 ## [2.0.1] - 2026-06-04
 
 ### Changed

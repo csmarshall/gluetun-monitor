@@ -82,6 +82,25 @@ CI runs exactly these (plus a Docker build, an integration smoke test, and
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for architecture and deeper internals.
 
+## Dependency updates
+
+Dependabot opens PRs for the Python deps, GitHub Actions, and the Docker base
+image. The dev toolchain is pinned in `requirements-dev.txt` (CI's source of
+truth); the loose `[dev]` extras in `pyproject.toml` are for local installs.
+
+Low-risk bumps **auto-merge after the full required-check matrix passes** —
+nothing merges on red. Auto-merge is limited to dev tooling (ruff/mypy/pytest/
+pytest-cov) and GitHub Actions, patch/minor only. These always get a human:
+
+- any **major** version bump;
+- the runtime **`docker`** library — it's mocked by `FakeDockerClient`, so green
+  CI doesn't prove runtime safety until the real-daemon test (#24) lands;
+- the **Docker base image** (`python:3.x-slim`) — a feature-version jump needs a
+  CI-matrix change (cf. #32).
+
+`main` is branch-protected to require those checks; repo admins can still push
+docs directly.
+
 ## Reporting issues & feature requests
 
 Use the issue templates. Include sanitized logs and your environment (Docker
