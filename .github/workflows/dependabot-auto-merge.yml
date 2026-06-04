@@ -1,0 +1,49 @@
+name: Dependabot auto-merge
+
+# Auto-approve + enable auto-merge for LOW-RISK Dependabot PRs only.
+#
+# "Auto-merge" still waits for every required status check (the 3.13/3.14 test
+# matrix, shellcheck, bats, build, integration) to go green — so a bump that
+# breaks anything fails its own CI and stays open for a human. This workflow only
+# widens *which already-green PRs* merge without a manual click; it never bypasses
+# the gate. (Requires repo "Allow auto-merge" + branch protection with required
+# checks — see issue #23 / CONTRIBUTING.)
+#
+# In scope (fast-tracked, patch + minor):
+#   • dev tooling — ruff / mypy / pytest / pytest-cov (pip, direct:development)
+#   • github-actions
+# Held for human review (never auto-merged):
+#   • any MAJOR bump
+#   • the runtime `docker` lib (pip, direct:production) — FakeDockerClient mocks
+#     it, so green CI ≠ runtime-safe until the real-daemon test (#24) lands
+#   • the Docker base image (python:3.x-slim) — a 3.x→3.y jump needs a CI-matrix
+#     change + manual validation (cf. #32), so it always gets eyes
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Approve + enable auto-merge (squash) for in-scope updates
+        if: >
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+           steps.meta.outputs.update-type == 'version-update:semver-minor') &&
+          ((steps.meta.outputs.package-ecosystem == 'pip' &&
+            steps.meta.outputs.dependency-type == 'direct:development') ||
+           steps.meta.outputs.package-ecosystem == 'github_actions')
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
