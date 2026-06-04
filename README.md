@@ -164,17 +164,17 @@ docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PUID` / `PGID` | *(unset → root)* | Run non-root (recommended): the entrypoint chowns `/logs` and drops to this uid/gid (LSIO-style). Unset = runs as root (drop-in). See [Running as non-root](#running-as-non-root-recommended) |
-| `DOCKER_HOST` | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
-| `GLUETUN_CONTAINER` | `gluetun` | Name of the Gluetun container to monitor (must exist, else fatal) |
-| `CONFIG_FILE` | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
-| `SITES` | *(unset)* | Comma-separated test URLs, **unioned** with the sites file. Set at startup (not live-reloaded) |
-| `DEPENDENT_CONTAINERS` | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
-| `EXCLUDE_CONTAINERS` | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
-| `CHECK_INTERVAL` | `30` | Seconds between health checks |
-| `TIMEOUT` | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W` |
+| [`DOCKER_HOST`](#docker_host) | *(unset)* | Docker daemon endpoint. Set to `tcp://docker-socket-proxy:2375` when using a socket proxy |
+| [`GLUETUN_CONTAINER`](#gluetun_container) | `gluetun` | Name of the Gluetun container to monitor (must exist, else fatal) |
+| [`CONFIG_FILE`](#sites--config_file--sites) | `/config/sites.conf` | Path to the sites file (re-read each loop → live-editable) |
+| [`SITES`](#sites--config_file--sites) | *(unset)* | Comma-separated test URLs, **unioned** with the sites file. Set at startup (not live-reloaded) |
+| [`DEPENDENT_CONTAINERS`](#dependent_containers) | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
+| [`EXCLUDE_CONTAINERS`](#exclude_containers) | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
+| [`CHECK_INTERVAL`](#check_interval) | `30` | Seconds between health checks |
+| [`TIMEOUT`](#timeout) | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W` |
 | `WGET_TRIES` | `1` | Attempts per `wget` probe (the shuffle + consecutive-failure thresholds, not retries, are how noise is tolerated) |
-| `FAIL_THRESHOLD` | `2` | Consecutive site failures before restarting Gluetun |
-| `HEALTHY_WAIT_TIMEOUT` | `120` | Max seconds to wait for Gluetun to become healthy after restart |
+| [`FAIL_THRESHOLD`](#fail_threshold) | `2` | Consecutive site failures before restarting Gluetun |
+| [`HEALTHY_WAIT_TIMEOUT`](#healthy_wait_timeout) | `120` | Max seconds to wait for Gluetun to become healthy after restart |
 | `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
 | `MAX_PARALLEL_CHECKS` | `6` | Cap on concurrent `docker exec` probes across dependents per loop |
 | `DEPENDENT_VIABILITY` | `1` | Per-dependent L7 DNS/connectivity probe. `0` = interface/strand check only (no URL fetch); the interface check is always on |
