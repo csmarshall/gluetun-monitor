@@ -52,23 +52,17 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:2
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Gluetun Monitor (each loop)               │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Test sites through Gluetun's network (the root signal)      │
-│  2. If site failures exceed FAIL_THRESHOLD:                     │
-│       restart Gluetun, wait healthy + DNS, re-verify the set    │
-│       (only proceed if the tunnel is actually restored)         │
-│  3. For each dependent (every loop — the #20 fix):              │
-│       a. Interface check: stranded loopback-only?               │
-│       b. Else probe one shuffled name (DNS + connectivity)      │
-│       c. On confirmed failure, remediate:                       │
-│            • shares Gluetun's current id → docker restart       │
-│            • Gluetun recreated (id moved) → recreate (volumes    │
-│              preserved); disabled/denied → report FAILED        │
-│       d. Verify (running + non-loopback interface)              │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  L(["each loop"]) --> G["test sites through gluetun (the root signal)"]
+  G --> GT{"tunnel down?"}
+  GT -- "yes" --> GR["restart gluetun, wait healthy + DNS, re-verify"]
+  GT -- "no" --> D["check each dependent:<br/>interface + its own DNS/connectivity"]
+  GR --> D
+  D --> DT{"stranded or unreachable?"}
+  DT -- "no" --> OK["healthy"]
+  DT -- "yes" --> R["heal it — docker restart, or recreate<br/>(volumes preserved) if gluetun's id moved"]
+  R --> V["verify, then sleep + repeat"]
 ```
 
 The full per-loop state machine (22 nodes) is in
