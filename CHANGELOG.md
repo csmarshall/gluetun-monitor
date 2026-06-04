@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs
+- Clarified the `sites.conf` live-reload contract (#33): "re-read every loop"
+  reloads reliably only for **in-place** edits; with a single-file bind mount, an
+  editor/tool that saves via rename replaces the inode and the container keeps
+  reading the old file until `--force-recreate`. Documented the workaround and the
+  **directory-mount** option (`./config:/config`) for guaranteed live-reload with
+  any editor.
+
 ## [2.0.0] - 2026-06-03
 
 ### Changed

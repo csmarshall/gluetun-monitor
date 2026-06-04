@@ -101,7 +101,12 @@ services:
       # Log file path inside the /logs mount (also always logged to stdout)
       # - LOG_FILE=/logs/gluetun-monitor.log
     volumes:
-      # Sites configuration file
+      # Sites configuration file (re-read every loop).
+      # NOTE: with this single-FILE mount, only in-place edits reload live; an
+      # editor that saves via rename (vim default, many IDEs) needs a
+      # `docker compose up -d --force-recreate`. For guaranteed live-reload with
+      # any editor, mount the directory instead:  - ./config:/config:ro  (put
+      # sites.conf in ./config/).
       - ./sites.conf:/config/sites.conf:ro
       # Persistent logs + stats (the monitor rotates the file inside this dir).
       # With PUID/PGID set above, the entrypoint chowns this mount for you — no

@@ -218,13 +218,27 @@ the wider system, the monitor **refuses to start** (exits non-zero) rather than
 Test URLs come from two **unioned** sources (de-duplicated):
 - **`CONFIG_FILE`** (default `/config/sites.conf`) — one URL per line, `#` comments
   allowed. **Re-read every loop**, so adding/removing a URL takes effect on the
-  next check with no restart.
+  next check — the change is even logged by name (`Sites changed: added …`).
 - **`SITES`** — a comma-separated list in the environment, for config-via-env
   parity with the other knobs (no file mount needed). Fixed at process start —
   changing it requires a container restart.
 
 Provide either, or both. At least one URL total is required or the monitor won't
 start (see above).
+
+> **Live-editing caveat (single-file bind mount).** "Re-read every loop" reloads
+> reliably only for **in-place** edits (e.g. `nano`, or `sed`/redirection that
+> truncate the same file). Editors/tools that save via *write-temp-then-rename*
+> (vim's default, many IDEs, `sed -i` on GNU) replace the file's **inode**, and a
+> single-file bind mount (`./sites.conf:/config/sites.conf`) stays pinned to the
+> original inode — so the container keeps reading the **old** file until you
+> `docker compose up -d --force-recreate gluetun-monitor`. For *guaranteed*
+> live-reload with any editor, **mount the directory instead of the file**:
+> ```yaml
+> volumes:
+>   - ./config:/config:ro   # put sites.conf in ./config/sites.conf
+> ```
+> Directory mounts don't have the inode problem.
 
 Entries are sanity-checked: a URL with no host, or one that looks like a
 command-line flag (leading `-`, which could otherwise be parsed as an option by
@@ -483,8 +497,9 @@ advisory** (once, not per loop):
 over the last 24h — it may be flaky; consider reviewing or removing it from sites.conf
 ```
 
-That's the signal to prune that site from `sites.conf` (which is re-read live, so
-no restart needed). Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
+That's the signal to prune that site from `sites.conf` (re-read each loop — see the
+[live-editing caveat](#sites--config_file--sites) on in-place edits vs. a recreate).
+Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
 `ADVISORY_DOMINANCE`. See [ADR-0008](docs/adr/0008-persistent-site-stats-and-advisory.md).
 
 > **By design, the monitor does not auto-suppress a flaky site** — it keeps
