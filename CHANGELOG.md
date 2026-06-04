@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-06-04
+
+### Changed
+- Image base bumped to **python:3.14-slim**; CI now tests the supported range on a
+  **3.13 + 3.14 matrix** (we declare `requires-python >=3.13`). Behavior-compatible.
+
 ### Security
 - Strip control characters from the country/city parsed out of gluetun's endpoint
   logs before logging them (#30). That geo string comes from a third-party
@@ -14,13 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   otherwise reach the log file (cosmetic terminal-injection); Unicode place names
   are preserved.
 
+### CI / tooling
+- Dependabot now tracks the `pip` ecosystem; CI gained a `pip-audit` step;
+  `actions/setup-python` bumped to v6.
+
 ### Docs
 - Clarified the `sites.conf` live-reload contract (#33): "re-read every loop"
   reloads reliably only for **in-place** edits; with a single-file bind mount, an
   editor/tool that saves via rename replaces the inode and the container keeps
   reading the old file until `--force-recreate`. Documented the workaround and the
-  **directory-mount** option (`./config:/config`) for guaranteed live-reload with
-  any editor.
+  **directory-mount** option (`./config:/config`) for guaranteed live-reload.
+- Documented the probe-method contract (#34): `wget --spider` is a HEAD request
+  (GET fallback only on HEAD-hostile servers; the body is never downloaded).
+- README "How It Works" is now a mermaid flowchart (looping back to the start);
+  the env-var table rows link down to their Variable Details.
+- Pinned the `:latest` contract in VERSIONING.md (`latest=auto`; EOL/older-major
+  patches never claim `:latest`).
 
 ## [2.0.0] - 2026-06-03
 
