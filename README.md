@@ -62,7 +62,10 @@ flowchart TD
   D --> DT{"stranded or unreachable?"}
   DT -- "no" --> OK["healthy"]
   DT -- "yes" --> R["heal it — docker restart, or recreate<br/>(volumes preserved) if gluetun's id moved"]
-  R --> V["verify, then sleep + repeat"]
+  R --> V["verify: running + non-loopback interface"]
+  OK --> SLEEP["sleep CHECK_INTERVAL"]
+  V --> SLEEP
+  SLEEP --> L
 ```
 
 The full per-loop state machine (22 nodes) is in
