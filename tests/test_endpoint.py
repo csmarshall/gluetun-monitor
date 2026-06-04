@@ -42,6 +42,23 @@ def test_parse_apostrophe_location_issue_17() -> None:
     assert info.city == "Provence-Alpes-Cote-d'Azur"
 
 
+def test_parse_strips_control_chars_from_location() -> None:
+    """The geo string comes from a third-party IP-getter, so control chars (CR,
+    tab, ESC, bell …) must be stripped before they reach the log — neutralizing
+    terminal-control injection — while legitimate Unicode (Zürich) is preserved.
+    (Any leftover *printable* bytes are harmless without the control char.)"""
+    # Use non-line-break controls (tab, ESC, bell): \r\n etc. are consumed by
+    # splitlines() before parsing, so they can't reach the field anyway.
+    line = (
+        "INFO [ip getter] Public IP address is 5.6.7.8 "
+        "(Switzer\tland, Z\x1b\x07ürich - source: x)"
+    )
+    info = parse_endpoint(line)
+    assert info.country == "Switzerland"  # tab stripped
+    assert info.city == "Zürich"          # ESC + bell stripped, Unicode kept
+    assert all(ch.isprintable() for ch in info.country + info.city)
+
+
 def test_parse_takes_last_ip_getter_line() -> None:
     """Logs accumulate; we report the *most recent* endpoint, not a stale one."""
     older = "INFO [ip getter] Public IP address is 1.1.1.1 (A, B, C - source: x)"

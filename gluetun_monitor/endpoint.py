@@ -34,6 +34,16 @@ class EndpointInfo:
         )
 
 
+def _clean(value: str) -> str:
+    """Strip control characters from a value parsed out of (externally-influenced)
+    gluetun log text. The country/city come from a geo string a third-party
+    IP-getter service returns, so a malicious response could embed control chars /
+    ANSI escapes that would otherwise land in our log file (cosmetic log-spoofing).
+    Printable text — including Unicode like ``Zürich`` — is kept; controls dropped.
+    """
+    return "".join(ch for ch in value if ch.isprintable())
+
+
 def _last_match(pattern: re.Pattern[str], lines: list[str]) -> str | None:
     """The capture group of the last line matching ``pattern``, or None."""
     for line in reversed(lines):
@@ -65,7 +75,7 @@ def parse_endpoint(logs: str) -> EndpointInfo:
         if loc_match:
             # Drop the trailing " - source: ..." annotation, then split fields.
             location = loc_match.group(1).split(" - source:")[0]
-            fields = [f.strip() for f in location.split(",")]
+            fields = [_clean(f.strip()) for f in location.split(",")]
             if fields and fields[0]:
                 country = fields[0]
             if len(fields) > 1 and fields[1]:
