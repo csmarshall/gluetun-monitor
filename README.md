@@ -584,7 +584,8 @@ starts** — not every 30-second loop it persists. `NOTIFY_REPEAT_INTERVAL` (in
 **loops**, default `0`) controls reminders: `0` = announce once then stay silent
 until it resolves; `N` = remind every `N` loops. When a problem **clears** you get a
 resolve note (so you hear it's back); when its subject is **removed** (site dropped,
-dependent excluded) it clears silently. This state persists to `NOTIFY_STATE_FILE`,
+dependent excluded) you get a "no longer monitored" note instead (the alert is
+retired, not recovered). This state persists to `NOTIFY_STATE_FILE`,
 so restarting the monitor neither re-spams still-broken problems nor misses a
 resolve (ADR-0012).
 

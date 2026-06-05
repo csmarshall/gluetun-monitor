@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     most-urgent tier — no storms from a fast restarter.
   - **Edge-triggered lifecycle:** an ongoing problem announces once, reminds every
     `NOTIFY_REPEAT_INTERVAL` loops (default `0` = once), and emits a resolve when it
-    clears (or clears silently if its subject was removed). State persists to
-    `NOTIFY_STATE_FILE` across monitor restarts.
+    clears (or a "no longer monitored" note if its subject was removed). State
+    persists to `NOTIFY_STATE_FILE` across monitor restarts.
   - Best-effort (Tenet 7): sent off the loop bounded by `NOTIFY_TIMEOUT`, failures
     swallowed; URLs never logged; startup logs exactly what you signed up for.
 

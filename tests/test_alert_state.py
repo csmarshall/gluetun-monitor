@@ -63,14 +63,17 @@ def test_resolve_when_condition_clears() -> None:
     assert "resolved" in resolved[0].title.lower()
 
 
-def test_forgotten_subject_clears_silently() -> None:
+def test_forgotten_subject_emits_deprecation_not_resolve() -> None:
     s = _state()
     s.begin_loop()
     s.report("k", "attention", "P", "b")
     s.events()
     s.begin_loop()
     s.forget("k")  # subject removed (site dropped / dependent excluded)
-    assert s.events() == []  # silent — no false "resolved"
+    events = s.events()
+    assert len(events) == 1
+    assert events[0].key == "deprecated:k"  # retired, NOT "resolve:k"
+    assert "no longer monitored" in events[0].title
 
 
 def test_active_count_reflects_firing_problems() -> None:

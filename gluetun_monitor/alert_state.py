@@ -12,8 +12,9 @@ subjects it has stopped managing via :meth:`forget`. At loop end :meth:`events` 
   announce once, then stay silent until it resolves),
 * a **resolve** (same tier as the alert) for a problem that **cleared** — its subject
   still exists, so "it's back" is true, and
-* **silent removal** for a problem whose subject was *forgotten* (site removed from
-  config, dependent excluded/gone) — a "recovered" there would be a lie.
+* a **deprecation** notice for a problem whose subject was *forgotten* (site removed
+  from config, dependent excluded/gone) — "no longer monitored", since a "recovered"
+  there would be a lie.
 
 State persists to a JSON sidecar, and the loop counter persists with it, so a restart
 of the monitor neither re-spams still-broken problems nor misses a resolve that
@@ -102,10 +103,19 @@ class AlertState:
             if key in self._reported:
                 continue
             active = self._active.pop(key)
-            if key in self._forgotten:
-                self._log.debug(f"notify: {key} subject removed — silent clear")
-                continue
             active_for = self._loop - active.since_loop
+            if key in self._forgotten:
+                # Subject removed (site dropped / dependent excluded): the alert is
+                # retired, not recovered — say so plainly rather than imply a fix.
+                self._log.debug(f"notify: {key} subject removed — deprecating alert")
+                out.append(NotifyEvent(
+                    tier=active.tier,
+                    title=f"no longer monitored: {active.title}",
+                    body=f"{active.title} — its subject was removed or excluded; "
+                    f"this alert is retired (it did not necessarily recover).",
+                    key=f"deprecated:{key}",
+                ))
+                continue
             self._log.debug(f"notify: {key} resolved after {active_for} loops")
             out.append(NotifyEvent(
                 tier=active.tier,
