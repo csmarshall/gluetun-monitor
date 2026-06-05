@@ -19,7 +19,8 @@ permissions:
 jobs:
   auto-merge:
     # Only release-please's Release PRs (it labels them 'autorelease: pending').
-    if: contains(github.event.pull_request.labels.*.name, 'autorelease: pending')
+    # Quoted because the label's colon-space would otherwise break YAML parsing.
+    if: "contains(github.event.pull_request.labels.*.name, 'autorelease: pending')"
     runs-on: ubuntu-latest
     steps:
       - name: Auto-merge iff the release is all-Dependabot
