@@ -193,6 +193,10 @@ docker compose up -d
 | `LOG_BACKUP_COUNT` | `5` | How many rotated log backups to keep (≈60 MB total at defaults) |
 | `LOG_FILE` | `/logs/gluetun-monitor.log` | Path to the log file inside the `/logs` mount. Logs always go to stdout (`docker logs`) too; if this path isn't writable the monitor degrades to stdout-only rather than failing |
 | `TZ` | `UTC` | Timezone for log timestamps |
+| `APPRISE_URLS` | *(unset → off)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs to push events to (ntfy/Discord/Telegram/email/webhook/…). Unset = notifications disabled. See [Notifications](#notifications) |
+| `NOTIFY_MIN_LEVEL` | `WARN` | Minimum severity to push: `INFO`, `WARN`, or `ERROR`. See [Notifications](#notifications) |
+| `NOTIFY_THROTTLE` | `3600` | Per-event throttle (seconds): at most one notification per event key per window; `0` disables throttling. See [Notifications](#notifications) |
+| `NOTIFY_TIMEOUT` | `10` | Max seconds to wait for a notification send before carrying on (sends run off the loop, so a slow backend can't stall the watchdog). See [Notifications](#notifications) |
 
 ### Configuration is validated — sane defaults, but bad config is fatal
 
@@ -540,6 +544,48 @@ successful poll for the site's whole life, so you get a lifetime baseline rather
 than just "recently." `--json` includes both windows (`latency_ms` and
 `lifetime_latency_ms`). Exact avg/min/max are kept either way; only the percentiles
 are approximate.
+
+## Notifications
+
+By default the monitor is **log-only**. Set `APPRISE_URLS` to also push significant
+events out-of-band via [Apprise](https://github.com/caronc/apprise) — one library,
+100+ backends (ntfy, Discord, Telegram, Slack, email, Pushover, Gotify, generic
+webhook, …), all configured by URL. Unset = disabled, so this is fully opt-in.
+
+```yaml
+    environment:
+      # One or more comma-separated Apprise URLs. Examples:
+      - APPRISE_URLS=ntfy://ntfy.example.com/gluetun
+      # - APPRISE_URLS=ntfy://host/topic,discord://webhook_id/webhook_token
+      - NOTIFY_MIN_LEVEL=WARN   # INFO | WARN | ERROR (default WARN)
+```
+
+**What gets pushed** (each at the noted severity; below `NOTIFY_MIN_LEVEL` is
+suppressed):
+
+| Event | Level |
+|-------|-------|
+| gluetun restart triggered | WARN |
+| gluetun **recovery failed** / still failing after restart (can't come up) | ERROR |
+| dependent remediated (restart/recreate) | WARN |
+| dependent **remediation failed** | ERROR |
+| **flaky-site advisory** (one site keeps causing restarts) | WARN |
+| refused to start (bad config / Docker unreachable / gluetun missing) | ERROR |
+
+Notifications are **best-effort and never affect monitoring** (Tenet 7): a send is
+filtered by `NOTIFY_MIN_LEVEL`, throttled per event by `NOTIFY_THROTTLE` (so a
+persistent fault notifies once, not every loop), run off the loop bounded by
+`NOTIFY_TIMEOUT`, and any failure is swallowed (logged at `DEBUG`). Apprise URLs
+carry tokens and are never logged.
+
+Verify your setup without waiting for a real event:
+
+```bash
+docker exec gluetun-monitor gluetun-monitor --notify-test
+```
+
+See [ADR-0010](docs/adr/0010-notification-layer.md) for the design and the full
+[Apprise URL list](https://github.com/caronc/apprise/wiki) for backends.
 
 ## Docker Compose Example
 

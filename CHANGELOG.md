@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Opt-in notification layer (#22, ADR-0010).** Set `APPRISE_URLS` to push
+  significant events out-of-band via [Apprise](https://github.com/caronc/apprise)
+  (ntfy/Discord/Telegram/email/webhook/… — 100+ backends): gluetun restart, recovery
+  failure / restart-ineffective, dependent remediation success/failure, the
+  flaky-site advisory, and refusal to start. Filtered by `NOTIFY_MIN_LEVEL`
+  (default WARN), throttled per event by `NOTIFY_THROTTLE` (default 1h), and bounded
+  off the loop by `NOTIFY_TIMEOUT` (default 10s). Unset = disabled (drop-in, no
+  behavior change). `gluetun-monitor --notify-test` verifies your configuration.
+
 ### CI / tooling
 - Pinned dev toolchain in `requirements-dev.txt` (ruff/mypy/pytest/pytest-cov),
   installed by CI for reproducible runs and tracked per-release by Dependabot (#23).
@@ -24,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that the real-daemon job (a required check) gates it. Pinned `docker==7.1.0` in
   `pyproject.toml` so the image build is reproducible and Dependabot tracks it
   per-release; majors (8.x) still require a human.
+- `apprise` ships pinned (`==1.11.0`) and validated by a real-library localhost-sink
+  test (a required check), so it joins `docker` as an auto-merge-eligible prod dep
+  (patch/minor); majors still require a human (#22).
 
 ### Dependencies
 - Bump `ruff` 0.15.15 → 0.15.16 (auto-merged).

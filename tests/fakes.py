@@ -11,8 +11,27 @@ from collections.abc import Callable
 from typing import Any
 
 from gluetun_monitor.docker_client import ContainerInfo, ExecResult
+from gluetun_monitor.notify import NotifyEvent
 
 ExecHandler = Callable[[str, list[str]], ExecResult]
+
+
+class FakeNotifier:
+    """Records every NotifyEvent so tests can assert what was pushed (no network)."""
+
+    def __init__(self) -> None:
+        self.events: list[NotifyEvent] = []
+        self.test_result = True
+
+    def notify(self, event: NotifyEvent) -> None:
+        self.events.append(event)
+
+    def test(self) -> bool:
+        return self.test_result
+
+    def event_keys(self) -> list[str]:
+        """The dedup keys of recorded events, in order — handy for assertions."""
+        return [e.key for e in self.events]
 
 
 def make_inspect(

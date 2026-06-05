@@ -29,6 +29,7 @@ from .dependents import (
 )
 from .dns_check import DnsResult, DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
+from .notify import Notifier, NotifyEvent, NullNotifier
 from .recovery import remediate_dependent, restart_gluetun
 from .site_stats import SiteStatsStore, format_window
 from .sites import hostname_of, ip_pool, is_ip_literal, load_sites, resolvable_pool
@@ -80,10 +81,14 @@ class Monitor:
         rng: random.Random | None = None,
         sleep: Sleep = time.sleep,
         stats: SiteStatsStore | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.client = client
         self.config = config
         self.log = logger
+        # Opt-in external notifications (#22). Default = NullNotifier (no-op), so
+        # nothing changes unless APPRISE_URLS is configured and a notifier injected.
+        self.notifier = notifier if notifier is not None else NullNotifier()
         self._rng = rng if rng is not None else random.Random()
         # _probe_dependent runs across a ThreadPoolExecutor (_fan_out), and a
         # random.Random instance is not thread-safe — concurrent sample()/uniform()
@@ -109,6 +114,10 @@ class Monitor:
         self._warned_orphans: set[str] = set()
         # Dedup for "can't validate DNS (no usable tool)" — re-armed if it later validates.
         self._warned_dns_unvalidated: set[str] = set()
+
+    def _notify(self, level: str, title: str, body: str, key: str) -> None:
+        """Push one event to the (opt-in) notifier. Best-effort; never raises."""
+        self.notifier.notify(NotifyEvent(level=level, title=title, body=body, key=key))
 
     # ----- gluetun root test (nodes 2-3) -----
 
@@ -442,6 +451,20 @@ class Monitor:
                 self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
             ):
                 self.dependent_failures.reset(dep)
+                self._notify(
+                    "WARN",
+                    f"dependent remediated: {dep}",
+                    f"{dep} was remediated ({reason}) and verified healthy.",
+                    key=f"dependent-remediated:{dep}",
+                )
+            else:
+                self._notify(
+                    "ERROR",
+                    f"dependent remediation FAILED: {dep}",
+                    f"{dep} is still unhealthy after remediation ({reason}) — "
+                    f"manual intervention may be required.",
+                    key=f"dependent-failed:{dep}",
+                )
 
     # ----- one full loop iteration (node 1 -> 22, minus the sleep) -----
 
@@ -501,8 +524,22 @@ class Monitor:
             self.run_dependent_phase(gluetun.id, sites)
             return
         self.stats.record_gluetun_restart()  # monitor-wide count of actual restarts
+        self._notify(
+            "WARN",
+            f"gluetun restarting ({self.config.gluetun_container})",
+            f"Connectivity failed for: {', '.join(breached)} — restarting "
+            f"{self.config.gluetun_container} and re-verifying.",
+            key="gluetun-restart",
+        )
         if not restart_gluetun(self.client, self.config, self.log, sleep=self._sleep):
             self.log.error("Recovery failed - manual intervention may be required")
+            self._notify(
+                "ERROR",
+                f"gluetun recovery FAILED ({self.config.gluetun_container})",
+                f"{self.config.gluetun_container} did not come back healthy after a restart — "
+                f"manual intervention may be required.",
+                key="gluetun-recovery-failed",
+            )
             return
 
         # Re-verify without recording (so the loop counts one poll per site, not two).
@@ -513,6 +550,13 @@ class Monitor:
             self.stats.record_restart_outcome(site, cleared=site not in still)
         if reverify_breached:
             self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
+            self._notify(
+                "ERROR",
+                f"gluetun still failing after restart ({self.config.gluetun_container})",
+                f"Connectivity still failing after restarting {self.config.gluetun_container}: "
+                f"{', '.join(reverify_breached)} — manual intervention may be required.",
+                key="gluetun-restart-ineffective",
+            )
             self.site_failures.reset_all()
             return
 
@@ -542,6 +586,14 @@ class Monitor:
             f"{adv.total_restarts} gluetun restarts over the last "
             f"{format_window(adv.window_seconds)} — it may be flaky; consider "
             f"reviewing or removing it from sites.conf"
+        )
+        self._notify(
+            "WARN",
+            f"flaky site: {adv.site}",
+            f"{adv.site} caused {adv.site_restarts} of the last {adv.total_restarts} "
+            f"gluetun restarts over {format_window(adv.window_seconds)} — it may be flaky; "
+            f"consider reviewing or removing it from sites.conf.",
+            key=f"advisory:{adv.site}",
         )
 
     def _save_stats(self) -> None:

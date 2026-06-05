@@ -12,11 +12,13 @@ requires-python = ">=3.13"
 authors = [{ name = "Charles Marshall" }]
 keywords = ["gluetun", "vpn", "docker", "monitoring", "healthcheck"]
 dependencies = [
-    # Exact pin (not a range): the image installs straight from here, so pinning
-    # makes builds reproducible AND gives Dependabot a per-release target. docker-py
-    # bumps are gated by the real-daemon integration job (#24) and auto-merged on
-    # green (patch/minor); a major (8.x) still gets a human.
+    # Exact pins (not ranges): the image installs straight from here, so pinning
+    # makes builds reproducible AND gives Dependabot a per-release target. Both prod
+    # deps are exercised for real in CI (docker by the real-daemon job #24, apprise
+    # by the localhost-sink test #22), so patch/minor auto-merge on green; majors
+    # still get a human.
     "docker==7.1.0",
+    "apprise==1.11.0",
 ]
 
 [project.urls]

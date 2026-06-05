@@ -16,9 +16,10 @@ name: Dependabot auto-merge
 #
 # In scope (fast-tracked, patch + minor):
 #   • dev tooling — ruff / mypy / pytest / pytest-cov (pip, direct:development)
-#   • the runtime `docker` lib (pip, direct:production) — promoted once the
-#     real-daemon integration job (#24, a required check) made a docker-py
-#     regression turn CI red; green now means runtime-safe
+#   • the runtime prod libs (pip, direct:production): `docker` and `apprise` —
+#     each is exercised for real by a required check (docker by the real-daemon
+#     job #24; apprise by the localhost-sink test #22), so a regression turns CI
+#     red and green means runtime-safe
 #   • github-actions
 # Held for human review (never auto-merged):
 #   • any MAJOR bump

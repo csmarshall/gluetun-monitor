@@ -96,4 +96,4 @@ def test_main_fatal_on_malformed_env(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setenv("CHECK_INTERVAL", "abc")  # malformed -> Config.errors -> exit 1
     monkeypatch.setenv("LOG_FILE", str(tmp_path / "m.log"))
     monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "sites.conf"))
-    assert cli.main() == 1  # returns before touching Docker
+    assert cli.main([]) == 1  # returns before touching Docker

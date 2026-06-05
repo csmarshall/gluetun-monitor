@@ -88,6 +88,15 @@ services:
       # - ADVISORY_WINDOW=86400      # seconds (24h)
       # - ADVISORY_MIN_RESTARTS=5
       # - ADVISORY_DOMINANCE=0.5     # one site causing >=50% of recent restarts -> flag it
+      # --- Notifications (opt-in; unset = log-only, no outbound traffic) ---
+      # Comma-separated Apprise URLs to push significant events (restart, recovery
+      # failure, dependent remediation, flaky-site advisory, refusal to start).
+      # 100+ backends; see https://github.com/caronc/apprise/wiki
+      # - APPRISE_URLS=ntfy://ntfy.example.com/gluetun,discord://webhook_id/webhook_token
+      # - NOTIFY_MIN_LEVEL=WARN      # INFO | WARN | ERROR (minimum severity to push)
+      # - NOTIFY_THROTTLE=3600       # seconds; at most one push per event key per window (0=off)
+      # - NOTIFY_TIMEOUT=10          # seconds to wait for a send before carrying on (off the loop)
+      # Verify with:  docker exec gluetun-monitor gluetun-monitor --notify-test
       # Recreate a dependent stranded by a gluetun recreate (id changed); 0 disables
       # - AUTO_RECREATE=1
       # Seconds to wait for gluetun DNS to stabilize after a restart

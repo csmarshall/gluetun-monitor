@@ -90,10 +90,11 @@ truth); the loose `[dev]` extras in `pyproject.toml` are for local installs.
 
 Low-risk bumps **auto-merge after the full required-check matrix passes** —
 nothing merges on red. Auto-merge covers (patch/minor only): dev tooling
-(ruff/mypy/pytest/pytest-cov), GitHub Actions, and the runtime **`docker`**
-library — the last is safe to auto-merge because the real-daemon integration job
-(#24, a required check) turns CI red on a docker-py regression. These always get a
-human:
+(ruff/mypy/pytest/pytest-cov), GitHub Actions, and the runtime libraries
+**`docker`** and **`apprise`** — those last two are safe to auto-merge because each
+is exercised for real by a required check (docker by the real-daemon integration
+job #24, apprise by the localhost-sink test #22), so a regression turns CI red.
+These always get a human:
 
 - any **major** version bump;
 - the **Docker base image** (`python:3.x-slim`) — a feature-version jump needs a
