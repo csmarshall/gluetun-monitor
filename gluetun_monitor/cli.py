@@ -124,6 +124,40 @@ def _announce_banner(config: Config, logger: Logger) -> None:
         )
 
 
+_NOTIFY_LEVEL_BLURB = {
+    "attention": "Pinged only when your attention is needed (failed recovery/remediation, "
+    "refused start, flaky-site advisory). Self-heals, changes, and the firehose stay silent.",
+    "recovery": "Also pinged on self-healed incidents (gluetun/dependent recovered).",
+    "activity": "Also pinged on non-fault changes (sites reloaded, endpoint changed).",
+    "all": "Pinged on everything, including per-loop checks (the firehose).",
+}
+
+
+def _log_notify_summary(config: Config, logger: Logger) -> None:
+    """Tell the operator exactly what they signed up for — including what stays silent."""
+    if not config.apprise_urls:
+        logger.info("Notifications: disabled (log-only). Set APPRISE_URLS to enable (see README).")
+        return
+    # Schemes only — the full URLs carry tokens and must never be logged.
+    schemes = sorted({u.split("://", 1)[0] for u in config.apprise_urls if "://" in u})
+    logger.info(
+        f"Notifications: ENABLED — {len(config.apprise_urls)} target(s) "
+        f"[{', '.join(schemes)}], level={config.notify_level}"
+    )
+    logger.info(f"  {_NOTIFY_LEVEL_BLURB.get(config.notify_level, '')}")
+    if config.notify_repeat_interval == 0:
+        logger.info(
+            "  Ongoing problems: announced once, then silent until they resolve "
+            "(NOTIFY_REPEAT_INTERVAL=0)."
+        )
+    else:
+        logger.info(
+            f"  Ongoing problems: reminded every {config.notify_repeat_interval} loop(s) "
+            "while unresolved (NOTIFY_REPEAT_INTERVAL)."
+        )
+    logger.info("  Resolve notices: on — you'll hear when a problem clears.")
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="gluetun-monitor",
@@ -173,13 +207,14 @@ def main(argv: list[str] | None = None) -> int:
 
     _install_signal_handlers(logger)
     _announce_banner(config, logger)
+    _log_notify_summary(config, logger)
 
     if config.errors:  # malformed env values — fatal; don't run with unparseable params
         for err in config.errors:
             logger.error(err)
         logger.error("Refusing to start due to invalid configuration")
         notifier.notify(NotifyEvent(
-            "ERROR", "gluetun-monitor refused to start",
+            "attention", "gluetun-monitor refused to start",
             "Invalid configuration: " + "; ".join(config.errors), key="refused-config",
         ))
         return 1
@@ -189,14 +224,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         logger.error(f"Failed to initialize Docker client: {exc}")
         notifier.notify(NotifyEvent(
-            "ERROR", "gluetun-monitor refused to start",
+            "attention", "gluetun-monitor refused to start",
             f"Failed to initialize the Docker client: {exc}", key="refused-docker",
         ))
         return 1
 
     if not check_prerequisites(client, config, logger):
         notifier.notify(NotifyEvent(
-            "ERROR", "gluetun-monitor refused to start",
+            "attention", "gluetun-monitor refused to start",
             "Prerequisite check failed — see the logs for the specific cause.", key="refused-prereq",
         ))
         return 1

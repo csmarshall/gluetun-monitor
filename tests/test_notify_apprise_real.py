@@ -56,11 +56,10 @@ def test_real_apprise_delivers_event_to_sink(sink: tuple[int, list[bytes]]) -> N
     port, received = sink
     notifier = AppriseNotifier(
         (f"json://127.0.0.1:{port}",),
-        min_level="INFO",
-        throttle_seconds=0,
+        level="all",
         logger=_log(io.StringIO()),
     )
-    notifier.notify(NotifyEvent("ERROR", "title-XYZ", "body-ABC", "k"))
+    notifier.notify(NotifyEvent("attention", "title-XYZ", "body-ABC", "k"))
 
     assert received, "real apprise did not POST to the localhost sink"
     body = received[0]
@@ -72,8 +71,7 @@ def test_real_apprise_test_method_delivers(sink: tuple[int, list[bytes]]) -> Non
     port, received = sink
     notifier = AppriseNotifier(
         (f"json://127.0.0.1:{port}",),
-        min_level="WARN",
-        throttle_seconds=0,
+        level="all",
         logger=_log(io.StringIO()),
     )
     assert notifier.test() is True
@@ -84,11 +82,10 @@ def test_real_apprise_rejects_bad_scheme_and_warns() -> None:
     stream = io.StringIO()
     notifier = AppriseNotifier(
         ("totally-not-a-scheme://nowhere",),
-        min_level="INFO",
-        throttle_seconds=0,
+        level="all",
         logger=_log(stream),
     )
     # No server got registered, so a send reports no success (swallowed); the
     # rejection was warned at build time.
-    notifier.notify(NotifyEvent("ERROR", "t", "b", "k"))
+    notifier.notify(NotifyEvent("attention", "t", "b", "k"))
     assert "rejected by apprise" in stream.getvalue()

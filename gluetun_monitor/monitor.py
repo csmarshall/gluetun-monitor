@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .alert_state import AlertState
 from .connectivity import probe_site
 from .dependents import (
     classify_interfaces,
@@ -89,6 +90,17 @@ class Monitor:
         # Opt-in external notifications (#22). Default = NullNotifier (no-op), so
         # nothing changes unless APPRISE_URLS is configured and a notifier injected.
         self.notifier = notifier if notifier is not None else NullNotifier()
+        # Events buffered during one loop; flushed as a single rollup per cycle
+        # (ADR-0011 — grouping is intrinsic, since our fast restarts can fire a
+        # burst of events within one loop).
+        self._pending: list[NotifyEvent] = []
+        # Edge-triggered active-alert lifecycle (ADR-0012). Persisted only when
+        # notifications are actually enabled (no stray sidecar for a log-only run).
+        self.alerts = AlertState(
+            config.notify_state_file if config.apprise_urls else None,
+            logger=logger,
+            repeat_interval=config.notify_repeat_interval,
+        )
         self._rng = rng if rng is not None else random.Random()
         # _probe_dependent runs across a ThreadPoolExecutor (_fan_out), and a
         # random.Random instance is not thread-safe — concurrent sample()/uniform()
@@ -108,6 +120,9 @@ class Monitor:
         # longer matches it — but we remember it from before the recreate and
         # keep checking it (ADR-0004: track across cycles). Pruned to existing.
         self._known_dependents: set[str] = set()
+        # The set managed last loop — to silently clear an alert when a dependent
+        # leaves (excluded or gone), rather than emit a false "resolved" (ADR-0012).
+        self._managed_dependents: set[str] = set()
         # Dedup so a missing explicitly-listed dependent warns once, not per loop.
         self._warned_missing: set[str] = set()
         # Dedup for the dangling-orphan warning (see _warn_dangling_orphans).
@@ -115,9 +130,26 @@ class Monitor:
         # Dedup for "can't validate DNS (no usable tool)" — re-armed if it later validates.
         self._warned_dns_unvalidated: set[str] = set()
 
-    def _notify(self, level: str, title: str, body: str, key: str) -> None:
-        """Push one event to the (opt-in) notifier. Best-effort; never raises."""
-        self.notifier.notify(NotifyEvent(level=level, title=title, body=body, key=key))
+    def _notify(self, tier: str, title: str, body: str, key: str) -> None:
+        """Buffer a one-shot point event for this loop's rollup (ADR-0011)."""
+        self._pending.append(NotifyEvent(tier=tier, title=title, body=body, key=key))
+
+    def _problem(self, key: str, tier: str, title: str, body: str) -> None:
+        """Report an ONGOING problem this loop; the lifecycle (ADR-0012) edge-triggers
+        the notification, repeats it per NOTIFY_REPEAT_INTERVAL, and resolves it.
+        """
+        self.alerts.report(key, tier, title, body)
+
+    def _forget(self, key: str) -> None:
+        """Drop a problem whose subject is no longer monitored (silent clear)."""
+        self.alerts.forget(key)
+
+    def _flush_notifications(self) -> None:
+        """Emit this loop's lifecycle events + point events as one rollup, then persist."""
+        events = self.alerts.events() + self._pending
+        self._pending = []
+        self.notifier.notify_batch(events)
+        self.alerts.save()
 
     # ----- gluetun root test (nodes 2-3) -----
 
@@ -150,10 +182,18 @@ class Monitor:
             if removed:
                 parts.append(f"removed {', '.join(removed)}")
             self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(sites)})")
+            self._notify(
+                "activity",
+                "sites.conf changed",
+                f"Test sites changed: {'; '.join(parts)} (now {len(sites)}).",
+                key="sites-changed",
+            )
             # A removed site keeps no live failure counter — a later re-add starts
-            # clean rather than resuming near the threshold.
+            # clean rather than resuming near the threshold — and any active advisory
+            # for it is silently cleared (you removed it; "resolved" would be a lie).
             for site in removed:
                 self.site_failures.discard(site)
+                self._forget(f"advisory:{site}")
             self._last_sites = current
 
         results = self._fan_out(
@@ -365,6 +405,11 @@ class Monitor:
     def run_dependent_phase(self, gluetun_id: str, sites: list[str]) -> None:
         """Probe every dependent and remediate those that fail (nodes 6-19)."""
         dependents = self._resolve_dependents()
+        # A dependent that left the managed set (excluded or gone) gets its active
+        # alert silently cleared — a "resolved" would imply it recovered (ADR-0012).
+        for gone in self._managed_dependents - set(dependents):
+            self._forget(f"dependent-unhealthy:{gone}")
+        self._managed_dependents = set(dependents)
         if not dependents:
             return
 
@@ -452,23 +497,38 @@ class Monitor:
             ):
                 self.dependent_failures.reset(dep)
                 self._notify(
-                    "WARN",
-                    f"dependent remediated: {dep}",
+                    "recovery",
+                    f"dependent recovered: {dep}",
                     f"{dep} was remediated ({reason}) and verified healthy.",
                     key=f"dependent-remediated:{dep}",
                 )
             else:
-                self._notify(
-                    "ERROR",
-                    f"dependent remediation FAILED: {dep}",
+                # An ongoing problem → the lifecycle (edge-triggered, repeat, resolve),
+                # not a per-loop point event.
+                self._problem(
+                    f"dependent-unhealthy:{dep}",
+                    "attention",
+                    f"dependent unhealthy: {dep}",
                     f"{dep} is still unhealthy after remediation ({reason}) — "
                     f"manual intervention may be required.",
-                    key=f"dependent-failed:{dep}",
                 )
 
     # ----- one full loop iteration (node 1 -> 22, minus the sleep) -----
 
     def run_once(self) -> None:
+        """Execute one monitoring cycle, then flush this loop's notification rollup.
+
+        The flush is in ``finally`` so every early return (gluetun down, recovery
+        failed, …) still emits the cycle's single digest (ADR-0011).
+        """
+        self._pending = []
+        self.alerts.begin_loop()
+        try:
+            self._run_once_body()
+        finally:
+            self._flush_notifications()
+
+    def _run_once_body(self) -> None:
         """Execute one monitoring cycle (no inter-loop sleep)."""
         self.log.check("Start")
         self.stats.record_loop()  # monitor-wide: loop count + accumulated runtime
@@ -525,20 +585,19 @@ class Monitor:
             return
         self.stats.record_gluetun_restart()  # monitor-wide count of actual restarts
         self._notify(
-            "WARN",
-            f"gluetun restarting ({self.config.gluetun_container})",
-            f"Connectivity failed for: {', '.join(breached)} — restarting "
-            f"{self.config.gluetun_container} and re-verifying.",
+            "all",
+            f"gluetun restart triggered ({self.config.gluetun_container})",
+            f"Connectivity failed for: {', '.join(breached)} — restarting and re-verifying.",
             key="gluetun-restart",
         )
         if not restart_gluetun(self.client, self.config, self.log, sleep=self._sleep):
             self.log.error("Recovery failed - manual intervention may be required")
-            self._notify(
-                "ERROR",
-                f"gluetun recovery FAILED ({self.config.gluetun_container})",
-                f"{self.config.gluetun_container} did not come back healthy after a restart — "
-                f"manual intervention may be required.",
-                key="gluetun-recovery-failed",
+            self._problem(
+                "gluetun-unrecovered",
+                "attention",
+                f"gluetun cannot recover ({self.config.gluetun_container})",
+                f"Was failing on {', '.join(breached)}; restarted but it did not come back "
+                f"healthy — manual intervention may be required.",
             )
             return
 
@@ -550,17 +609,23 @@ class Monitor:
             self.stats.record_restart_outcome(site, cleared=site not in still)
         if reverify_breached:
             self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
-            self._notify(
-                "ERROR",
-                f"gluetun still failing after restart ({self.config.gluetun_container})",
-                f"Connectivity still failing after restarting {self.config.gluetun_container}: "
+            self._problem(
+                "gluetun-unrecovered",
+                "attention",
+                f"gluetun cannot recover ({self.config.gluetun_container})",
+                f"Restarted {self.config.gluetun_container} but it's still failing: "
                 f"{', '.join(reverify_breached)} — manual intervention may be required.",
-                key="gluetun-restart-ineffective",
             )
             self.site_failures.reset_all()
             return
 
         self.log.info("Connectivity verified after restart")
+        self._notify(
+            "recovery",
+            f"gluetun recovered ({self.config.gluetun_container})",
+            f"Was failing on {', '.join(breached)}; restarted and connectivity is healthy again.",
+            key="gluetun-recovered",
+        )
         self.site_failures.reset_all()
         # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
         gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
@@ -568,7 +633,12 @@ class Monitor:
         self._save_stats()
 
     def _emit_advisory(self) -> None:
-        """Warn (deduped) when one site dominates recent gluetun restarts."""
+        """Surface a flaky-site advisory when one site dominates recent restarts.
+
+        Reported to the alert lifecycle every loop it holds (which edge-triggers the
+        notification + resolves it when it clears); the log line + stats count fire
+        once per episode (``_advised_site``).
+        """
         adv = self.stats.advisory(
             self.config.advisory_window,
             self.config.advisory_min_restarts,
@@ -577,8 +647,16 @@ class Monitor:
         if adv is None:
             self._advised_site = None
             return
+        self._problem(
+            f"advisory:{adv.site}",
+            "attention",
+            f"flaky site: {adv.site}",
+            f"{adv.site} caused {adv.site_restarts} of the last {adv.total_restarts} "
+            f"gluetun restarts over {format_window(adv.window_seconds)} — it may be flaky; "
+            f"consider reviewing or removing it from sites.conf.",
+        )
         if adv.site == self._advised_site:
-            return  # already warned about this site this episode
+            return  # log + stats once per episode (the notification is deduped by AlertState)
         self._advised_site = adv.site
         self.stats.record_advisory()
         self.log.warn(
@@ -586,14 +664,6 @@ class Monitor:
             f"{adv.total_restarts} gluetun restarts over the last "
             f"{format_window(adv.window_seconds)} — it may be flaky; consider "
             f"reviewing or removing it from sites.conf"
-        )
-        self._notify(
-            "WARN",
-            f"flaky site: {adv.site}",
-            f"{adv.site} caused {adv.site_restarts} of the last {adv.total_restarts} "
-            f"gluetun restarts over {format_window(adv.window_seconds)} — it may be flaky; "
-            f"consider reviewing or removing it from sites.conf.",
-            key=f"advisory:{adv.site}",
         )
 
     def _save_stats(self) -> None:

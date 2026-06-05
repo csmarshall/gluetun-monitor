@@ -28,15 +28,15 @@ ntfy/Discord/Telegram/email/Pushover/Gotify/webhook/… — all configured by UR
   `NullNotifier` (disabled), `AppriseNotifier` (real, apprise imported lazily), and
   a `FakeNotifier` in tests. The monitor fires `NotifyEvent`s; it never imports
   apprise directly.
-- **Event contract** (the stable surface): `gluetun-restart` (WARN),
-  `gluetun-recovery-failed` / `gluetun-restart-ineffective` (ERROR),
-  `dependent-remediated:<name>` (WARN) / `dependent-failed:<name>` (ERROR),
-  `advisory:<site>` (WARN), `refused-*` (ERROR). Filtered by `NOTIFY_MIN_LEVEL`
-  (default WARN) and throttled per event key by `NOTIFY_THROTTLE` (default 1h) so a
-  persistent fault notifies once, not every loop — mirroring the in-log dedup.
-- **Best-effort, non-blocking (Tenet 7):** every send is wrapped, level-filtered,
-  throttled, and on any failure swallowed + logged at DEBUG. A notification problem
-  can only ever degrade notifications — it can never touch the monitoring loop or
+- **Event contract** — the events surfaced (gluetun restart/recovery, dependent
+  remediation, the flaky-site advisory, refusal to start). How they're *classified*
+  (the `NOTIFY_LEVEL` tier dial), *grouped* (per-loop rollup), and *re-notified*
+  (edge-trigger / repeat / resolve) is decided in **ADR-0011** and **ADR-0012** —
+  this ADR's original severity-floor (`NOTIFY_MIN_LEVEL`) and per-event throttle were
+  superseded there before release.
+- **Best-effort, non-blocking (Tenet 7):** every send is wrapped, tier-filtered,
+  and on any failure swallowed + logged at DEBUG. A notification problem can only
+  ever degrade notifications — it can never touch the monitoring loop or
   restart/remediation behavior. Apprise URLs carry tokens and are never logged.
   Apprise's `notify()` is synchronous, so sends run on a daemon thread bounded by
   `NOTIFY_TIMEOUT` (default 10s): a slow or hung backend can't stall the watchdog.

@@ -1,19 +1,25 @@
-"""Opt-in external notification layer (issue #22, ADR-0010).
+"""Opt-in external notification layer (issue #22, ADR-0010 + ADR-0011).
 
 By default (``APPRISE_URLS`` unset) this is a :class:`NullNotifier`: zero behavior
-change — the monitor stays a log-only tool. When configured, significant and
-infrequent events — gluetun restart, recovery failure, dependent remediation, the
-flaky-site advisory, and refusal to start — are pushed out-of-band via
-`Apprise <https://github.com/caronc/apprise>`_ (100+ backends, configured by URL).
+change — the monitor stays a log-only tool. When configured, events are pushed
+out-of-band via `Apprise <https://github.com/caronc/apprise>`_ (100+ backends).
 
-Tenet 7 (best-effort, non-blocking): a notification failure must **never** affect
-monitoring. Every send is wrapped and swallowed (logged at DEBUG), filtered by a
-minimum severity, and throttled per event key so a persistent fault can't spam.
-Apprise URLs carry secrets, so they are never logged.
+Two design decisions live here (ADR-0011):
 
-The library is exercised for real in CI (a localhost webhook sink), which is what
-lets Dependabot auto-merge apprise patch/minor — the same bar docker-py clears via
-the real-daemon test (#24).
+* **One dial, keyed on actionability** — ``NOTIFY_LEVEL`` is a cumulative tier
+  floor, default ``action``: ``action`` (you must act) → ``recovery`` (self-healed
+  incidents) → ``activity`` (non-fault changes) → ``all`` (firehose).
+* **Rollup is the substrate** — the notifier collects a loop's events, filters by
+  the tier floor, and emits **one** digest notification (colored by the worst tier
+  present). A single event is sent as itself; the one-shot CLI paths are a batch of
+  one. Grouping is how it works, not a toggle.
+
+Re-notification of ongoing problems (edge-trigger, repeat, resolve) lives in
+:class:`~gluetun_monitor.alert_state.AlertState` (ADR-0012), upstream of here.
+
+Tenet 7 (best-effort, non-blocking): every send is filtered by tier, run off the
+loop on a bounded daemon thread (apprise's ``notify`` is synchronous), and on any
+failure swallowed + logged at DEBUG. Apprise URLs carry secrets and are never logged.
 """
 
 from __future__ import annotations
@@ -22,41 +28,35 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .config import Config
     from .logging_setup import Logger
 
-# Severity aligned with stdlib logging so NOTIFY_MIN_LEVEL reuses the log names.
-_LEVEL_BY_NAME: dict[str, int] = {
-    "DEBUG": logging.DEBUG,
-    "INFO": logging.INFO,
-    "WARN": logging.WARNING,
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-}
-
-# Our level names → Apprise notify-type strings (apprise's NotifyType is str-based,
-# so the value is accepted directly; the real-apprise CI test confirms this).
-_APPRISE_TYPE_BY_LEVEL = {"INFO": "info", "WARN": "warning", "WARNING": "warning", "ERROR": "failure"}
+# Actionability tiers, quietest floor → loudest. A cumulative NOTIFY_LEVEL of rank
+# R sends every event whose tier rank is <= R.
+TIERS = ("attention", "recovery", "activity", "all")
+_TIER_RANK = {name: i for i, name in enumerate(TIERS)}
+# Tier → Apprise notify-type (color/icon). Strings are accepted directly (apprise's
+# NotifyType is str-based; the real-apprise CI test confirms this).
+_TIER_NOTIFY_TYPE = {"attention": "failure", "recovery": "success", "activity": "info", "all": "info"}
 
 
-def level_value(name: str) -> int:
-    """Map a level name (INFO/WARN/ERROR) to its numeric severity (default WARN)."""
-    return _LEVEL_BY_NAME.get(name.upper(), logging.WARNING)
+def tier_rank(name: str) -> int:
+    """Rank of a tier name (0 = action … 3 = all); unknown → 0 (the loud floor)."""
+    return _TIER_RANK.get(name.lower(), 0)
 
 
 @dataclass(frozen=True, slots=True)
 class NotifyEvent:
     """One notifiable occurrence.
 
-    ``key`` is the throttle/dedup key: at most one send per key per throttle window
-    (mirrors the in-log dedup so a persistent fault notifies once, not every loop).
+    ``tier`` selects the actionability rung (see ``TIERS``). ``key`` is the stable
+    identity of the thing being reported (used by the lifecycle, ADR-0012).
     """
 
-    level: str  # "INFO" | "WARN" | "ERROR"
+    tier: str
     title: str
     body: str
     key: str
@@ -65,8 +65,12 @@ class NotifyEvent:
 class Notifier(Protocol):
     """Sink for :class:`NotifyEvent`. Implementations must never raise."""
 
+    def notify_batch(self, events: list[NotifyEvent]) -> None:
+        """Filter a loop's events by tier and emit one rollup."""
+        ...
+
     def notify(self, event: NotifyEvent) -> None:
-        """Best-effort send of one event."""
+        """Send a single event (a batch of one) — for one-shot paths."""
         ...
 
     def test(self) -> bool:
@@ -76,6 +80,10 @@ class Notifier(Protocol):
 
 class NullNotifier:
     """The default when ``APPRISE_URLS`` is unset — notifications disabled."""
+
+    def notify_batch(self, events: list[NotifyEvent]) -> None:
+        """No-op."""
+        return
 
     def notify(self, event: NotifyEvent) -> None:
         """No-op."""
@@ -87,31 +95,27 @@ class NullNotifier:
 
 
 class AppriseNotifier:
-    """:class:`Notifier` over Apprise: min-level filter + per-key throttle, fully
-    swallowed.
+    """:class:`Notifier` over Apprise: tier filter + per-loop rollup, fully swallowed.
 
-    ``apprise_factory`` is injectable so the wrapper logic (filter/throttle/swallow)
-    is unit-testable with no library and no network; production passes ``None`` and
-    the real ``apprise`` is imported lazily (only when notifications are enabled).
+    Re-notification of ongoing problems (edge-trigger, repeat, resolve) lives in
+    :class:`~gluetun_monitor.alert_state.AlertState`, so this stays a dumb sink:
+    filter by tier, group into one digest, send. ``apprise_factory`` is injectable so
+    the filter/rollup logic is unit-testable with no library and no network;
+    production passes ``None`` and the real ``apprise`` is imported lazily.
     """
 
     def __init__(
         self,
         urls: tuple[str, ...],
         *,
-        min_level: str,
-        throttle_seconds: int,
+        level: str,
         logger: Logger,
         timeout_seconds: int = 10,
-        now: Callable[[], float] = monotonic,
         apprise_factory: Callable[[tuple[str, ...]], Any] | None = None,
     ) -> None:
-        self._min = level_value(min_level)
-        self._throttle = throttle_seconds
+        self._level = tier_rank(level)
         self._timeout = timeout_seconds
         self._log = logger
-        self._now = now
-        self._last_sent: dict[str, float] = {}
         self._apprise = self._build(urls, apprise_factory)
 
     def _build(self, urls: tuple[str, ...], factory: Callable[[tuple[str, ...]], Any] | None) -> Any:
@@ -139,27 +143,30 @@ class AppriseNotifier:
         return ap
 
     def notify(self, event: NotifyEvent) -> None:
-        """Send ``event`` if it clears the min level and isn't throttled. Never raises."""
+        """Send a single event (a batch of one)."""
+        self.notify_batch([event])
+
+    def notify_batch(self, events: list[NotifyEvent]) -> None:
+        """Filter ``events`` by the tier floor, then emit one rollup. Never raises."""
         try:
-            if self._apprise is None:
+            if self._apprise is None or not events:
                 return
-            if level_value(event.level) < self._min:
+            survivors = [e for e in events if tier_rank(e.tier) <= self._level]
+            for e in events:
+                if tier_rank(e.tier) > self._level:
+                    self._log.debug(f"notify: {e.key} (tier={e.tier}) below level — not sent")
+            if not survivors:
                 return
-            if self._throttled(event.key):
-                self._log.debug(f"notify throttled: {event.key}")
-                return
-            ntype = _APPRISE_TYPE_BY_LEVEL.get(event.level.upper(), "warning")
-            if self._dispatch(lambda: self._apprise.notify(
-                title=event.title, body=event.body, notify_type=ntype
-            )):
-                self._last_sent[event.key] = self._now()
+            title, body, ntype = self._compose(survivors)
+            if self._dispatch(lambda: self._apprise.notify(title=title, body=body, notify_type=ntype)):
+                self._log.debug(f"notify: pushed {len(survivors)} event(s) as 1 digest")
             else:
-                self._log.debug(f"notify send reported no success: {event.key}")
+                self._log.debug("notify digest reported no success")
         except Exception as exc:  # Tenet 7: a notify failure never touches the loop
             self._log.debug(f"notify error (swallowed): {exc}")
 
     def test(self) -> bool:
-        """Send a test notification (bypasses level/throttle); True if delivered."""
+        """Send a test notification (bypasses the tier filter); True if delivered."""
         if self._apprise is None:
             return False
         return self._dispatch(lambda: self._apprise.notify(
@@ -167,6 +174,16 @@ class AppriseNotifier:
             body="If you can read this, gluetun-monitor notifications are working.",
             notify_type="info",
         ))
+
+    def _compose(self, events: list[NotifyEvent]) -> tuple[str, str, str]:
+        """Render survivors into one (title, body, notify_type). Worst tier wins the type."""
+        ordered = sorted(events, key=lambda e: tier_rank(e.tier))  # action first
+        ntype = _TIER_NOTIFY_TYPE.get(ordered[0].tier, "info")
+        if len(ordered) == 1:
+            return ordered[0].title, ordered[0].body, ntype
+        title = f"gluetun-monitor — {len(ordered)} events this cycle"
+        body = "\n".join(f"• [{e.tier}] {e.title}: {e.body}" for e in ordered)
+        return title, body, ntype
 
     def _dispatch(self, send: Callable[[], Any]) -> bool:
         """Run ``send`` on a daemon thread and wait at most ``timeout_seconds``.
@@ -194,12 +211,6 @@ class AppriseNotifier:
             return False
         return result[0] if result else False
 
-    def _throttled(self, key: str) -> bool:
-        if self._throttle <= 0:
-            return False
-        last = self._last_sent.get(key)
-        return last is not None and (self._now() - last) < self._throttle
-
 
 def build_notifier(config: Config, logger: Logger) -> Notifier:
     """A :class:`NullNotifier` when ``APPRISE_URLS`` is unset; an
@@ -209,8 +220,7 @@ def build_notifier(config: Config, logger: Logger) -> Notifier:
         return NullNotifier()
     return AppriseNotifier(
         config.apprise_urls,
-        min_level=config.notify_min_level,
-        throttle_seconds=config.notify_throttle,
+        level=config.notify_level,
         timeout_seconds=config.notify_timeout,
         logger=logger,
     )
