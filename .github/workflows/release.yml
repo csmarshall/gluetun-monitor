@@ -70,7 +70,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
+      # The GitHub Release (with conventional-commit notes) is created by
+      # release-please when the Release PR is merged (ADR-0013); this workflow only
+      # builds + publishes the image on the resulting tag. A manual `vX.Y.Z` tag still
+      # builds the image here (just without an auto-created Release page).
