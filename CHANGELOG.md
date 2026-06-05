@@ -8,14 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Opt-in notification layer (#22, ADR-0010).** Set `APPRISE_URLS` to push
-  significant events out-of-band via [Apprise](https://github.com/caronc/apprise)
-  (ntfy/Discord/Telegram/email/webhook/… — 100+ backends): gluetun restart, recovery
-  failure / restart-ineffective, dependent remediation success/failure, the
-  flaky-site advisory, and refusal to start. Filtered by `NOTIFY_MIN_LEVEL`
-  (default WARN), throttled per event by `NOTIFY_THROTTLE` (default 1h), and bounded
-  off the loop by `NOTIFY_TIMEOUT` (default 10s). Unset = disabled (drop-in, no
-  behavior change). `gluetun-monitor --notify-test` verifies your configuration.
+- **Opt-in notification layer (#22, ADR-0010/0011/0012).** Set `APPRISE_URLS` to push
+  events out-of-band via [Apprise](https://github.com/caronc/apprise) (100+ backends:
+  ntfy/Discord/Telegram/email/webhook/…). Unset = disabled (drop-in, no behavior
+  change). `gluetun-monitor --notify-test` verifies your config.
+  - **One dial, `NOTIFY_LEVEL`** (default `attention`), cumulative and keyed on
+    actionability: `attention` (only when you must act — failed recovery/remediation,
+    refused start, flaky-site advisory) → `recovery` (self-healed incidents) →
+    `activity` (non-fault changes) → `all` (firehose).
+  - **Per-loop rollup:** a cycle's events are grouped into one digest, colored by the
+    most-urgent tier — no storms from a fast restarter.
+  - **Edge-triggered lifecycle:** an ongoing problem announces once, reminds every
+    `NOTIFY_REPEAT_INTERVAL` loops (default `0` = once), and emits a resolve when it
+    clears (or clears silently if its subject was removed). State persists to
+    `NOTIFY_STATE_FILE` across monitor restarts.
+  - Best-effort (Tenet 7): sent off the loop bounded by `NOTIFY_TIMEOUT`, failures
+    swallowed; URLs never logged; startup logs exactly what you signed up for.
 
 ### CI / tooling
 - Pinned dev toolchain in `requirements-dev.txt` (ruff/mypy/pytest/pytest-cov),

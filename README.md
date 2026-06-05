@@ -194,8 +194,9 @@ docker compose up -d
 | `LOG_FILE` | `/logs/gluetun-monitor.log` | Path to the log file inside the `/logs` mount. Logs always go to stdout (`docker logs`) too; if this path isn't writable the monitor degrades to stdout-only rather than failing |
 | `TZ` | `UTC` | Timezone for log timestamps |
 | `APPRISE_URLS` | *(unset → off)* | Comma-separated [Apprise](https://github.com/caronc/apprise) URLs to push events to (ntfy/Discord/Telegram/email/webhook/…). Unset = notifications disabled. See [Notifications](#notifications) |
-| `NOTIFY_MIN_LEVEL` | `WARN` | Minimum severity to push: `INFO`, `WARN`, or `ERROR`. See [Notifications](#notifications) |
-| `NOTIFY_THROTTLE` | `3600` | Per-event throttle (seconds): at most one notification per event key per window; `0` disables throttling. See [Notifications](#notifications) |
+| `NOTIFY_LEVEL` | `attention` | Cumulative scope dial: `attention` (only when you must act) → `recovery` (self-healed incidents) → `activity` (non-fault changes) → `all` (firehose). See [Notifications](#notifications) |
+| `NOTIFY_REPEAT_INTERVAL` | `0` | Re-notify cadence for an *ongoing* problem, in **loops**. `0` = announce once, then silent until it resolves; `N` = remind every `N` loops. Alerts are edge-triggered. See [Notifications](#notifications) |
+| `NOTIFY_STATE_FILE` | `/logs/notify-state.json` | Where the active-alert lifecycle persists (so a monitor restart doesn't re-spam or miss a resolve). Best-effort. See [Notifications](#notifications) |
 | `NOTIFY_TIMEOUT` | `10` | Max seconds to wait for a notification send before carrying on (sends run off the loop, so a slow backend can't stall the watchdog). See [Notifications](#notifications) |
 
 ### Configuration is validated — sane defaults, but bad config is fatal
@@ -547,36 +548,54 @@ are approximate.
 
 ## Notifications
 
-By default the monitor is **log-only**. Set `APPRISE_URLS` to also push significant
-events out-of-band via [Apprise](https://github.com/caronc/apprise) — one library,
-100+ backends (ntfy, Discord, Telegram, Slack, email, Pushover, Gotify, generic
-webhook, …), all configured by URL. Unset = disabled, so this is fully opt-in.
+By default the monitor is **log-only**. Set `APPRISE_URLS` to also push events
+out-of-band via [Apprise](https://github.com/caronc/apprise) — one library, 100+
+backends (ntfy, Discord, Telegram, Slack, email, Pushover, Gotify, generic webhook,
+…), all configured by URL. Unset = disabled, so this is fully opt-in.
 
 ```yaml
     environment:
-      # One or more comma-separated Apprise URLs. Examples:
+      # One or more comma-separated Apprise URLs:
       - APPRISE_URLS=ntfy://ntfy.example.com/gluetun
       # - APPRISE_URLS=ntfy://host/topic,discord://webhook_id/webhook_token
-      - NOTIFY_MIN_LEVEL=WARN   # INFO | WARN | ERROR (default WARN)
+      - NOTIFY_LEVEL=attention   # attention | recovery | activity | all (default attention)
 ```
 
-**What gets pushed** (each at the noted severity; below `NOTIFY_MIN_LEVEL` is
-suppressed):
+### One dial: `NOTIFY_LEVEL`
 
-| Event | Level |
-|-------|-------|
-| gluetun restart triggered | WARN |
-| gluetun **recovery failed** / still failing after restart (can't come up) | ERROR |
-| dependent remediated (restart/recreate) | WARN |
-| dependent **remediation failed** | ERROR |
-| **flaky-site advisory** (one site keeps causing restarts) | WARN |
-| refused to start (bad config / Docker unreachable / gluetun missing) | ERROR |
+The scope is a single cumulative dial keyed on **who has to act**, not on how scary a
+line looks. Each level adds its own row to everything above it (ADR-0011):
 
-Notifications are **best-effort and never affect monitoring** (Tenet 7): a send is
-filtered by `NOTIFY_MIN_LEVEL`, throttled per event by `NOTIFY_THROTTLE` (so a
-persistent fault notifies once, not every loop), run off the loop bounded by
-`NOTIFY_TIMEOUT`, and any failure is swallowed (logged at `DEBUG`). Apprise URLs
-carry tokens and are never logged.
+| `NOTIFY_LEVEL` | You get | Events |
+|---|---|---|
+| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **flaky-site advisory** |
+| `recovery` | + self-healed incidents | gluetun recovered, dependent remediated |
+| `activity` | + non-fault changes | `sites.conf` reloaded |
+| `all` | + the firehose | per-loop checks, restart play-by-play |
+
+So enabling notifications gets you **`attention` only** — the monitor stays silent
+through every self-heal and pings you when it's actually stuck. Raise the dial to
+hear more.
+
+### No notification storms
+
+Alerts are **edge-triggered**: an ongoing problem is announced **once, when it
+starts** — not every 30-second loop it persists. `NOTIFY_REPEAT_INTERVAL` (in
+**loops**, default `0`) controls reminders: `0` = announce once then stay silent
+until it resolves; `N` = remind every `N` loops. When a problem **clears** you get a
+resolve note (so you hear it's back); when its subject is **removed** (site dropped,
+dependent excluded) it clears silently. This state persists to `NOTIFY_STATE_FILE`,
+so restarting the monitor neither re-spams still-broken problems nor misses a
+resolve (ADR-0012).
+
+### Grouped, best-effort
+
+A loop's surviving events are **rolled up into one digest** (so one cycle = at most
+one notification), colored by the most-urgent tier present. Sending is best-effort
+and **never affects monitoring** (Tenet 7): run off the loop bounded by
+`NOTIFY_TIMEOUT`, any failure swallowed (logged at `DEBUG`). Apprise URLs carry
+tokens and are **never logged** — and at startup the log states exactly what you
+signed up for, including what stays silent.
 
 Verify your setup without waiting for a real event:
 
@@ -584,8 +603,9 @@ Verify your setup without waiting for a real event:
 docker exec gluetun-monitor gluetun-monitor --notify-test
 ```
 
-See [ADR-0010](docs/adr/0010-notification-layer.md) for the design and the full
-[Apprise URL list](https://github.com/caronc/apprise/wiki) for backends.
+See [ADR-0011](docs/adr/0011-notification-tiers-and-rollup.md) (the dial + rollup) and
+[ADR-0012](docs/adr/0012-alert-lifecycle.md) (the lifecycle) for the design, and the
+full [Apprise URL list](https://github.com/caronc/apprise/wiki) for backends.
 
 ## Docker Compose Example
 

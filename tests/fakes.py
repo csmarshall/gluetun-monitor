@@ -20,11 +20,16 @@ class FakeNotifier:
     """Records every NotifyEvent so tests can assert what was pushed (no network)."""
 
     def __init__(self) -> None:
-        self.events: list[NotifyEvent] = []
+        self.events: list[NotifyEvent] = []  # flattened across batches
+        self.batches: list[list[NotifyEvent]] = []  # one entry per flush (rollup)
         self.test_result = True
 
+    def notify_batch(self, events: list[NotifyEvent]) -> None:
+        self.events.extend(events)
+        self.batches.append(list(events))
+
     def notify(self, event: NotifyEvent) -> None:
-        self.events.append(event)
+        self.notify_batch([event])
 
     def test(self) -> bool:
         return self.test_result

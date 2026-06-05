@@ -1,10 +1,9 @@
-"""The opt-in notification layer (#22, ADR-0010).
+"""The notification sink (#22, ADR-0010 + ADR-0011).
 
-The wrapper logic — min-level filter, per-key throttle, and the Tenet-7 swallow —
-is tested with a fake Apprise object (no library calls, no network). The real
-library is exercised separately in ``test_notify_apprise_real.py`` (the bar that
-lets apprise auto-merge). The monitor wiring (which events fire) is asserted with
-``FakeNotifier`` against ``FakeDockerClient``.
+The tier filter, the per-loop rollup, and the Tenet-7 swallow are tested with a fake
+Apprise object (no library, no network). Re-notification of ongoing problems lives in
+``AlertState`` (see ``test_alert_state.py``). The real library is exercised in
+``test_notify_apprise_real.py``; the monitor wiring in ``test_monitor.py``.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from gluetun_monitor.notify import (
     NotifyEvent,
     NullNotifier,
     build_notifier,
-    level_value,
+    tier_rank,
 )
 
 
@@ -31,7 +30,7 @@ class _FakeApprise:
     """Stand-in for apprise.Apprise — records sends; can fail on demand."""
 
     def __init__(self) -> None:
-        self.sent: list[tuple[str, str, str]] = []
+        self.sent: list[tuple[str, str, str]] = []  # (title, body, notify_type)
         self.raise_on_notify = False
         self.return_value = True
 
@@ -42,94 +41,95 @@ class _FakeApprise:
         return self.return_value
 
 
-class _Clock:
-    def __init__(self) -> None:
-        self.t = 1000.0
-
-    def __call__(self) -> float:
-        return self.t
-
-    def advance(self, dt: float) -> None:
-        self.t += dt
+def _notifier(fake: _FakeApprise, **kw: Any) -> AppriseNotifier:
+    kw.setdefault("level", "attention")
+    return AppriseNotifier(("memory://",), logger=_log(), apprise_factory=lambda _urls: fake, **kw)
 
 
-def _notifier(fake: _FakeApprise, clock: _Clock, **kw: Any) -> AppriseNotifier:
-    kw.setdefault("min_level", "WARN")
-    kw.setdefault("throttle_seconds", 100)
-    return AppriseNotifier(
-        ("memory://",), logger=_log(), now=clock, apprise_factory=lambda _urls: fake, **kw
-    )
+def _ev(tier: str, key: str = "k") -> NotifyEvent:
+    return NotifyEvent(tier=tier, title=f"{tier}-title", body=f"{tier}-body", key=key)
 
 
-def test_level_value_maps_names() -> None:
-    assert level_value("INFO") < level_value("WARN") < level_value("ERROR")
-    assert level_value("warning") == level_value("WARN")
-    assert level_value("bogus") == level_value("WARN")  # unknown → WARN default
+def test_tier_rank_orders_quiet_floor_to_firehose() -> None:
+    assert tier_rank("attention") < tier_rank("recovery") < tier_rank("activity") < tier_rank("all")
+    assert tier_rank("ATTENTION") == tier_rank("attention")
+    assert tier_rank("bogus") == tier_rank("attention")  # unknown → loud floor
 
 
 def test_null_notifier_is_noop() -> None:
     n = NullNotifier()
-    n.notify(NotifyEvent("ERROR", "t", "b", "k"))  # must not raise
+    n.notify(_ev("attention"))
+    n.notify_batch([_ev("attention"), _ev("recovery")])
     assert n.test() is False
 
 
-def test_min_level_filters_below_threshold() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    n = _notifier(fake, clock, min_level="WARN")
-    n.notify(NotifyEvent("INFO", "t", "b", "k1"))  # below WARN → dropped
+def test_tier_floor_filters_deeper_tiers() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="attention")
+    n.notify(_ev("recovery", "r"))  # deeper than attention → dropped
     assert fake.sent == []
-    n.notify(NotifyEvent("ERROR", "t", "b", "k2"))  # at/above → sent
+    n.notify(_ev("attention", "a"))  # at the floor → sent
     assert len(fake.sent) == 1
-    assert fake.sent[0][2] == "failure"  # ERROR → apprise "failure"
+    assert fake.sent[0][2] == "failure"  # attention → apprise "failure"
 
 
-def test_throttle_dedups_same_key_until_window_passes() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    n = _notifier(fake, clock, throttle_seconds=100)
-    n.notify(NotifyEvent("WARN", "t", "b", "same"))
-    n.notify(NotifyEvent("WARN", "t", "b", "same"))  # within window → throttled
+def test_higher_level_includes_lower_tiers() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="activity")
+    n.notify(_ev("recovery", "r"))  # within activity floor
     assert len(fake.sent) == 1
-    clock.advance(101)
-    n.notify(NotifyEvent("WARN", "t", "b", "same"))  # window passed → sent again
-    assert len(fake.sent) == 2
+    assert fake.sent[0][2] == "success"  # recovery → apprise "success"
 
 
-def test_throttle_is_per_key() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    n = _notifier(fake, clock, throttle_seconds=100)
-    n.notify(NotifyEvent("WARN", "t", "b", "a"))
-    n.notify(NotifyEvent("WARN", "t", "b", "b"))  # different key → not throttled
-    assert len(fake.sent) == 2
+def test_rollup_groups_a_batch_into_one_send() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="all")
+    n.notify_batch([_ev("attention", "a"), _ev("recovery", "r"), _ev("activity", "c")])
+    assert len(fake.sent) == 1  # one digest, not three
+    title, body, ntype = fake.sent[0]
+    assert "3 events" in title
+    assert "attention-body" in body and "recovery-body" in body and "activity-body" in body
+    assert ntype == "failure"  # worst tier present (attention) sets the color
 
 
-def test_throttle_zero_disables_throttling() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    n = _notifier(fake, clock, throttle_seconds=0)
-    for _ in range(3):
-        n.notify(NotifyEvent("WARN", "t", "b", "same"))
-    assert len(fake.sent) == 3
+def test_rollup_only_includes_surviving_tiers() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="recovery")
+    # attention + recovery survive; activity is below the floor and is filtered out.
+    n.notify_batch([_ev("attention", "a"), _ev("recovery", "r"), _ev("activity", "c")])
+    title, body, _ = fake.sent[0]
+    assert "2 events" in title
+    assert "activity-body" not in body
+
+
+def test_single_survivor_sends_as_itself_not_a_digest() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="recovery")
+    n.notify_batch([_ev("recovery", "r"), _ev("activity", "c")])  # only recovery survives
+    title, body, _ = fake.sent[0]
+    assert title == "recovery-title"  # not the "N events" digest framing
+    assert body == "recovery-body"
+
+
+def test_empty_or_all_filtered_batch_sends_nothing() -> None:
+    fake = _FakeApprise()
+    n = _notifier(fake, level="attention")
+    n.notify_batch([])  # nothing
+    n.notify_batch([_ev("all", "x"), _ev("activity", "y")])  # all below floor
+    assert fake.sent == []
 
 
 def test_send_exception_is_swallowed() -> None:
-    fake, clock = _FakeApprise(), _Clock()
+    fake = _FakeApprise()
     fake.raise_on_notify = True
-    n = _notifier(fake, clock)
-    n.notify(NotifyEvent("ERROR", "t", "b", "k"))  # must not raise (Tenet 7)
+    n = _notifier(fake)
+    n.notify(_ev("attention"))  # must not raise (Tenet 7)
     assert fake.sent == []
 
 
-def test_failed_send_is_not_recorded_so_it_retries() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    fake.return_value = False  # apprise reports no success
-    n = _notifier(fake, clock, throttle_seconds=100)
-    n.notify(NotifyEvent("WARN", "t", "b", "k"))
-    n.notify(NotifyEvent("WARN", "t", "b", "k"))  # not throttled (never recorded a success)
-    assert len(fake.sent) == 2
-
-
 def test_test_method_sends_and_reports() -> None:
-    fake, clock = _FakeApprise(), _Clock()
-    n = _notifier(fake, clock)
+    fake = _FakeApprise()
+    n = _notifier(fake)
     assert n.test() is True
     assert fake.sent and fake.sent[0][2] == "info"
 
@@ -139,22 +139,22 @@ def test_build_notifier_null_without_urls() -> None:
 
 
 def test_build_notifier_apprise_with_urls() -> None:
-    cfg = Config(apprise_urls=("json://localhost",), notify_throttle=0)
+    cfg = Config(apprise_urls=("json://localhost",))
     assert isinstance(build_notifier(cfg, _log()), AppriseNotifier)
 
 
 def test_config_parses_notify_env(monkeypatch: Any) -> None:
     monkeypatch.setenv("APPRISE_URLS", " ntfy://h/t , , discord://x ")
-    monkeypatch.setenv("NOTIFY_MIN_LEVEL", "error")
-    monkeypatch.setenv("NOTIFY_THROTTLE", "60")
+    monkeypatch.setenv("NOTIFY_LEVEL", "Recovery")
+    monkeypatch.setenv("NOTIFY_REPEAT_INTERVAL", "20")
     cfg = Config.from_env()
     assert cfg.apprise_urls == ("ntfy://h/t", "discord://x")  # trimmed, blanks dropped
-    assert cfg.notify_min_level == "ERROR"
-    assert cfg.notify_throttle == 60
+    assert cfg.notify_level == "recovery"
+    assert cfg.notify_repeat_interval == 20
     assert cfg.errors == ()
 
 
-def test_config_rejects_bad_notify_min_level(monkeypatch: Any) -> None:
-    monkeypatch.setenv("NOTIFY_MIN_LEVEL", "LOUD")
+def test_config_rejects_bad_notify_level(monkeypatch: Any) -> None:
+    monkeypatch.setenv("NOTIFY_LEVEL", "loud")
     cfg = Config.from_env()
-    assert any("NOTIFY_MIN_LEVEL" in e for e in cfg.errors)
+    assert any("NOTIFY_LEVEL" in e for e in cfg.errors)

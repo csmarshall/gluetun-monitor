@@ -13,6 +13,9 @@ from dataclasses import dataclass
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARN", "WARNING", "ERROR"}
+# Notification tiers (ADR-0011), cumulative from the quiet floor: action ⊂ recovery
+# ⊂ activity ⊂ all.
+_VALID_NOTIFY_LEVELS = {"attention", "recovery", "activity", "all"}
 
 
 def _env_int(
@@ -157,10 +160,19 @@ class Config:
     # Comma-separated Apprise URLs (ntfy/Discord/Telegram/email/webhook/…).
     # Unset/empty = notifications disabled = today's log-only behavior (drop-in).
     apprise_urls: tuple[str, ...] = ()
-    # Minimum severity to push (INFO/WARN/ERROR); default WARN.
-    notify_min_level: str = "WARN"
-    # Per-event-key throttle in seconds (one send per key per window); 0 = no throttle.
-    notify_throttle: int = 3600
+    # Notification scope (ADR-0011), cumulative: attention (default — only when the
+    # operator's attention is needed) ⊂ recovery (self-healed incidents) ⊂ activity
+    # (non-fault changes) ⊂ all (firehose). The one notification "dial"; rollup/digest
+    # is intrinsic, not a knob.
+    notify_level: str = "attention"
+    # Re-notify cadence for an ONGOING problem, measured in monitor loops (ADR-0012).
+    # 0 = announce once when it starts, then silence until it resolves; N>0 = remind
+    # every N loops while it persists. Alerts are edge-triggered, so a fault that lasts
+    # an hour is one notification, not one per loop.
+    notify_repeat_interval: int = 0
+    # Where the active-alert lifecycle state persists (ADR-0012), so a restart of the
+    # monitor neither re-spams still-broken problems nor misses a resolve. Best-effort.
+    notify_state_file: str = "/logs/notify-state.json"
     # Max seconds to wait for a notification send before carrying on (it runs off the
     # monitoring loop, so a slow/hung backend can't stall the watchdog). Tenet 7.
     notify_timeout: int = 10
@@ -195,11 +207,11 @@ class Config:
             errors.append(
                 f"Invalid LOG_LEVEL={log_level!r}: expected one of {sorted(_VALID_LOG_LEVELS)}"
             )
-        notify_min_level = os.environ.get("NOTIFY_MIN_LEVEL", "WARN").upper()
-        if notify_min_level not in _VALID_LOG_LEVELS:
+        notify_level = os.environ.get("NOTIFY_LEVEL", "attention").lower()
+        if notify_level not in _VALID_NOTIFY_LEVELS:
             errors.append(
-                f"Invalid NOTIFY_MIN_LEVEL={notify_min_level!r}: "
-                f"expected one of {sorted(_VALID_LOG_LEVELS)}"
+                f"Invalid NOTIFY_LEVEL={notify_level!r}: "
+                f"expected one of {sorted(_VALID_NOTIFY_LEVELS)}"
             )
         return cls(
             config_file=os.environ.get("CONFIG_FILE", "/config/sites.conf"),
@@ -238,8 +250,9 @@ class Config:
             apprise_urls=tuple(
                 u.strip() for u in os.environ.get("APPRISE_URLS", "").split(",") if u.strip()
             ),
-            notify_min_level=notify_min_level,
-            notify_throttle=_env_int("NOTIFY_THROTTLE", 3600, errors, minimum=0),
+            notify_level=notify_level,
+            notify_repeat_interval=_env_int("NOTIFY_REPEAT_INTERVAL", 0, errors, minimum=0),
+            notify_state_file=os.environ.get("NOTIFY_STATE_FILE", "/logs/notify-state.json"),
             notify_timeout=_env_int("NOTIFY_TIMEOUT", 10, errors, minimum=1),
             errors=tuple(errors),
         )

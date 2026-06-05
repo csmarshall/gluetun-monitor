@@ -39,3 +39,5 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0008](0008-persistent-site-stats-and-advisory.md) | Persistent per-site stats + a flaky-site advisory (keep restart-first; record + advise, don't auto-quarantine) | Accepted |
 | [0009](0009-all-time-latency-histogram.md) | All-time latency percentiles via a bounded DDSketch-style histogram (lifetime view alongside the recent ring) | Accepted |
 | [0010](0010-notification-layer.md) | Opt-in external notification layer via Apprise (drop-in when unset; best-effort; real-library CI test gates auto-merge) | Accepted |
+| [0011](0011-notification-tiers-and-rollup.md) | Notification tiers (`NOTIFY_LEVEL` actionability dial) + per-loop rollup digest | Accepted |
+| [0012](0012-alert-lifecycle.md) | Edge-triggered alert lifecycle (announce once, repeat in loops, resolve vs silent-remove) + persisted state | Accepted |

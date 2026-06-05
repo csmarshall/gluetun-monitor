@@ -201,10 +201,10 @@ def test_notifies_on_restart_and_persisting_failure(sites_file: str) -> None:
     fn = FakeNotifier()
     _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
 
-    assert "gluetun-restart" in fn.event_keys()
-    assert "gluetun-restart-ineffective" in fn.event_keys()
-    ineffective = next(e for e in fn.events if e.key == "gluetun-restart-ineffective")
-    assert ineffective.level == "ERROR"
+    assert "gluetun-restart" in fn.event_keys()  # play-by-play (all tier)
+    assert "gluetun-unrecovered" in fn.event_keys()  # the ongoing problem (attention)
+    unrecovered = next(e for e in fn.events if e.key == "gluetun-unrecovered")
+    assert unrecovered.tier == "attention"
 
 
 def test_notifies_on_recovery_failed(sites_file: str) -> None:
@@ -226,12 +226,33 @@ def test_notifies_on_recovery_failed(sites_file: str) -> None:
     fn = FakeNotifier()
     _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
 
-    assert "gluetun-recovery-failed" in fn.event_keys()
-    assert next(e for e in fn.events if e.key == "gluetun-recovery-failed").level == "ERROR"
+    assert "gluetun-unrecovered" in fn.event_keys()
+    assert next(e for e in fn.events if e.key == "gluetun-unrecovered").tier == "attention"
+
+
+def test_notifies_on_gluetun_recovery(sites_file: str) -> None:
+    """A gluetun restart that succeeds emits a `recovery`-tier rollup."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["ls", "/sys/class/net"]:
+            return ExecResult(0, "eth0\nlo\n")
+        # gluetun's sites fail until it's restarted, then pass (recovers).
+        if name == "gluetun" and "gluetun" not in fake.restarted:
+            return ExecResult(4, "")
+        return ExecResult(0, "")
+
+    fake.on_exec = handler
+    fn = FakeNotifier()
+    _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
+
+    recovered = next(e for e in fn.events if e.key == "gluetun-recovered")
+    assert recovered.tier == "recovery"
 
 
 def test_notifies_flaky_site_advisory(sites_file: str) -> None:
-    """The flaky-site advisory (restarting on a site too often) pushes a WARN."""
+    """The flaky-site advisory (restarting on a site too often) is an `attention` event."""
     fake = FakeDockerClient()
     fake.add_container("gluetun", id=GLUETUN_ID)
     fn = FakeNotifier()
@@ -240,11 +261,32 @@ def test_notifies_flaky_site_advisory(sites_file: str) -> None:
         stats.record_restart("flaky.example")
     mon = _monitor(fake, sites_file, notifier=fn)
     mon.stats = stats
-    mon._emit_advisory()
+    mon.alerts.begin_loop()
+    mon._emit_advisory()  # reports the problem to the lifecycle
+    mon._flush_notifications()  # which run_once normally drives
 
     adv = next(e for e in fn.events if e.key.startswith("advisory:"))
-    assert adv.level == "WARN"
+    assert adv.tier == "attention"
     assert "flaky.example" in adv.title
+
+
+def test_loop_rollup_is_one_batch(sites_file: str) -> None:
+    """All of a loop's events flush as a single rollup batch (ADR-0011)."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["ls", "/sys/class/net"]:
+            return ExecResult(0, "eth0\nlo\n")
+        return ExecResult(4, "")
+
+    fake.on_exec = handler
+    fn = FakeNotifier()
+    _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
+
+    # One flush for the loop, even though it emitted multiple events.
+    assert len(fn.batches) == 1
+    assert len(fn.batches[0]) >= 2  # restart (all) + unrecovered (attention) at least
 
 
 def test_gluetun_failure_triggers_restart_then_reverify(sites_file: str) -> None:
