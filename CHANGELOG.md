@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Rolling **`:edge`** image tag — rebuilt on every push to `main` (bleeding edge, not
+  guaranteed stable; see `docs/VERSIONING.md`), plus an addressable `:edge-<sha>` per
+  build. Decoupled from releases: `:latest`/`:MAJOR` still move only on a cut release.
+- Published images now carry **SLSA provenance + an SBOM** attestation — a supply-chain
+  trail (and the source the planned base-image drift check will read). (ADR-0013)
+
 ## [2.1.0] - 2026-06-05
 
 ### Added

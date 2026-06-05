@@ -16,6 +16,13 @@ Every release publishes, to both GHCR and Docker Hub:
 | `MAJOR.MINOR` | `2.0` | latest patch of that minor | pinning to a feature line |
 | **`MAJOR`** | **`2`** | latest release within that major | **recommended for production** |
 | `latest` | — | newest **stable** release, **including across a major** | "always newest", attended updates |
+| `edge` | — | **every push to `main`** (rebuilt each merge) | testing the bleeding edge |
+
+> ⚠️ **`:edge` is not a release and is not guaranteed stable.** It is the current
+> `main`, rebuilt on every merge — unreleased fixes *and* unreviewed work in progress.
+> It does **not** move `:latest`/`:MAJOR`, carries no SemVer, and may break. Pin it
+> only to try the newest changes early; never for production. There's also an
+> addressable `:edge-<sha>` per build if you need to pin a specific one.
 
 `:latest` tracks the newest **non-pre-release** version only (the workflow uses
 `latest=auto`). Two guarantees follow, both enforced in CI config rather than by
