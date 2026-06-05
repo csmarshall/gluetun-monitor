@@ -12,10 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # We declare requires-python >=3.13, so test the range we support — and this
-      # is what lets us safely bump the image's base Python (e.g. to 3.14).
+      # 3.14-only: the product is a single python:3.14-slim image, so that's the only
+      # runtime worth testing. (A future base bump temporarily adds the candidate
+      # here — e.g. 3.14 + 3.15 — validates, switches the base, then drops the old.)
       matrix:
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v6
 
@@ -80,7 +81,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install package + pinned dev tooling
         run: pip install -e . -r requirements-dev.txt
