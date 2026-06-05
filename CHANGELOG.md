@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pip-audit` now upgrades build tooling (pip/setuptools/wheel) before scanning, so
   a fresh advisory against the runner's own bundled pip can't fail the build on
   something we don't ship; only our real dependency tree gates CI.
+- Real-daemon integration test + CI job (#24): drives the actual `DockerPyClient`
+  (exec/inspect/restart + the non-destructive recreate, asserting a dependent's
+  volume data survives) against a live `dockerd`, so a docker-py regression turns CI
+  red. The unit job now deselects the `integration` marker.
 
 ### Dependencies
 - Bump `ruff` 0.15.15 → 0.15.16 (auto-merged).

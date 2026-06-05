@@ -50,8 +50,30 @@ jobs:
 
       - name: Pytest (incl. differential vs. legacy bash)
         # Floor is set below the current ~99% so a real regression fails the build
-        # without flaking on trivial churn.
-        run: pytest --cov=gluetun_monitor --cov-report=term-missing --cov-fail-under=95
+        # without flaking on trivial churn. `not integration` excludes the
+        # real-daemon suite (it runs in its own job below).
+        run: pytest -m "not integration" --cov=gluetun_monitor --cov-report=term-missing --cov-fail-under=95
+
+  pytest-integration:
+    name: Integration (real daemon, pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install package + pinned dev tooling
+        run: pip install -e . -r requirements-dev.txt
+
+      - name: Run real-daemon integration tests
+        # ubuntu-latest ships a running dockerd, so these drive the real
+        # DockerPyClient — exec/inspect/restart and the non-destructive recreate
+        # (incl. volume survival) against a live daemon (issue #24). This is the
+        # bar that must stay green before docker-py minors may be auto-merged.
+        run: pytest -m integration -p no:cacheprovider
 
   shellcheck:
     name: Shellcheck (legacy script)
