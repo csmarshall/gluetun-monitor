@@ -8,7 +8,7 @@ version = "2.1.0"
 description = "Dependent-aware connectivity monitor and self-healer for gluetun VPN stacks"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 authors = [{ name = "Charles Marshall" }]
 keywords = ["gluetun", "vpn", "docker", "monitoring", "healthcheck"]
 dependencies = [
@@ -44,7 +44,7 @@ packages = ["gluetun_monitor"]
 # 120, not 80 — modern wide displays, not a 1980s terminal. Wide enough to not
 # fight you; a guardrail for diffs/side-by-side review, not a straitjacket.
 line-length = 120
-target-version = "py313"
+target-version = "py314"
 src = ["gluetun_monitor", "tests"]
 
 [tool.ruff.lint]
@@ -80,7 +80,7 @@ convention = "pep257"
 known-first-party = ["gluetun_monitor"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 strict = true
 warn_unreachable = true
 warn_redundant_casts = true
