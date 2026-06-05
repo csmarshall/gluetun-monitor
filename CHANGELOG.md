@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-05
+
 ### Added
 - **Opt-in notification layer (#22, ADR-0010/0011/0012).** Set `APPRISE_URLS` to push
   events out-of-band via [Apprise](https://github.com/caronc/apprise) (100+ backends:

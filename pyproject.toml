@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gluetun-monitor"
-version = "2.0.1"
+version = "2.1.0"
 description = "Dependent-aware connectivity monitor and self-healer for gluetun VPN stacks"
 readme = "README.md"
 license = { file = "LICENSE" }
