@@ -1,0 +1,26 @@
+name: release-please
+
+# Maintains an open "Release PR" (chore: release X.Y.Z) that accumulates the version
+# + CHANGELOG from conventional commits, and keeps itself rebased on main (ADR-0013).
+# Merging the Release PR tags the version + creates the GitHub Release; the tag push
+# then triggers release.yml to build + publish the image.
+#
+# Needs RELEASE_PLEASE_TOKEN (a fine-grained PAT): GITHUB_TOKEN cannot create PRs by
+# default, and a GITHUB_TOKEN-pushed tag would NOT trigger release.yml. The PAT solves
+# both — without loosening the repo-wide "actions can approve PRs" setting we keep off.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
