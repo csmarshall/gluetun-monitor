@@ -89,12 +89,13 @@ image. The dev toolchain is pinned in `requirements-dev.txt` (CI's source of
 truth); the loose `[dev]` extras in `pyproject.toml` are for local installs.
 
 Low-risk bumps **auto-merge after the full required-check matrix passes** —
-nothing merges on red. Auto-merge is limited to dev tooling (ruff/mypy/pytest/
-pytest-cov) and GitHub Actions, patch/minor only. These always get a human:
+nothing merges on red. Auto-merge covers (patch/minor only): dev tooling
+(ruff/mypy/pytest/pytest-cov), GitHub Actions, and the runtime **`docker`**
+library — the last is safe to auto-merge because the real-daemon integration job
+(#24, a required check) turns CI red on a docker-py regression. These always get a
+human:
 
 - any **major** version bump;
-- the runtime **`docker`** library — it's mocked by `FakeDockerClient`, so green
-  CI doesn't prove runtime safety until the real-daemon test (#24) lands;
 - the **Docker base image** (`python:3.x-slim`) — a feature-version jump needs a
   CI-matrix change (cf. #32).
 

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (exec/inspect/restart + the non-destructive recreate, asserting a dependent's
   volume data survives) against a live `dockerd`, so a docker-py regression turns CI
   red. The unit job now deselects the `integration` marker.
+- Promoted the runtime `docker` lib into Dependabot auto-merge (patch/minor), now
+  that the real-daemon job (a required check) gates it. Pinned `docker==7.1.0` in
+  `pyproject.toml` so the image build is reproducible and Dependabot tracks it
+  per-release; majors (8.x) still require a human.
 
 ### Dependencies
 - Bump `ruff` 0.15.15 → 0.15.16 (auto-merged).
