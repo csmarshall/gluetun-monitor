@@ -36,7 +36,15 @@ jobs:
         run: mypy gluetun_monitor
 
       - name: pip-audit (dependency CVEs)
+        # pip-audit scans the whole environment, including the runner's bundled
+        # build tooling (pip/setuptools/wheel) that we don't ship. A freshly
+        # published advisory against that tooling — e.g. PYSEC-2026-196 against the
+        # runner's pip — would otherwise turn the build red on something outside our
+        # control. Upgrade the tooling first so only our actual dependency tree
+        # (docker + transitives) gates the build. If a toolchain advisory ever lands
+        # with no fix yet, add a scoped `--ignore-vuln <ID>` here with a removal note.
         run: |
+          python -m pip install --upgrade pip setuptools wheel
           pip install pip-audit
           pip-audit
 
