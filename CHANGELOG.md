@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1](https://github.com/csmarshall/gluetun-monitor/compare/v2.1.0...v2.1.1) (2026-06-05)
+
+
+### CI / tooling
+
+* drop Python 3.13, go 3.14-only ([#52](https://github.com/csmarshall/gluetun-monitor/issues/52)) ([6ca58a4](https://github.com/csmarshall/gluetun-monitor/commit/6ca58a4e80eed358c5a6ec6e857d39c4da0f655d))
+* fix YAML parse error in auto-merge-release (quote the label if-expr) ([#51](https://github.com/csmarshall/gluetun-monitor/issues/51)) ([b27b1ce](https://github.com/csmarshall/gluetun-monitor/commit/b27b1ce18b169f6144b7d4966bcc9c19b0482b19))
+* hashed runtime lockfile for deterministic, integrity-checked image builds (ADR-0013, [#26](https://github.com/csmarshall/gluetun-monitor/issues/26)) ([#47](https://github.com/csmarshall/gluetun-monitor/issues/47)) ([b5054d9](https://github.com/csmarshall/gluetun-monitor/commit/b5054d9d81da0ecc9235986215711d26c1c7e0a5))
+* release-please foundation — accumulating Release PR (ADR-0013, [#26](https://github.com/csmarshall/gluetun-monitor/issues/26)) ([#48](https://github.com/csmarshall/gluetun-monitor/issues/48)) ([3c72f6f](https://github.com/csmarshall/gluetun-monitor/commit/3c72f6fba70a341fde79174ab99f213a16965119))
+* rolling :edge channel + SLSA provenance/SBOM on images (ADR-0013, [#26](https://github.com/csmarshall/gluetun-monitor/issues/26)) ([#46](https://github.com/csmarshall/gluetun-monitor/issues/46)) ([58252e8](https://github.com/csmarshall/gluetun-monitor/commit/58252e83ebbb1647212e06ae16862f9f28401f58))
+* wire release-please into the pipeline — Release-PR authorship auto-merge + release.yml reconcile (ADR-0013) ([#50](https://github.com/csmarshall/gluetun-monitor/issues/50)) ([17d958b](https://github.com/csmarshall/gluetun-monitor/commit/17d958b157aa879f4461bee1490e85c89f52e89d))
+
 ## [Unreleased]
 
 ### Added
