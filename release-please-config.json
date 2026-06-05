@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "python",
+  "include-component-in-tag": false,
+  "changelog-sections": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "deps", "section": "Dependencies" },
+    { "type": "docker", "section": "Dependencies" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "ci", "section": "CI / tooling", "hidden": false },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "chore", "section": "Chores", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "gluetun-monitor",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["gluetun_monitor/__init__.py"]
+    }
+  }
+}
