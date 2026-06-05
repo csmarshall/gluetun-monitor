@@ -38,7 +38,7 @@ stateDiagram-v2
     Inactive --> Active: reported (new) — announce
     Active --> Active: still true & repeat due — remind
     Active --> Inactive: cleared, subject still live — resolve note
-    Active --> Inactive: subject forgotten — silent clear
+    Active --> Inactive: subject removed — "no longer monitored" note
 ```
 
 - **Edge-triggered:** a problem announces once, when it goes Inactive→Active.
@@ -51,7 +51,9 @@ stateDiagram-v2
     note at the *same tier as the alert* (so an `attention` alert's closure reaches
     the quiet floor — you hear it broke *and* that it's back).
   - **removed** — the subject is gone (site dropped from `sites.conf`, dependent
-    excluded/removed) → **silent clear**. A "recovered" there would be a lie.
+    excluded/removed) → a **"no longer monitored"** deprecation note. A "recovered"
+    there would be a lie, but staying silent leaves the operator wondering where the
+    alert went — so we say plainly that it was retired because the subject left.
 - **Persisted** to a JSON sidecar (`NOTIFY_STATE_FILE`, mirroring ADR-0008's stats
   sidecar) — the active set *and* the loop counter. On startup it loads and
   reconciles on the first loop: still-broken problems are already Active so they

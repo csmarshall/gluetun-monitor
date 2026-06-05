@@ -120,8 +120,8 @@ class Monitor:
         # longer matches it — but we remember it from before the recreate and
         # keep checking it (ADR-0004: track across cycles). Pruned to existing.
         self._known_dependents: set[str] = set()
-        # The set managed last loop — to silently clear an alert when a dependent
-        # leaves (excluded or gone), rather than emit a false "resolved" (ADR-0012).
+        # The set managed last loop — to retire an alert ("no longer monitored") when
+        # a dependent leaves (excluded or gone), rather than a false "resolved" (ADR-0012).
         self._managed_dependents: set[str] = set()
         # Dedup so a missing explicitly-listed dependent warns once, not per loop.
         self._warned_missing: set[str] = set()
@@ -141,7 +141,9 @@ class Monitor:
         self.alerts.report(key, tier, title, body)
 
     def _forget(self, key: str) -> None:
-        """Drop a problem whose subject is no longer monitored (silent clear)."""
+        """Retire a problem whose subject is no longer monitored — a "no longer
+        monitored" deprecation notice, not a (false) "resolved" (ADR-0012).
+        """
         self.alerts.forget(key)
 
     def _flush_notifications(self) -> None:
@@ -190,7 +192,7 @@ class Monitor:
             )
             # A removed site keeps no live failure counter — a later re-add starts
             # clean rather than resuming near the threshold — and any active advisory
-            # for it is silently cleared (you removed it; "resolved" would be a lie).
+            # for it is retired with a "no longer monitored" notice (not a "resolved").
             for site in removed:
                 self.site_failures.discard(site)
                 self._forget(f"advisory:{site}")
@@ -406,7 +408,8 @@ class Monitor:
         """Probe every dependent and remediate those that fail (nodes 6-19)."""
         dependents = self._resolve_dependents()
         # A dependent that left the managed set (excluded or gone) gets its active
-        # alert silently cleared — a "resolved" would imply it recovered (ADR-0012).
+        # alert retired with a "no longer monitored" notice, not a "resolved" that
+        # would imply it recovered (ADR-0012).
         for gone in self._managed_dependents - set(dependents):
             self._forget(f"dependent-unhealthy:{gone}")
         self._managed_dependents = set(dependents)
