@@ -1,0 +1,45 @@
+name: Auto-merge release PR
+
+# ADR-0013 authorship gate. release-please maintains a "Release PR"; this auto-merges
+# it ONLY when every change it would release was authored by Dependabot (deps/security/
+# base patches). Any human-authored commit in the release range holds it for a manual
+# click. Auto-merge still waits for the full required-check matrix — nothing ships red.
+#
+# Uses RELEASE_PLEASE_TOKEN so the resulting merge drives release-please → tag →
+# release.yml (a GITHUB_TOKEN merge wouldn't trigger those).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # Only release-please's Release PRs (it labels them 'autorelease: pending').
+    if: contains(github.event.pull_request.labels.*.name, 'autorelease: pending')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-merge iff the release is all-Dependabot
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          last=$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$last" ]; then echo "no prior release — gate"; exit 0; fi
+          # Who authored the commits this release would ship (last tag → main HEAD)?
+          authors=$(gh api "repos/${REPO}/compare/${last}...${BASE_SHA}" \
+            --jq '[.commits[].author.login // "unknown"] | unique | join(",")')
+          echo "Authors being released since ${last}: ${authors:-<none>}"
+          if [ -z "$authors" ]; then echo "nothing to release — gate"; exit 0; fi
+          # -F: 'dependabot[bot]' contains regex metacharacters, so match it literally.
+          if echo "$authors" | tr ',' '\n' | grep -vqxF 'dependabot[bot]'; then
+            echo "Human-authored change present → leaving the Release PR for a manual click"
+            exit 0
+          fi
+          echo "All changes are Dependabot → auto-merging the release"
+          gh pr merge --repo "$REPO" --auto --squash "$PR_URL"
