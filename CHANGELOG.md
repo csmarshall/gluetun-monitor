@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scoped Dependabot auto-merge: low-risk bumps (dev tooling + github-actions,
   patch/minor only) auto-merge **after** the full matrix passes; majors, the
   runtime `docker` lib, and Docker base-image bumps still require human review (#23).
+- `pip-audit` now upgrades build tooling (pip/setuptools/wheel) before scanning, so
+  a fresh advisory against the runner's own bundled pip can't fail the build on
+  something we don't ship; only our real dependency tree gates CI.
+
+### Dependencies
+- Bump `ruff` 0.15.15 → 0.15.16 (auto-merged).
+- Bump `dependabot/fetch-metadata` v2 → v3 (Node 24 runtime; outputs unchanged).
 
 ## [2.0.1] - 2026-06-04
 
