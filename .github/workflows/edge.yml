@@ -1,19 +1,28 @@
-name: Release
+name: Edge
+
+# Rolling bleeding-edge image: rebuilt on every push to main and published as
+# `:edge` (+ an addressable `:edge-<sha>` per build). NOT guaranteed stable — see
+# docs/VERSIONING.md. Decoupled from releases: `:latest`/`:MAJOR` move only on a cut
+# release (ADR-0013). Stable releases are built by release.yml on a tag.
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+
+# A burst of merges only needs the newest edge built.
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   IMAGE_NAME: gluetun-monitor
 
 jobs:
-  release:
-    name: Build and Push
+  edge:
+    name: Build and push :edge
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
@@ -46,14 +55,12 @@ jobs:
           images: |
             ghcr.io/${{ github.repository }}
             docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          # latest=auto: `:latest` follows non-prerelease semver tags only. The EOL
-          # v1 branch sets latest=false so old-major patches never claim `:latest`.
+          # Never claim :latest — edge is explicitly not a stable release.
           flavor: |
-            latest=auto
+            latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=edge
+            type=sha,prefix=edge-,format=short
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -64,13 +71,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Supply-chain trail (ADR-0013): SLSA provenance (records the base image
-          # digest the drift-check reads) + an SBOM, attached as attestations.
+          # digest the future drift-check reads) + an SBOM, attached as attestations.
           provenance: mode=max
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
