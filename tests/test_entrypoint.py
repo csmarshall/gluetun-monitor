@@ -1,4 +1,4 @@
-"""cli.main() wiring, signal handling, and the Monitor.run() loop."""
+"""cli.main([]) wiring, signal handling, and the Monitor.run() loop."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def test_announce_logs_connection_and_endpoint() -> None:
     assert "[ENDPOINT]" in out
 
 
-# ----- cli.main() -----
+# ----- cli.main([]) -----
 
 
 def _prep_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -105,7 +105,7 @@ def test_main_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ran: list[int] = []
     monkeypatch.setattr(cli.Monitor, "announce", lambda self: None)
     monkeypatch.setattr(cli.Monitor, "run", lambda self: ran.append(1))
-    assert cli.main() == 0
+    assert cli.main([]) == 0
     assert ran == [1]
 
 
@@ -118,7 +118,7 @@ def test_main_client_init_failure_returns_1(
         raise RuntimeError("no docker")
 
     monkeypatch.setattr(cli, "DockerPyClient", boom)
-    assert cli.main() == 1
+    assert cli.main([]) == 1
 
 
 def test_main_prereq_failure_returns_1(
@@ -127,7 +127,7 @@ def test_main_prereq_failure_returns_1(
     _prep_env(monkeypatch, tmp_path)
     fake = FakeDockerClient()  # no gluetun container -> prereq fails
     monkeypatch.setattr(cli, "DockerPyClient", lambda **_kw: fake)
-    assert cli.main() == 1
+    assert cli.main([]) == 1
 
 
 def test_signal_handler_exits_cleanly() -> None:

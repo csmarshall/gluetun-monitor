@@ -19,8 +19,9 @@ from gluetun_monitor.config import Config
 from gluetun_monitor.docker_client import ExecResult
 from gluetun_monitor.logging_setup import Logger
 from gluetun_monitor.monitor import Monitor
+from gluetun_monitor.site_stats import SiteStatsStore
 
-from .fakes import FakeDockerClient
+from .fakes import FakeDockerClient, FakeNotifier
 
 GLUETUN_ID = "a" * 64
 OLD_ID = "b" * 64
@@ -34,10 +35,14 @@ def sites_file(tmp_path: Path) -> str:
     return str(conf)
 
 
-def _monitor(fake: FakeDockerClient, sites_file: str, **cfg_overrides) -> Monitor:
+def _monitor(
+    fake: FakeDockerClient, sites_file: str, *, notifier: FakeNotifier | None = None, **cfg_overrides
+) -> Monitor:
     cfg = Config(config_file=sites_file, gluetun_container="gluetun", **cfg_overrides)
     logger = Logger(log_file=None, level="DEBUG", stream=io.StringIO())
-    return Monitor(fake, cfg, logger, rng=random.Random(0), sleep=lambda _s: None)
+    return Monitor(
+        fake, cfg, logger, rng=random.Random(0), sleep=lambda _s: None, notifier=notifier
+    )
 
 
 def test_gluetun_not_running_does_nothing(sites_file: str) -> None:
@@ -179,6 +184,67 @@ def test_viability_failure_accumulates_to_threshold(sites_file: str) -> None:
 
     mon.run_once()  # fail 2/2 — remediate
     assert fake.restarted == ["dep"]
+
+
+def test_notifies_on_restart_and_persisting_failure(sites_file: str) -> None:
+    """The two operator-facing signals (#22): a restart was triggered, and it did
+    NOT clear the failure (gluetun can't come up)."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["ls", "/sys/class/net"]:
+            return ExecResult(0, "eth0\nlo\n")
+        return ExecResult(4, "")  # every site probe keeps failing, even after restart
+
+    fake.on_exec = handler
+    fn = FakeNotifier()
+    _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
+
+    assert "gluetun-restart" in fn.event_keys()
+    assert "gluetun-restart-ineffective" in fn.event_keys()
+    ineffective = next(e for e in fn.events if e.key == "gluetun-restart-ineffective")
+    assert ineffective.level == "ERROR"
+
+
+def test_notifies_on_recovery_failed(sites_file: str) -> None:
+    """When the gluetun restart itself fails, the operator gets an ERROR alert."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["ls", "/sys/class/net"]:
+            return ExecResult(0, "eth0\nlo\n")
+        return ExecResult(4, "")
+
+    fake.on_exec = handler
+
+    def boom(_name: str) -> None:
+        raise RuntimeError("restart failed")
+
+    fake.restart = boom  # type: ignore[method-assign]
+    fn = FakeNotifier()
+    _monitor(fake, sites_file, notifier=fn, fail_threshold=1).run_once()
+
+    assert "gluetun-recovery-failed" in fn.event_keys()
+    assert next(e for e in fn.events if e.key == "gluetun-recovery-failed").level == "ERROR"
+
+
+def test_notifies_flaky_site_advisory(sites_file: str) -> None:
+    """The flaky-site advisory (restarting on a site too often) pushes a WARN."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+    fn = FakeNotifier()
+    stats = SiteStatsStore(None)
+    for _ in range(6):
+        stats.record_restart("flaky.example")
+    mon = _monitor(fake, sites_file, notifier=fn)
+    mon.stats = stats
+    mon._emit_advisory()
+
+    adv = next(e for e in fn.events if e.key.startswith("advisory:"))
+    assert adv.level == "WARN"
+    assert "flaky.example" in adv.title
 
 
 def test_gluetun_failure_triggers_restart_then_reverify(sites_file: str) -> None:

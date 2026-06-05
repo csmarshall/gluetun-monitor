@@ -153,6 +153,18 @@ class Config:
     advisory_min_restarts: int = 5
     advisory_dominance: float = 0.5
 
+    # --- Opt-in notification layer (issue #22, ADR-0010) ---
+    # Comma-separated Apprise URLs (ntfy/Discord/Telegram/email/webhook/…).
+    # Unset/empty = notifications disabled = today's log-only behavior (drop-in).
+    apprise_urls: tuple[str, ...] = ()
+    # Minimum severity to push (INFO/WARN/ERROR); default WARN.
+    notify_min_level: str = "WARN"
+    # Per-event-key throttle in seconds (one send per key per window); 0 = no throttle.
+    notify_throttle: int = 3600
+    # Max seconds to wait for a notification send before carrying on (it runs off the
+    # monitoring loop, so a slow/hung backend can't stall the watchdog). Tenet 7.
+    notify_timeout: int = 10
+
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
     # Not an env var.
@@ -182,6 +194,12 @@ class Config:
         if log_level not in _VALID_LOG_LEVELS:
             errors.append(
                 f"Invalid LOG_LEVEL={log_level!r}: expected one of {sorted(_VALID_LOG_LEVELS)}"
+            )
+        notify_min_level = os.environ.get("NOTIFY_MIN_LEVEL", "WARN").upper()
+        if notify_min_level not in _VALID_LOG_LEVELS:
+            errors.append(
+                f"Invalid NOTIFY_MIN_LEVEL={notify_min_level!r}: "
+                f"expected one of {sorted(_VALID_LOG_LEVELS)}"
             )
         return cls(
             config_file=os.environ.get("CONFIG_FILE", "/config/sites.conf"),
@@ -217,5 +235,11 @@ class Config:
             advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors, minimum=1),
             advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors,
                                           minimum=0.0, maximum=1.0),
+            apprise_urls=tuple(
+                u.strip() for u in os.environ.get("APPRISE_URLS", "").split(",") if u.strip()
+            ),
+            notify_min_level=notify_min_level,
+            notify_throttle=_env_int("NOTIFY_THROTTLE", 3600, errors, minimum=0),
+            notify_timeout=_env_int("NOTIFY_TIMEOUT", 10, errors, minimum=1),
             errors=tuple(errors),
         )

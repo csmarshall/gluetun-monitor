@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import signal
 import sys
 from types import FrameType
@@ -11,6 +12,7 @@ from .dependents import parse_csv_names
 from .docker_client import DockerClient, DockerPyClient
 from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
+from .notify import Notifier, NotifyEvent, build_notifier
 from .sites import load_sites_report
 
 
@@ -122,11 +124,38 @@ def _announce_banner(config: Config, logger: Logger) -> None:
         )
 
 
-def main() -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="gluetun-monitor",
+        description="Dependent-aware connectivity monitor and self-healer for gluetun VPN stacks",
+    )
+    parser.add_argument(
+        "--notify-test",
+        action="store_true",
+        help="send a test notification to APPRISE_URLS and exit (verifies your config)",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_notify_test(config: Config, notifier: Notifier, logger: Logger) -> int:
+    """Send a one-off test notification and report the outcome."""
+    if not config.apprise_urls:
+        logger.error("APPRISE_URLS is not set — there is nothing to test")
+        return 1
+    logger.info(f"Sending a test notification to {len(config.apprise_urls)} configured URL(s)...")
+    if notifier.test():
+        logger.info("Test notification sent successfully")
+        return 0
+    logger.error("Test notification failed to send — check the Apprise URL/scheme (DEBUG logs)")
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
     """Build config + logger + Docker client, check prerequisites, run the loop.
 
     Returns a process exit code: 0 on clean shutdown, 1 if startup fails.
     """
+    args = _parse_args(argv)
     config = Config.from_env()
     logger = Logger(
         log_file=config.log_file,
@@ -135,6 +164,13 @@ def main() -> int:
         backup_count=config.log_backup_count,
     )
     install_bash_format_on_root()  # make stray docker-py/urllib3 logs match our format
+    # Opt-in notifications (#22). Built early so the "refused to start" paths below
+    # can alert too; NullNotifier (no-op) unless APPRISE_URLS is configured.
+    notifier = build_notifier(config, logger)
+
+    if args.notify_test:
+        return _run_notify_test(config, notifier, logger)
+
     _install_signal_handlers(logger)
     _announce_banner(config, logger)
 
@@ -142,18 +178,30 @@ def main() -> int:
         for err in config.errors:
             logger.error(err)
         logger.error("Refusing to start due to invalid configuration")
+        notifier.notify(NotifyEvent(
+            "ERROR", "gluetun-monitor refused to start",
+            "Invalid configuration: " + "; ".join(config.errors), key="refused-config",
+        ))
         return 1
 
     try:
         client: DockerClient = DockerPyClient(timeout=max(config.timeout * 2, 60))
     except Exception as exc:
         logger.error(f"Failed to initialize Docker client: {exc}")
+        notifier.notify(NotifyEvent(
+            "ERROR", "gluetun-monitor refused to start",
+            f"Failed to initialize the Docker client: {exc}", key="refused-docker",
+        ))
         return 1
 
     if not check_prerequisites(client, config, logger):
+        notifier.notify(NotifyEvent(
+            "ERROR", "gluetun-monitor refused to start",
+            "Prerequisite check failed — see the logs for the specific cause.", key="refused-prereq",
+        ))
         return 1
 
-    monitor = Monitor(client, config, logger)
+    monitor = Monitor(client, config, logger, notifier=notifier)
     monitor.announce()
     monitor.run()
     return 0
