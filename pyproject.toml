@@ -12,7 +12,11 @@ requires-python = ">=3.13"
 authors = [{ name = "Charles Marshall" }]
 keywords = ["gluetun", "vpn", "docker", "monitoring", "healthcheck"]
 dependencies = [
-    "docker>=7.0,<8",
+    # Exact pin (not a range): the image installs straight from here, so pinning
+    # makes builds reproducible AND gives Dependabot a per-release target. docker-py
+    # bumps are gated by the real-daemon integration job (#24) and auto-merged on
+    # green (patch/minor); a major (8.x) still gets a human.
+    "docker==7.1.0",
 ]
 
 [project.urls]

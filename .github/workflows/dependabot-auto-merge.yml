@@ -16,11 +16,12 @@ name: Dependabot auto-merge
 #
 # In scope (fast-tracked, patch + minor):
 #   • dev tooling — ruff / mypy / pytest / pytest-cov (pip, direct:development)
+#   • the runtime `docker` lib (pip, direct:production) — promoted once the
+#     real-daemon integration job (#24, a required check) made a docker-py
+#     regression turn CI red; green now means runtime-safe
 #   • github-actions
 # Held for human review (never auto-merged):
 #   • any MAJOR bump
-#   • the runtime `docker` lib (pip, direct:production) — FakeDockerClient mocks
-#     it, so green CI ≠ runtime-safe until the real-daemon test (#24) lands
 #   • the Docker base image (python:3.x-slim) — a 3.x→3.y jump needs a CI-matrix
 #     change + manual validation (cf. #32), so it always gets eyes
 
@@ -44,7 +45,8 @@ jobs:
           (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
            steps.meta.outputs.update-type == 'version-update:semver-minor') &&
           ((steps.meta.outputs.package-ecosystem == 'pip' &&
-            steps.meta.outputs.dependency-type == 'direct:development') ||
+            (steps.meta.outputs.dependency-type == 'direct:development' ||
+             steps.meta.outputs.dependency-type == 'direct:production')) ||
            steps.meta.outputs.package-ecosystem == 'github_actions')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
