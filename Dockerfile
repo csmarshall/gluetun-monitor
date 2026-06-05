@@ -13,10 +13,18 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install the package first (its own layer) for build-cache friendliness.
+# Runtime deps come from a fully-pinned, hashed lock (ADR-0013): a deterministic,
+# integrity-checked dependency tree and a stable Python layer for the base-image
+# drift check. Installed before the source so a code change doesn't re-resolve deps.
+# Hashes in the file auto-enable pip's --require-hashes. The lock is kept in sync
+# with pyproject by a CI guard.
+COPY requirements.lock /app/
+RUN pip install --no-cache-dir -r requirements.lock
+
+# Then the package itself, without deps (already installed, pinned, from the lock).
 COPY pyproject.toml README.md LICENSE /app/
 COPY gluetun_monitor /app/gluetun_monitor
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

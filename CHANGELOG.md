@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Published images now carry **SLSA provenance + an SBOM** attestation — a supply-chain
   trail (and the source the planned base-image drift check will read). (ADR-0013)
 
+### CI / tooling
+- The image now installs runtime deps from a fully-pinned, **hashed `requirements.lock`**
+  (pip-compile) instead of resolving them at build time — a deterministic,
+  integrity-checked dependency tree and a stable Python layer for the planned drift
+  check. A CI guard fails if the lock's direct pins fall out of sync with
+  `pyproject.toml`, so a dep bump can never silently miss the image. (ADR-0013)
+
 ## [2.1.0] - 2026-06-05
 
 ### Added

@@ -19,6 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: requirements.lock direct pins match pyproject
+        # The image installs runtime deps from the hashed requirements.lock, so a
+        # bump in pyproject that didn't regenerate the lock would silently NOT reach
+        # the image (and silently break the docker-py/apprise auto-merge promotion).
+        # Fail closed: assert the lock's direct pins equal pyproject's. Regenerate
+        # with: pip-compile --generate-hashes -o requirements.lock pyproject.toml
+        run: |
+          for pkg in docker apprise; do
+            want=$(grep -oP "(?<=\"${pkg}==)[0-9][0-9.]*" pyproject.toml | head -1)
+            got=$(grep -oP "^${pkg}==\K[0-9][0-9.]*" requirements.lock | head -1)
+            if [ "$want" != "$got" ]; then
+              echo "::error::requirements.lock is stale: ${pkg} is ${got:-missing} in the lock but ${want} in pyproject.toml"
+              exit 1
+            fi
+          done
+          echo "requirements.lock direct pins in sync"
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
