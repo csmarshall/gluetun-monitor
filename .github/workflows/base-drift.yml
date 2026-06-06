@@ -1,0 +1,57 @@
+name: base-drift
+
+# Weekly secure-by-default rebuild (ADR-0013). Resolves the CURRENT digest of
+# python:3.14-slim from the registry — a "faux build", no image build — and compares
+# it to the digest pinned in the Dockerfile. If upstream re-published the base (OS /
+# base-layer security patches), it bumps the pin via a `fix:` commit → release-please
+# opens a patch Release PR → auto-merge-release (github-actions[bot] is on its
+# allowlist) ships it → release.yml rebuilds on the new base. If unchanged, no-op:
+# semvers stay immutable, no churn. Manual `workflow_dispatch` for testing.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Push via the PAT so the resulting commit triggers release-please (a
+          # GITHUB_TOKEN push would not).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - name: Bump the base-image pin if upstream moved
+        env:
+          REPO: library/python
+          TAG: "3.14-slim"
+        run: |
+          set -euo pipefail
+          token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO}:pull" | jq -r .token)
+          current=$(curl -sI \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://registry-1.docker.io/v2/${REPO}/manifests/${TAG}" \
+            | grep -i '^docker-content-digest:' | awk '{print $2}' | tr -d '\r')
+          pinned=$(grep -oP 'FROM python:3\.14-slim@\K\S+' Dockerfile)
+          echo "pinned:  ${pinned}"
+          echo "current: ${current:-<none>}"
+          if [ -z "${current}" ]; then
+            echo "::warning::could not resolve current digest — skipping this run"; exit 0
+          fi
+          if [ "${current}" = "${pinned}" ]; then
+            echo "Base image unchanged — nothing to do."; exit 0
+          fi
+          echo "Base image re-published → bumping pin and cutting a patch."
+          sed -i "s|@${pinned}|@${current}|" Dockerfile
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Dockerfile
+          git commit -m "fix(deps): rebuild on updated python:3.14-slim base (${current})"
+          git push
