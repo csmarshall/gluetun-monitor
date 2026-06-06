@@ -1,6 +1,6 @@
 # ADR-0013: Release & versioning automation strategy
 
-- **Status:** Proposed (implementation tracked in #26)
+- **Status:** Accepted (implemented; #26)
 - **Date:** 2026-06-05
 - **Relates to:** #26 (implementation), ADR-0010/0011/0012 (the notification layer —
   the human-notification safety net that makes set-and-forget shipping defensible),
