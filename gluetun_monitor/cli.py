@@ -13,7 +13,9 @@ from .docker_client import DockerClient, DockerPyClient
 from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
 from .notify import Notifier, NotifyEvent, build_notifier
-from .sites import load_sites_report
+from .site_stats import SiteStatsStore
+from .sites import hostname_of, load_sites_report
+from .tunables import suggest_tunables
 
 
 def check_prerequisites(client: DockerClient, config: Config, logger: Logger) -> bool:
@@ -168,7 +170,56 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="send a test notification to APPRISE_URLS and exit (verifies your config)",
     )
+    parser.add_argument(
+        "--suggest-tunables",
+        action="store_true",
+        help="print per-URL timeout/tries suggestions from the persisted site stats "
+        "and exit (paste the '|key=value' lines into sites.conf — see README)",
+    )
     return parser.parse_args(argv)
+
+
+def _run_suggest_tunables(config: Config, logger: Logger) -> int:
+    """Print per-URL tunable suggestions derived from the persisted site stats (#60).
+
+    A read-only report to stdout (not the rotating log): for each site that keeps
+    causing avoidable restarts, the paste-ready ``url|key=value`` override the data
+    supports — or, when no knob helps, the advice to review/remove it. Suggestions
+    are advisory only; nothing is changed.
+    """
+    store = SiteStatsStore(config.stats_file)
+    if not store.sites:
+        logger.info(
+            f"No site stats yet at {config.stats_file or '(STATS_FILE unset)'} — "
+            "run the monitor a while, then retry."
+        )
+        return 0
+    suggestions = suggest_tunables(
+        store.sites, global_timeout=config.timeout, global_tries=config.wget_tries
+    )
+    print("gluetun-monitor — per-URL tunable suggestions")
+    print(
+        f"  source: {config.stats_file}   "
+        f"globals: TIMEOUT={config.timeout}s WGET_TRIES={config.wget_tries}\n"
+    )
+    if not suggestions:
+        print(
+            f"  No suggestions — all {len(store.sites)} site(s) are behaving within "
+            "the global defaults."
+        )
+        return 0
+    flagged = set()
+    for s in suggestions:
+        flagged.add(s.url)
+        print(f"  {hostname_of(s.url)}")
+        print(f"    {s.rationale}")
+        print(f"    → {s.config_line}" if s.config_line
+              else "    → review / remove, or enable auto-backoff (#27)")
+        print()
+    healthy = sorted(hostname_of(u) for u in store.sites if u not in flagged)
+    if healthy:
+        print(f"  Healthy (no change): {', '.join(healthy)}")
+    return 0
 
 
 def _run_notify_test(config: Config, notifier: Notifier, logger: Logger) -> int:
@@ -204,6 +255,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.notify_test:
         return _run_notify_test(config, notifier, logger)
+
+    if args.suggest_tunables:
+        return _run_suggest_tunables(config, logger)
 
     _install_signal_handlers(logger)
     _announce_banner(config, logger)

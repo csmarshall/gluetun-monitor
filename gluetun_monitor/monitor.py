@@ -33,8 +33,16 @@ from .endpoint import get_endpoint_info
 from .notify import Notifier, NotifyEvent, NullNotifier
 from .recovery import remediate_dependent, restart_gluetun
 from .site_stats import SiteStatsStore, format_window
-from .sites import hostname_of, ip_pool, is_ip_literal, load_sites, resolvable_pool
+from .sites import (
+    SiteSpec,
+    hostname_of,
+    ip_pool,
+    is_ip_literal,
+    load_specs,
+    resolvable_pool,
+)
 from .state import Counter, InterfaceStatus, RemediationAction
+from .tunables import suggest_tunables
 
 if TYPE_CHECKING:
     from .config import Config
@@ -115,6 +123,10 @@ class Monitor:
         self.site_failures = Counter()
         self.dependent_failures = Counter()
         self._last_sites: set[str] | None = None
+        # url -> SiteSpec for the current loop, so probe call sites can resolve a
+        # per-URL timeout/tries override (#60). Refreshed each loop in _run_once_body
+        # alongside the (deduplicated) URL list; empty until the first load.
+        self._specs: dict[str, SiteSpec] = {}
         # Dependents seen at least once. A dependent stranded by a gluetun
         # *recreate* still points at the dead old id, so current-id discovery no
         # longer matches it — but we remember it from before the recreate and
@@ -155,6 +167,38 @@ class Monitor:
 
     # ----- gluetun root test (nodes 2-3) -----
 
+    def _probe_knobs(self, url: str) -> tuple[int, int]:
+        """Effective (timeout, tries) for ``url``: its per-URL override if set,
+        else the global ``TIMEOUT``/``WGET_TRIES`` (#60). A URL with no SiteSpec
+        (e.g. an IP-literal pool entry, or one not in the current set) inherits the
+        globals — so behavior is unchanged for un-annotated sites.
+        """
+        spec = self._specs.get(url)
+        timeout = spec.timeout if spec and spec.timeout is not None else self.config.timeout
+        tries = spec.tries if spec and spec.tries is not None else self.config.wget_tries
+        return timeout, tries
+
+    def _log_site_overrides(self) -> None:
+        """Surface per-URL probe overrides so the operator sees what's in effect
+        (#60) — INFO when any exist (discoverability, like the notify summary), a
+        DEBUG confirmation of the global defaults otherwise.
+        """
+        overrides: list[str] = []
+        for url in sorted(self._specs):
+            spec = self._specs[url]
+            knobs = [f"{k}={v}{u}" for k, v, u in (
+                ("timeout", spec.timeout, "s"), ("tries", spec.tries, "")
+            ) if v is not None]
+            if knobs:
+                overrides.append(f"{hostname_of(url)} {' '.join(knobs)}")
+        defaults = f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}"
+        if overrides:
+            self.log.info(
+                f"Per-URL probe overrides: {'; '.join(overrides)} (others use {defaults})"
+            )
+        else:
+            self.log.debug(f"No per-URL probe overrides; all sites use {defaults}")
+
     def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
         """Test the full URL set from inside gluetun. Return the sites that have
         breached FAIL_THRESHOLD (empty = healthy).
@@ -174,6 +218,7 @@ class Monitor:
         current = set(sites)
         if record and self._last_sites is None:
             self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
+            self._log_site_overrides()
             self._last_sites = current
         elif record and current != self._last_sites:
             added = sorted(current - self._last_sites) if self._last_sites else sorted(current)
@@ -184,6 +229,7 @@ class Monitor:
             if removed:
                 parts.append(f"removed {', '.join(removed)}")
             self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(sites)})")
+            self._log_site_overrides()
             self._notify(
                 "activity",
                 "sites.conf changed",
@@ -200,7 +246,7 @@ class Monitor:
 
         results = self._fan_out(
             sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
-                                          self.config.timeout, self.config.wget_tries)
+                                          *self._probe_knobs(url))
         )
 
         # Site tests run *inside the gluetun container* (the VPN gateway, through
@@ -347,7 +393,7 @@ class Monitor:
         # ``reason`` is the bare detail — "<host> (<why>) [<tool>]" — because the
         # caller prefixes the verb + verdict ("reach ok/fail/?").
         results = [
-            (h, validate_dns(self.client, dep, u, h, self.config.timeout, self.config.wget_tries))
+            (h, validate_dns(self.client, dep, u, h, *self._probe_knobs(u)))
             for (u, h) in resolvable_chosen
         ]
         oks = [(h, r) for (h, r) in results if r.status is DnsStatus.OK]
@@ -557,7 +603,11 @@ class Monitor:
         # Re-read every loop so editing sites.conf is picked up live (the SITES
         # env contribution is fixed at startup). Startup validation guarantees a
         # non-empty set; a runtime edit down to empty just tests nothing this loop.
-        sites = load_sites(self.config.config_file, self.config.sites_env)
+        # Specs carry any per-URL |timeout/|tries overrides (#60); cache the url->spec
+        # map so the probe call sites can resolve a site's effective knobs.
+        specs = load_specs(self.config.config_file, self.config.sites_env)
+        self._specs = {s.url: s for s in specs}
+        sites = [s.url for s in specs]
 
         breached = self.check_gluetun_sites(sites)
         if not breached:
@@ -650,13 +700,17 @@ class Monitor:
         if adv is None:
             self._advised_site = None
             return
+        # Make the advisory actionable: if the stats support a specific per-URL knob
+        # (e.g. the site is slow-but-alive → a wider timeout), name it (#60) instead
+        # of only "consider removing it".
+        hint = self._advisory_hint(adv.site)
         self._problem(
             f"advisory:{adv.site}",
             "attention",
             f"flaky site: {adv.site}",
             f"{adv.site} caused {adv.site_restarts} of the last {adv.total_restarts} "
             f"gluetun restarts over {format_window(adv.window_seconds)} — it may be flaky; "
-            f"consider reviewing or removing it from sites.conf.",
+            f"consider reviewing or removing it from sites.conf.{hint}",
         )
         if adv.site == self._advised_site:
             return  # log + stats once per episode (the notification is deduped by AlertState)
@@ -666,8 +720,24 @@ class Monitor:
             f"FLAKY SITE: {adv.site} caused {adv.site_restarts} of the last "
             f"{adv.total_restarts} gluetun restarts over the last "
             f"{format_window(adv.window_seconds)} — it may be flaky; consider "
-            f"reviewing or removing it from sites.conf"
+            f"reviewing or removing it from sites.conf.{hint}"
         )
+
+    def _advisory_hint(self, site: str) -> str:
+        """A one-sentence per-URL tunable suggestion for ``site`` if the stats
+        support a concrete knob, else "" (#60). Appended to the flaky-site advisory
+        so the operator gets the specific fix, not just "consider removing it".
+        """
+        st = self.stats.sites.get(site)
+        if st is None:
+            return ""
+        sugg = suggest_tunables(
+            {site: st}, global_timeout=self.config.timeout, global_tries=self.config.wget_tries
+        )
+        if sugg and sugg[0].config_line:
+            return (f" The stats suggest `{sugg[0].config_line}` — run "
+                    "--suggest-tunables for the reasoning.")
+        return ""
 
     def _save_stats(self) -> None:
         """Prune stale sites (retention), then persist — every loop (best-effort;
