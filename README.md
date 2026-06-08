@@ -295,6 +295,28 @@ Uses `wget --spider` which only fetches headers (no response body downloaded).
 
 ### Timeouts & retries — one model, everywhere
 
+**Every timeout the monitor exposes, at a glance:**
+
+| Knob | Default | Scope | Bounds | Per-URL? |
+|---|---|---|---|---|
+| `TIMEOUT` | `10` | per-request | each `wget --timeout` / `ping -W` (gluetun site tests **and** dependent probes) | ✅ [yes](#per-url-tunables) |
+| `WGET_TRIES` | `1` | per-request | attempts per `wget` probe | ✅ [yes](#per-url-tunables) |
+| `CHECK_INTERVAL` | `30` | loop cadence | sleep between check cycles | — |
+| `HEALTHY_WAIT_TIMEOUT` | `120` | post-restart budget | wait for gluetun's healthcheck after a restart | — |
+| `DNS_WAIT_TIMEOUT` | `30` | post-restart budget | poll for DNS to stabilize after a restart | — |
+| `NOTIFY_TIMEOUT` | `10` | per-send | max wait for one (off-thread) notification send | — |
+| `NOTIFY_REPEAT_INTERVAL` | `0` | alert cadence | reminder cadence for an ongoing problem (`0` = announce once) | — |
+
+(The Docker API client timeout isn't a separate knob — it's derived as
+`max(TIMEOUT × 2, 60)`.)
+
+**Only the two per-request knobs (`TIMEOUT`, `WGET_TRIES`) are per-URL-overridable**
+([Per-URL tunables](#per-url-tunables)) — because they're the only ones that act on
+*a specific URL's* probe. The rest are loop cadence (`CHECK_INTERVAL`), notification
+plumbing, or **gluetun-restart-scoped wait budgets** (`HEALTHY_WAIT_TIMEOUT`,
+`DNS_WAIT_TIMEOUT`) that wait on the *gluetun container* recovering, not on probing
+any one site — so a per-URL value would be meaningless. See below for that split.
+
 There is **one per-request timeout knob, `TIMEOUT`**, and it is applied identically
 to every network probe the monitor makes:
 
@@ -361,6 +383,14 @@ https://flaky.example|timeout=20|tries=2
   site.
 - File overrides are **re-read live** like the URLs themselves; the active
   overrides are logged whenever the set loads (`Per-URL probe overrides: …`).
+
+> **Why only `timeout`/`tries`?** These are the only **per-request** knobs — they
+> bound *this URL's* probe, so a per-URL value is meaningful. The other timeouts
+> are not per-URL-overridable by design: `CHECK_INTERVAL` is the loop cadence, and
+> `HEALTHY_WAIT_TIMEOUT`/`DNS_WAIT_TIMEOUT` are **gluetun-restart-scoped wait
+> budgets** — they wait for the *gluetun container* to recover, which has nothing to
+> do with any single site, so there's nothing to scope to a URL. See
+> [Timeouts & retries](#timeouts--retries--one-model-everywhere) for the full split.
 
 #### Let the monitor suggest them — `--suggest-tunables`
 
