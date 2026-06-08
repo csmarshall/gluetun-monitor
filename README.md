@@ -604,6 +604,28 @@ Verify your setup without waiting for a real event:
 docker exec gluetun-monitor gluetun-monitor --notify-test
 ```
 
+### Self-hosted backend with a self-signed certificate?
+
+A common homelab gotcha: Apprise **verifies TLS certificates by default**, so a
+self-hosted backend (mail server, ntfy, Gotify, …) presenting a **self-signed or
+private-CA** cert fails with a vague *"Connection error"* — even when the URL is
+correct. The image trusts only the public CA bundle, so it can't trust a private cert.
+
+Two fixes — append **`?verify=no`** to the URL to skip verification (simplest, fine for
+a homelab box):
+
+```
+mailtos://user:pass@mail.lan?verify=no
+ntfy://ntfy.lan/gluetun?verify=no
+```
+
+…or, to keep verification on, mount your CA so the container trusts it:
+
+```yaml
+volumes:
+  - ./my-ca.crt:/usr/local/share/ca-certificates/my-ca.crt:ro
+```
+
 See [ADR-0011](docs/adr/0011-notification-tiers-and-rollup.md) (the dial + rollup) and
 [ADR-0012](docs/adr/0012-alert-lifecycle.md) (the lifecycle) for the design, and the
 full [Apprise URL list](https://github.com/caronc/apprise/wiki) for backends.
