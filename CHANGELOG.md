@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.1.2...v2.1.3) (2026-06-08)
+
+
+### CI / tooling
+
+* bump googleapis/release-please-action from 4 to 5 ([#57](https://github.com/csmarshall/gluetun-monitor/issues/57)) ([32b7388](https://github.com/csmarshall/gluetun-monitor/commit/32b7388f76bc17ff120b4ee1097847902e21d38b))
+* skip auto-assign for Dependabot PRs (restricted token 403s; they self-assign) ([#58](https://github.com/csmarshall/gluetun-monitor/issues/58)) ([e2b959d](https://github.com/csmarshall/gluetun-monitor/commit/e2b959d9cda8329faf86d8c15b672769f42664c0))
+
 ## [2.1.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.1.1...v2.1.2) (2026-06-06)
 
 
