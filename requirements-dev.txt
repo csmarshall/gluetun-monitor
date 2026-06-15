@@ -7,5 +7,5 @@
 # this file is what CI installs.
 ruff==0.15.17
 mypy==2.1.0
-pytest==9.0.3
+pytest==9.1.0
 pytest-cov==7.1.0
