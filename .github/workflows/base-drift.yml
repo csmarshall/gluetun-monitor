@@ -20,7 +20,7 @@ jobs:
   drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Push via the PAT so the resulting commit triggers release-please (a
           # GITHUB_TOKEN push would not).
