@@ -406,16 +406,57 @@ class Monitor:
             )
             return DependentProbe(dep, status, True, True, detail, interfaces=ifs)
         if broken:
-            h, r = broken[0]
+            # Confirm-before-strike (#61): when we tested exactly ONE resolvable URL,
+            # a single DNS-BROKEN can't tell a dead *domain* from a broken *resolver*.
+            # Before counting a strike, draw one more *different* name and fail the
+            # dependent only if that also fails DNS — so a dead site in the pool can't
+            # by itself get a healthy container remediated (the 05:00-window false
+            # positive). Eager-N sampling already tested several names, so this is a
+            # no-op there (len(resolvable_chosen) > 1).
+            fh, fr = broken[0]
+            if len(resolvable_chosen) == 1:
+                confirm = self._confirm_dns(dep, pool, exclude=resolvable_chosen[0][0])
+                if confirm is not None:
+                    ch, cr = confirm
+                    if cr.status is DnsStatus.OK:
+                        detail = (f"{_fmt_reach(fh, fr)} but {_fmt_reach(ch, cr)} "
+                                  "— a dead site, not this container's DNS")
+                        return DependentProbe(dep, status, True, True, detail, interfaces=ifs)
+                    if cr.status is DnsStatus.BROKEN:
+                        detail = (f"{_fmt_reach(fh, fr)}; confirmed via "
+                                  f"{_fmt_reach(ch, cr)} — resolver broken")
+                        return DependentProbe(dep, status, True, False, detail, interfaces=ifs)
+                    # confirm UNVALIDATED (no usable tool) — keep the original verdict.
             detail = (
-                _fmt_reach(h, r) if len(results) == 1
-                else f"all {len(results)} sampled failed (e.g. {_fmt_reach(h, r)})"
+                _fmt_reach(fh, fr) if len(results) == 1
+                else f"all {len(results)} sampled failed (e.g. {_fmt_reach(fh, fr)})"
             )
             return DependentProbe(dep, status, True, False, detail, interfaces=ifs)
         # All sampled sites were UNVALIDATED (no usable DNS tool in the container).
         h, r = results[0]
         return DependentProbe(dep, status, True, None, _fmt_reach(h, r),
                               dns_unvalidated=True, interfaces=ifs)
+
+    def _confirm_dns(
+        self, dep: str, pool: list[str], *, exclude: str
+    ) -> tuple[str, DnsResult] | None:
+        """Re-test one *different* resolvable name from ``pool`` to confirm a single
+        DNS-BROKEN before it strikes (#61). Returns ``(host, result)``, or None when
+        the pool has no other resolvable URL to confirm against (nothing to
+        disambiguate — the caller keeps the original verdict). Bounded: exactly one
+        extra probe, drawn through the shuffle lock like every other sample.
+        """
+        candidates = [
+            u for u in pool if u != exclude and not is_ip_literal(hostname_of(u))
+        ]
+        if not candidates:
+            return None
+        with self._rng_lock:
+            url = self._rng.choice(candidates)
+        host = hostname_of(url)
+        return host, validate_dns(
+            self.client, dep, url, host, self.config.timeout, self.config.wget_tries
+        )
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
