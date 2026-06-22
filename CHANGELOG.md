@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.1.4...v2.2.0) (2026-06-22)
+
+
+### Added
+
+* **sites:** per-URL probe tunables + --suggest-tunables doctor ([#62](https://github.com/csmarshall/gluetun-monitor/issues/62)) ([d5a474e](https://github.com/csmarshall/gluetun-monitor/commit/d5a474e99a951385ead43a984172c19afe92793c))
+
+
+### Fixed
+
+* **dependents:** confirm-before-strike on a single DNS-BROKEN ([#61](https://github.com/csmarshall/gluetun-monitor/issues/61)) ([#63](https://github.com/csmarshall/gluetun-monitor/issues/63)) ([9ff8865](https://github.com/csmarshall/gluetun-monitor/commit/9ff8865aacb24bed2cc326190815fb511b69de04))
+
+
+### Dependencies
+
+* bump pytest from 9.0.3 to 9.1.0 ([#66](https://github.com/csmarshall/gluetun-monitor/issues/66)) ([07d3f2e](https://github.com/csmarshall/gluetun-monitor/commit/07d3f2ef0af3e1f475e72d759843579769824895))
+* bump pytest from 9.1.0 to 9.1.1 ([#69](https://github.com/csmarshall/gluetun-monitor/issues/69)) ([5342e49](https://github.com/csmarshall/gluetun-monitor/commit/5342e49daf2d575fcc5d28a7201aff9f8fd408ed))
+* bump ruff from 0.15.16 to 0.15.17 ([#65](https://github.com/csmarshall/gluetun-monitor/issues/65)) ([c201196](https://github.com/csmarshall/gluetun-monitor/commit/c2011966b684050c60138bc022b5fe1d13f1f7f6))
+* bump ruff from 0.15.17 to 0.15.18 ([#68](https://github.com/csmarshall/gluetun-monitor/issues/68)) ([7d427bb](https://github.com/csmarshall/gluetun-monitor/commit/7d427bbc8e0152880f2cf5e119581dcf5f7d965f))
+
+
+### CI / tooling
+
+* bump actions/checkout from 6 to 7 ([#67](https://github.com/csmarshall/gluetun-monitor/issues/67)) ([50f1d0d](https://github.com/csmarshall/gluetun-monitor/commit/50f1d0dd15f14c8daa3c99eb5936da4b10b56d55))
+
 ## [2.1.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.1.3...v2.1.4) (2026-06-15)
 
 
