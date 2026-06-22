@@ -171,8 +171,8 @@ docker compose up -d
 | [`DEPENDENT_CONTAINERS`](#dependent_containers) | `auto` | `auto` to discover dynamically, or comma-separated list (every named container must exist, else fatal) |
 | [`EXCLUDE_CONTAINERS`](#exclude_containers) | *(unset)* | Comma-separated container names to **never** manage (denylist). Filters auto-discovery and subtracts from an explicit list; exclude wins on overlap |
 | [`CHECK_INTERVAL`](#check_interval) | `30` | Seconds between health checks |
-| [`TIMEOUT`](#timeout) | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W` |
-| `WGET_TRIES` | `1` | Attempts per `wget` probe (the shuffle + consecutive-failure thresholds, not retries, are how noise is tolerated) |
+| [`TIMEOUT`](#timeout) | `10` | Per-request network timeout, applied identically to every probe — `wget --timeout` (gluetun site tests **and** the dependent-container probes) and `ping -W`. Overridable per URL — see [Per-URL tunables](#per-url-tunables) |
+| `WGET_TRIES` | `1` | Attempts per `wget` probe (the shuffle + consecutive-failure thresholds, not retries, are how noise is tolerated). Overridable per URL — see [Per-URL tunables](#per-url-tunables) |
 | [`FAIL_THRESHOLD`](#fail_threshold) | `2` | Consecutive site failures before restarting Gluetun |
 | [`HEALTHY_WAIT_TIMEOUT`](#healthy_wait_timeout) | `120` | Max seconds to wait for Gluetun to become healthy after restart |
 | `DEPENDENT_CONTAINER_FAILURES` | *(= `FAIL_THRESHOLD`)* | Consecutive per-dependent viability failures before remediating that dependent |
@@ -251,6 +251,10 @@ the in-container `wget`/`ping`), is **dropped with a startup warning** rather th
 probed. The probes also pass URLs/hosts after a `--` end-of-options separator, so
 a stray value can never be interpreted as a flag.
 
+An entry may also carry a `|key=value` suffix (e.g. `https://slow.example|timeout=25`)
+to override the probe timeout/retries for **that URL only** — see
+[Per-URL tunables](#per-url-tunables). A bare URL behaves exactly as before.
+
 #### `DOCKER_HOST`
 When unset, the Docker CLI connects via the local socket (`/var/run/docker.sock`). Set this to `tcp://<proxy-host>:2375` to connect through a [Docker socket proxy](#docker-socket-proxy) instead of mounting the socket directly. See the [Docker Socket Proxy](#docker-socket-proxy) section for setup details.
 
@@ -291,6 +295,28 @@ Uses `wget --spider` which only fetches headers (no response body downloaded).
 
 ### Timeouts & retries — one model, everywhere
 
+**Every timeout the monitor exposes, at a glance:**
+
+| Knob | Default | Scope | Bounds | Per-URL? |
+|---|---|---|---|---|
+| `TIMEOUT` | `10` | per-request | each `wget --timeout` / `ping -W` (gluetun site tests **and** dependent probes) | ✅ [yes](#per-url-tunables) |
+| `WGET_TRIES` | `1` | per-request | attempts per `wget` probe | ✅ [yes](#per-url-tunables) |
+| `CHECK_INTERVAL` | `30` | loop cadence | sleep between check cycles | — |
+| `HEALTHY_WAIT_TIMEOUT` | `120` | post-restart budget | wait for gluetun's healthcheck after a restart | — |
+| `DNS_WAIT_TIMEOUT` | `30` | post-restart budget | poll for DNS to stabilize after a restart | — |
+| `NOTIFY_TIMEOUT` | `10` | per-send | max wait for one (off-thread) notification send | — |
+| `NOTIFY_REPEAT_INTERVAL` | `0` | alert cadence | reminder cadence for an ongoing problem (`0` = announce once) | — |
+
+(The Docker API client timeout isn't a separate knob — it's derived as
+`max(TIMEOUT × 2, 60)`.)
+
+**Only the two per-request knobs (`TIMEOUT`, `WGET_TRIES`) are per-URL-overridable**
+([Per-URL tunables](#per-url-tunables)) — because they're the only ones that act on
+*a specific URL's* probe. The rest are loop cadence (`CHECK_INTERVAL`), notification
+plumbing, or **gluetun-restart-scoped wait budgets** (`HEALTHY_WAIT_TIMEOUT`,
+`DNS_WAIT_TIMEOUT`) that wait on the *gluetun container* recovering, not on probing
+any one site — so a per-URL value would be meaningless. See below for that split.
+
 There is **one per-request timeout knob, `TIMEOUT`**, and it is applied identically
 to every network probe the monitor makes:
 
@@ -320,6 +346,80 @@ site per loop** (so over loops it covers many names) and only acts after
 design already absorbs a flaky site, so a single fast attempt (`WGET_TRIES=1`) is
 the right default — raise it only if your links are lossy enough that one in-loop
 retry meaningfully helps.
+
+### Per-URL tunables
+
+`TIMEOUT`/`WGET_TRIES` set the **defaults**, and they're right for almost every
+site. Occasionally one canary is *slow but alive* — it answers, just not within
+the global ceiling. (`wget --timeout` bounds each connect/read/DNS step
+**individually**, not the whole request, so a server that opens the connection and
+then takes its time sending headers trips the timeout even though it's up — you'll
+see `Read error (Operation timed out) in headers`.) Timing it out triggers a
+gluetun restart that can't fix anything external.
+
+For exactly that case you can override the probe knobs **per URL**, in either
+source, with a `|key=value` suffix after the URL:
+
+```bash
+# sites.conf — bare URLs are unchanged; add |key=value only where you need it
+https://www.google.com
+https://slow-api.example|timeout=25
+https://flaky.example|timeout=20|tries=2
+```
+
+```yaml
+# SITES env — comma between entries, pipe within an entry
+- SITES=https://www.google.com,https://slow-api.example|timeout=25
+```
+
+- **The separator is `|`** so one syntax works in both the file *and* the
+  comma-separated `SITES` env: a URL never contains a bare `|`, and it survives the
+  CSV split.
+- **Keys:** `timeout` (seconds) and `tries` (attempts) — the per-URL equivalents of
+  `TIMEOUT`/`WGET_TRIES`. A site with no override inherits the globals, so nothing
+  changes for the rest.
+- **Forgiving:** an unknown key or non-positive value is **warned about at startup
+  and skipped** — the URL is still monitored on the defaults; a typo never drops a
+  site.
+- File overrides are **re-read live** like the URLs themselves; the active
+  overrides are logged whenever the set loads (`Per-URL probe overrides: …`).
+
+> **Why only `timeout`/`tries`?** These are the only **per-request** knobs — they
+> bound *this URL's* probe, so a per-URL value is meaningful. The other timeouts
+> are not per-URL-overridable by design: `CHECK_INTERVAL` is the loop cadence, and
+> `HEALTHY_WAIT_TIMEOUT`/`DNS_WAIT_TIMEOUT` are **gluetun-restart-scoped wait
+> budgets** — they wait for the *gluetun container* to recover, which has nothing to
+> do with any single site, so there's nothing to scope to a URL. See
+> [Timeouts & retries](#timeouts--retries--one-model-everywhere) for the full split.
+
+#### Let the monitor suggest them — `--suggest-tunables`
+
+You don't have to guess. The monitor already records how every site behaves
+(latency percentiles, failure categories, restart effectiveness — see
+[Site stats & flaky-site advisory](#site-stats--flaky-site-advisory))
+and can read that history back as concrete recommendations:
+
+```bash
+docker exec gluetun-monitor gluetun-monitor --suggest-tunables
+# (or, without a running container)
+docker compose run --rm gluetun-monitor --suggest-tunables
+```
+
+It prints a ranked, evidence-backed list — the biggest restart driver first — with
+the exact line to paste:
+
+```
+slow-api.example
+  18 read-timeout failure(s) but answers within p99=2579ms / max=13544ms — slow,
+  not dead; a 25s timeout keeps it a useful canary instead of triggering restarts
+  → https://slow-api.example|timeout=25
+```
+
+When a longer timeout *wouldn't* help — a site whose restarts rarely clear it and
+whose failures are DNS/connection (genuinely unreachable, not merely slow) — it
+says so and points you at reviewing/removing it instead. The suggestions are
+**advisory only**: the monitor never edits your config. The flaky-site advisory in
+the logs and notifications carries the same suggestion inline when one applies.
 
 ### Site Test Success/Failure Logic
 

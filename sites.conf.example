@@ -10,6 +10,14 @@
 # - Include sites you actually need to reach through the VPN
 # - Mix general sites with service-specific endpoints
 # - More sites = more comprehensive testing (minimal overhead due to parallel execution)
+#
+# Per-URL tunables:
+# - A slow-but-alive site can get its own probe timeout/retries with a
+#   "|key=value" suffix, overriding the global TIMEOUT/WGET_TRIES for that URL only:
+#       https://slow-api.example|timeout=25
+#       https://flaky.example|timeout=20|tries=2
+#   A bare URL (no "|") behaves exactly as before. Run the monitor with
+#   --suggest-tunables to have it recommend these from observed history.
 
 # General connectivity tests
 https://www.google.com
@@ -19,3 +27,4 @@ https://1.1.1.1
 # Add your custom sites below
 # https://your-service.com
 # https://api.example.com
+# https://slow-api.example|timeout=25
