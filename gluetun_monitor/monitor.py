@@ -681,6 +681,13 @@ class Monitor:
 
         breached = self.check_gluetun_sites(sites)
         if not breached:
+            # Keep the flaky-site advisory current on HEALTHY loops too (#75):
+            # the lifecycle resolves any alert not re-reported each loop, so
+            # evaluating only on breach loops made the advisory flap — a false
+            # "resolved" on the first healthy loop after every breach, then a
+            # fresh announce on the next one. Evaluated every loop, the alert
+            # stays active until the dominance window genuinely clears.
+            self._emit_advisory()
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
             self.run_dependent_phase(gluetun.id, sites)
@@ -760,9 +767,11 @@ class Monitor:
     def _emit_advisory(self) -> None:
         """Surface a flaky-site advisory when one site dominates recent restarts.
 
-        Reported to the alert lifecycle every loop it holds (which edge-triggers the
-        notification + resolves it when it clears); the log line + stats count fire
-        once per episode (``_advised_site``).
+        Called every loop — healthy and breached (#75) — so the alert lifecycle
+        sees the advisory continuously while the dominance window holds: the
+        notification edge-triggers once and resolves only when the window
+        genuinely clears, instead of flapping around each breach. The log line +
+        stats count still fire once per episode (``_advised_site``).
         """
         adv = self.stats.advisory(
             self.config.advisory_window,
