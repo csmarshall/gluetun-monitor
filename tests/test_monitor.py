@@ -123,7 +123,7 @@ def test_stranded_dependent_with_moved_gluetun_id_is_recreated(sites_file: str) 
     fake.on_exec = handler
     _monitor(fake, sites_file, dependent_containers="dep").run_once()
     assert len(fake.created) == 1
-    assert fake.removed == [("dep", False)]
+    assert fake.removed == [("dep.gm-recreate-old", False)]  # parked old, volumes kept
     assert fake.restarted == []
 
 
@@ -157,7 +157,7 @@ def test_remembered_dependent_recreated_after_live_gluetun_recreate(sites_file: 
 
     mon.run_once()  # loop 2: dep no longer matches current id, but is remembered
     assert len(fake.created) == 1  # recreated onto the new gluetun id
-    assert fake.removed[-1] == ("dep", False)
+    assert fake.removed[-1] == ("dep.gm-recreate-old", False)  # parked old, volumes kept
 
 
 def test_viability_failure_accumulates_to_threshold(sites_file: str) -> None:

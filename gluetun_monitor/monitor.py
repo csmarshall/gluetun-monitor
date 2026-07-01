@@ -32,6 +32,7 @@ from .dns_check import DnsResult, DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
 from .notify import Notifier, NotifyEvent, NullNotifier
 from .recovery import remediate_dependent, restart_gluetun
+from .recreate import sweep_recreate_leftovers
 from .site_stats import SiteStatsStore, format_window
 from .sites import (
     SiteSpec,
@@ -834,6 +835,10 @@ class Monitor:
 
     def announce(self) -> None:
         """Log the post-prerequisite startup context (connection, dependents, endpoint)."""
+        # Before anything else, heal any recreate that a previous monitor died in
+        # the middle of (SIGKILL/power loss) — restore or retire the parked
+        # container (#76), so discovery below sees the true state.
+        sweep_recreate_leftovers(self.client, self.log)
         if self.config.docker_host:
             self.log.info(f"Docker connection: socket proxy ({self.config.docker_host})")
         else:

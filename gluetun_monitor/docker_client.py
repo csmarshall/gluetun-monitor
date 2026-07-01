@@ -92,6 +92,10 @@ class DockerClient(Protocol):
         """Create a container from a raw API create body; return the new id."""
         ...
 
+    def rename(self, name_or_id: str, new_name: str) -> None:
+        """Rename a container (running or not); raises if ``new_name`` is taken."""
+        ...
+
     def start(self, name_or_id: str) -> None:
         """Start an existing (created) container."""
         ...
@@ -157,6 +161,12 @@ class DockerPyClient:
         """``POST /containers/create`` from a raw API body → the new container id."""
         result = self._api.create_container_from_config(config, name=name)
         return str(result["Id"])
+
+    def rename(self, name_or_id: str, new_name: str) -> None:
+        """``POST /containers/{id}/rename`` — same CONTAINERS+POST proxy class as
+        create/remove/start (ADR-0002), so no new socket-proxy permission needed.
+        """
+        self._api.rename(name_or_id, new_name)
 
     def start(self, name_or_id: str) -> None:
         """``POST /containers/{id}/start``."""

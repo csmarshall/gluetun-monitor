@@ -81,4 +81,4 @@ def test_distroless_moved_id_is_recreated_end_to_end(tmp_path: Path) -> None:
     mon = _mon(fake, config_file=str(conf), dependent_containers="distroless")
     mon.run_once()
     assert len(fake.created) == 1  # recreated onto the current gluetun id
-    assert fake.removed == [("distroless", False)]
+    assert fake.removed == [("distroless.gm-recreate-old", False)]  # parked old, volumes kept

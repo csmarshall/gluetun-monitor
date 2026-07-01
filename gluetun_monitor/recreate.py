@@ -20,11 +20,22 @@ data-loss guards are unit-testable:
 from __future__ import annotations
 
 import copy
+import os
+import signal
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .docker_client import DockerClient
     from .logging_setup import Logger
+
+# While a recreate is mid-flight the original container is parked under this
+# suffix (rename-aside), so every intermediate state is recoverable (#76).
+# Docker name charset allows '.', and the suffix is specific enough not to
+# collide with a real container name.
+_OLD_SUFFIX = ".gm-recreate-old"
 
 # Config fields the daemon rejects (or that are meaningless) when NetworkMode is
 # container:<id> — the shared netns owns the hostname and the port surface.
@@ -114,6 +125,98 @@ def build_create_body(inspect_raw: dict[str, Any], new_gluetun_id: str) -> dict[
     return body
 
 
+@contextmanager
+def _defer_stop_signals(logger: Logger) -> Iterator[None]:
+    """Hold SIGTERM/SIGINT for the duration of the recreate critical section.
+
+    The CLI's handlers exit immediately; a stop signal landing mid-recreate
+    (e.g. ``docker compose up -d`` recreating the monitor itself) would strand
+    the sequence half-done (#76). Signals received while held are re-delivered
+    to the restored handlers on exit, so shutdown still happens — just after
+    the container work is consistent. No-op off the main thread (CPython only
+    delivers signals to the main thread, and ``signal.signal`` would raise).
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    pending: list[int] = []
+
+    def _hold(signum: int, _frame: object) -> None:
+        if signum not in pending:
+            pending.append(signum)
+        logger.warn(
+            f"Received {signal.Signals(signum).name} during a recreate — "
+            f"deferring shutdown until the container is consistent"
+        )
+
+    previous = {s: signal.signal(s, _hold) for s in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+        for signum in pending:
+            os.kill(os.getpid(), signum)  # re-deliver to the restored handler
+
+
+def gc_recreate_leftover(client: DockerClient, dep_name: str, logger: Logger) -> bool:
+    """Remove a parked ``<dep>.gm-recreate-old`` left by an interrupted recreate.
+
+    Called before ANY remediation of ``dep_name``: if the leftover still exists
+    alongside the (already-replaced or about-to-be-replaced) dependent, it holds
+    the same volume mounts — starting/recreating the dependent with it still
+    around risks two instances writing the same data. Returns False when a
+    leftover exists but cannot be removed (the caller must NOT proceed).
+    """
+    leftover = f"{dep_name}{_OLD_SUFFIX}"
+    if client.inspect(leftover) is None:
+        return True
+    try:
+        client.remove(leftover, volumes=False)
+    except Exception as exc:
+        logger.error(
+            f"Cannot remove leftover {leftover} from an interrupted recreate: {exc} "
+            f"— refusing to remediate {dep_name} while it exists (shared volumes)"
+        )
+        return False
+    logger.warn(f"Removed leftover {leftover} from a previously interrupted recreate")
+    return True
+
+
+def sweep_recreate_leftovers(client: DockerClient, logger: Logger) -> None:
+    """Startup recovery for a recreate interrupted by SIGKILL/power loss (#76).
+
+    A ``<dep>.gm-recreate-old`` container found at startup means a recreate died
+    mid-sequence. If the real name is free (interrupted between rename and
+    create), the parked container IS the workload — rename it back. If the real
+    name exists (replacement was created), the parked one is condemned — remove
+    it (volumes preserved; they belong to the replacement now).
+    """
+    for cid in client.list_running_ids():
+        info = client.inspect(cid)
+        if info is None or not info.name.endswith(_OLD_SUFFIX):
+            continue
+        original = info.name[: -len(_OLD_SUFFIX)]
+        if client.inspect(original) is None:
+            try:
+                client.rename(info.name, original)
+                logger.warn(
+                    f"Restored {original}: an interrupted recreate had left it "
+                    f"parked as {info.name}"
+                )
+            except Exception as exc:
+                logger.error(f"Could not restore {info.name} to {original}: {exc}")
+        else:
+            try:
+                client.remove(info.name, volumes=False)
+                logger.warn(
+                    f"Removed {info.name}: leftover from an interrupted recreate "
+                    f"({original} was already replaced)"
+                )
+            except Exception as exc:
+                logger.error(f"Could not remove leftover {info.name}: {exc}")
+
+
 def recreate_dependent(
     client: DockerClient,
     dep_name: str,
@@ -122,8 +225,15 @@ def recreate_dependent(
 ) -> bool:
     """Recreate ``dep_name`` re-homed onto ``new_gluetun_id``. Returns success.
 
-    Order is remove-then-create because the new container reuses the same name.
-    ``volumes=False`` on remove is the data-preservation guarantee (ROC, ADR-0005).
+    The new container must reuse the same name, but remove-then-create left a
+    window where a failure (Docker API error, stop signal) destroyed the
+    dependent unrecoverably (#76). Instead: **rename aside → create → remove old
+    → start**, under deferred stop signals. Every intermediate state is
+    recoverable — a create failure rolls the rename back; anything harder is
+    healed by :func:`sweep_recreate_leftovers` at the next start. The old
+    container is removed *before* the new one starts because they share every
+    mount (two live instances would corrupt the volumes). ``volumes=False`` on
+    remove is the data-preservation guarantee (ROC, ADR-0005).
     """
     info = client.inspect(dep_name)
     if info is None:
@@ -136,14 +246,46 @@ def recreate_dependent(
         logger.error(f"Cannot recreate {dep_name}: failed to build spec: {exc}")
         return False
 
+    old_name = f"{dep_name}{_OLD_SUFFIX}"
     logger.warn(f"Recreating {dep_name} (re-homing netns onto gluetun {new_gluetun_id[:12]})")
-    try:
-        client.remove(dep_name, volumes=False)  # preserve named + anonymous volumes
-        new_id = client.create_from_config(body, name=dep_name)
-        client.start(new_id)
-    except Exception as exc:
-        logger.error(f"Recreate of {dep_name} failed: {exc}")
-        return False
+    with _defer_stop_signals(logger):
+        # 1. Park the original (still running; fully reversible).
+        try:
+            client.rename(dep_name, old_name)
+        except Exception as exc:
+            logger.error(f"Recreate of {dep_name} failed renaming the original: {exc}")
+            return False
+        # 2. Create the replacement under the real name; roll back on failure.
+        try:
+            new_id = client.create_from_config(body, name=dep_name)
+        except Exception as exc:
+            logger.error(f"Recreate of {dep_name} failed at create: {exc} — rolling back")
+            try:
+                client.rename(old_name, dep_name)
+                logger.info(f"{dep_name} restored (recreate rolled back; container unchanged)")
+            except Exception as rollback_exc:
+                logger.error(
+                    f"Rollback rename of {dep_name} also failed: {rollback_exc} — the "
+                    f"original is still intact as {old_name}; the startup sweep will "
+                    f"restore it"
+                )
+            return False
+        # 3. Retire the original BEFORE starting the replacement — they share
+        #    every mount, and two live instances would corrupt the volumes.
+        try:
+            client.remove(old_name, volumes=False)  # preserve named + anon volumes
+        except Exception as exc:
+            logger.error(
+                f"Recreate of {dep_name}: could not remove the old container: {exc} — "
+                f"NOT starting the replacement (shared volumes); will retry next loop"
+            )
+            return False
+        # 4. Start the replacement.
+        try:
+            client.start(new_id)
+        except Exception as exc:
+            logger.error(f"Recreate of {dep_name}: created but failed to start: {exc}")
+            return False
 
     logger.info(f"{dep_name} recreated as {new_id[:12]} and started")
     return True

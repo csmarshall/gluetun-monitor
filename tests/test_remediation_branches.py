@@ -97,10 +97,15 @@ class _CreateRaises(FakeDockerClient):
         raise RuntimeError("simulated create failure")
 
 
-def test_recreate_create_failure_after_remove_returns_false() -> None:
-    """If create fails after the remove, recreate returns False (the dependent is
-    left removed — documented, hard to make atomic given Docker name reuse)."""
+def test_recreate_create_failure_rolls_back_the_rename() -> None:
+    """#76: a create failure must NOT destroy the dependent. The rename-aside
+    sequence rolls back — the original container survives, under its original
+    name, still running (pre-fix: remove-then-create left it permanently gone)."""
     fake = _CreateRaises()
     fake.add_container("dep", network_mode=f"container:{OLD_ID}")
     assert recreate_dependent(fake, "dep", GLUETUN_ID, _logger()) is False
-    assert fake.removed == [("dep", False)]  # remove happened, with volumes preserved
+    assert fake.removed == []  # nothing destroyed
+    info = fake.inspect("dep")
+    assert info is not None and info.running  # original restored, intact
+    # Park + rollback are both recorded.
+    assert fake.renamed == [("dep", "dep.gm-recreate-old"), ("dep.gm-recreate-old", "dep")]

@@ -147,7 +147,7 @@ def test_remediate_recreate_path() -> None:
     fake.on_exec = _live_exec
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
     assert ok is True
-    assert fake.removed == [("dep", False)]
+    assert fake.removed == [("dep.gm-recreate-old", False)]  # parked old, volumes kept
     assert len(fake.created) == 1
     assert fake.restarted == []  # recreate, not restart
 

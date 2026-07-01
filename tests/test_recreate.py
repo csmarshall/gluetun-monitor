@@ -147,7 +147,7 @@ def test_recreate_dependent_removes_without_volumes_then_creates() -> None:
     ok = recreate_dependent(fake, "qbittorrent", NEW_GLUETUN_ID, _logger())
     assert ok is True
     # The data-preservation guarantee: remove must NOT delete volumes.
-    assert fake.removed == [("qbittorrent", False)]
+    assert fake.removed == [("qbittorrent.gm-recreate-old", False)]
     assert len(fake.created) == 1
     body, name = fake.created[0]
     assert name == "qbittorrent"
