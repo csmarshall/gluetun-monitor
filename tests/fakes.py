@@ -78,6 +78,7 @@ class FakeDockerClient:
         self.removed: list[tuple[str, bool]] = []  # (name_or_id, volumes)
         self.created: list[tuple[dict[str, Any], str]] = []  # (body, name)
         self.started: list[str] = []
+        self.renamed: list[tuple[str, str]] = []  # (name_or_id, new_name)
         self._id_seq = 1000
 
     # ----- test setup helpers -----
@@ -151,6 +152,15 @@ class FakeDockerClient:
         self._store[new_id] = raw
         self.created.append((config, name))
         return new_id
+
+    def rename(self, name_or_id: str, new_name: str) -> None:
+        raw = self._resolve(name_or_id)
+        if raw is None:
+            raise RuntimeError(f"no such container: {name_or_id}")
+        if self._resolve(new_name) is not None:
+            raise RuntimeError(f"name already in use: {new_name}")
+        raw["Name"] = f"/{new_name}"
+        self.renamed.append((name_or_id, new_name))
 
     def start(self, name_or_id: str) -> None:
         raw = self._resolve(name_or_id)

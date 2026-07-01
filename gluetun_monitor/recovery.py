@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from .dependents import interface_check, remediation_action
 from .endpoint import get_endpoint_info
-from .recreate import recreate_dependent
+from .recreate import gc_recreate_leftover, recreate_dependent
 from .state import InterfaceStatus, RemediationAction
 
 if TYPE_CHECKING:
@@ -176,6 +176,12 @@ def remediate_dependent(
     info = client.inspect(dep_name)
     if info is None:
         logger.error(f"Cannot remediate {dep_name}: container not found")
+        return False
+
+    # A parked twin from an interrupted recreate shares every volume with this
+    # container — restarting/recreating alongside it risks two writers on the
+    # same data. Clear it first; refuse to act if it can't be cleared (#76).
+    if not gc_recreate_leftover(client, dep_name, logger):
         return False
 
     action = remediation_action(info, gluetun_id)
