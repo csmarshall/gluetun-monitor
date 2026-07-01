@@ -66,6 +66,12 @@ def test_empty_entry_is_skipped() -> None:
         ("https://x|timeout=abc", "invalid timeout"),
         ("https://x|timeout=0", "invalid timeout"),
         ("https://x|tries=-1", "invalid tries"),
+        # #73: Unicode digits pass str.isdigit() but int() refuses them — must
+        # warn-and-skip like any other bad value, never raise (pre-fix this was
+        # an uncaught ValueError: a startup crash, or a silent monitoring halt
+        # when the file was edited live).
+        ("https://x|timeout=²", "invalid timeout"),
+        ("https://x|tries=¹²³", "invalid tries"),
     ],
 )
 def test_bad_options_warn_but_keep_the_url(entry: str, fragment: str) -> None:
@@ -121,6 +127,65 @@ def test_report_surfaces_option_warnings_and_unsafe_drops(tmp_path: Path) -> Non
 def test_missing_file_is_not_fatal(tmp_path: Path) -> None:
     specs = load_specs(str(tmp_path / "nope.conf"), "https://only-env")
     assert [s.url for s in specs] == ["https://only-env"]
+
+
+# ----- reload resilience (#73): a bad edit or reload failure never halts checks -----
+
+def _probing_monitor(conf: str) -> tuple[Monitor, list[list[str]], io.StringIO]:
+    """A Monitor against a healthy fake gluetun that records every exec'd command."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+    cmds: list[list[str]] = []
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        cmds.append(cmd)
+        return ExecResult(0, "  HTTP/1.1 200 OK\n")
+
+    fake.on_exec = handler
+    stream = io.StringIO()
+    cfg = Config(config_file=conf, gluetun_container="gluetun")
+    logger = Logger(log_file=None, level="DEBUG", stream=stream)
+    return (
+        Monitor(fake, cfg, logger, rng=random.Random(0), sleep=lambda _s: None),
+        cmds,
+        stream,
+    )
+
+
+def _wget_urls(cmds: list[list[str]]) -> list[str]:
+    return [c[-1] for c in cmds if c and c[0] == "wget" and c[-1].startswith("http")]
+
+
+def test_bad_live_edit_does_not_halt_monitoring(tmp_path: Path) -> None:
+    """#73 regression: a live sites.conf edit that adds a Unicode-digit tunable
+    (`isdigit()`-true, `int()`-false) must warn-and-skip, not raise — pre-fix the
+    ValueError escaped run_once every loop and monitoring silently ceased."""
+    conf = _conf(tmp_path, "https://a.example\n")
+    mon, cmds, _ = _probing_monitor(conf)
+    mon.run_once()
+    Path(conf).write_text("https://a.example|timeout=²\n")
+    mon.run_once()  # pre-fix: uncaught ValueError
+    # Both loops probed the site; the bad override fell back to the global knobs.
+    assert _wget_urls(cmds).count("https://a.example") == 2
+
+
+def test_reload_failure_keeps_previous_sites_and_monitoring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defense in depth (#73): if the per-loop sites reload fails for ANY reason
+    (unreadable bind-mount, a future parse bug), the loop must fall back to the
+    last good site set and keep checking — a stale list beats a silent halt."""
+    conf = _conf(tmp_path, "https://a.example\n")
+    mon, cmds, stream = _probing_monitor(conf)
+    mon.run_once()  # loads the good set
+
+    def boom(*_a: object) -> list[SiteSpec]:
+        raise OSError("bind-mount blip")
+
+    monkeypatch.setattr("gluetun_monitor.monitor.load_specs", boom)
+    mon.run_once()
+    assert _wget_urls(cmds).count("https://a.example") == 2  # still probing
+    assert "Failed to reload sites config" in stream.getvalue()
 
 
 # ----- end to end: the override reaches the wget inside gluetun -----
