@@ -615,6 +615,12 @@ class Monitor:
         self.alerts.begin_loop()
         try:
             self._run_once_body()
+        except Exception:
+            # The loop died partway (e.g. the Docker socket went away mid-cycle):
+            # subjects past the crash point were never evaluated, so the flush
+            # below must not read their silence as recovery (#74).
+            self.alerts.mark_incomplete()
+            raise
         finally:
             self._flush_notifications()
 
@@ -626,6 +632,19 @@ class Monitor:
         gluetun = self.client.inspect(self.config.gluetun_container)
         if gluetun is None or not gluetun.running:
             self.log.error("Gluetun container is not running!")
+            # The most severe condition must not be the quietest (#74): report it
+            # to the lifecycle so it notifies (once, edge-triggered) and resolves
+            # when gluetun returns. Nothing else was evaluated this loop, so the
+            # other active alerts are held, not "resolved".
+            self._problem(
+                "gluetun-down",
+                "attention",
+                f"gluetun is down ({self.config.gluetun_container})",
+                f"The gluetun container '{self.config.gluetun_container}' is "
+                f"{'not running' if gluetun is not None else 'gone (not found)'} — "
+                f"the monitor cannot check or heal the stack until it returns.",
+            )
+            self.alerts.mark_incomplete()
             return
         if gluetun.health != "healthy":
             self.log.warn(f"Gluetun health status: {gluetun.health}")
@@ -703,6 +722,7 @@ class Monitor:
                 f"Was failing on {', '.join(breached)}; restarted but it did not come back "
                 f"healthy — manual intervention may be required.",
             )
+            self.alerts.mark_incomplete()  # dependents were never evaluated (#74)
             return
 
         # Re-verify without recording (so the loop counts one poll per site, not two).
@@ -721,6 +741,7 @@ class Monitor:
                 f"{', '.join(reverify_breached)} — manual intervention may be required.",
             )
             self.site_failures.reset_all()
+            self.alerts.mark_incomplete()  # dependents left untouched = unevaluated (#74)
             return
 
         self.log.info("Connectivity verified after restart")
