@@ -17,6 +17,7 @@ from gluetun_monitor.sites import (
     is_ip_literal,
     parse_sites_conf,
     resolvable_pool,
+    strip_inline_comment,
     trim,
 )
 
@@ -57,6 +58,41 @@ def test_parse_skips_comments_blanks_and_whitespace(tmp_path: Path) -> None:
         "https://cloudflare.com",
         "https://1.1.1.1",
     ]
+
+
+def test_parse_strips_inline_comments_but_keeps_fragments(tmp_path: Path) -> None:
+    """#73: a trailing ``# note`` must not become part of the URL (pre-fix it
+    produced a phantom permanently-failing site that counted toward
+    FAIL_THRESHOLD). A ``#`` with no whitespace before it is a URL fragment and
+    is preserved."""
+    conf = tmp_path / "sites.conf"
+    conf.write_text(
+        "https://a.example  # the slow one\n"
+        "https://b.example\t# tab comment\n"
+        "https://c.example#fragment\n"
+    )
+    assert parse_sites_conf(conf) == [
+        "https://a.example",
+        "https://b.example",
+        "https://c.example#fragment",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("https://a.example  # note", "https://a.example  "),
+        ("# whole line", ""),
+        ("   # indented", "   "),
+        ("https://a.example#frag", "https://a.example#frag"),
+        ("https://a.example", "https://a.example"),
+        ("", ""),
+    ],
+)
+def test_strip_inline_comment(line: str, expected: str) -> None:
+    """The comment starts at a ``#`` that begins the line or follows whitespace;
+    trailing whitespace is left for trim() (the callers always trim after)."""
+    assert strip_inline_comment(line) == expected
 
 
 def test_parse_missing_file_raises(tmp_path: Path) -> None:

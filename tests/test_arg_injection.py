@@ -75,6 +75,16 @@ def test_unsafe_site_reason() -> None:
     assert unsafe_site_reason("1.1.1.1") is None  # bare IP is fine
 
 
+def test_unsafe_site_reason_rejects_embedded_whitespace() -> None:
+    """#73: whitespace never belongs in a URL — it means an inline comment (or
+    other garbage) leaked past parsing, e.g. via a SITES env entry, which unlike
+    the file is not comment-stripped. Rejecting it here keeps the phantom
+    always-failing 'site' out of the test set entirely."""
+    assert unsafe_site_reason("https://a.example # note") is not None
+    assert unsafe_site_reason("https://a.example\t#x") is not None
+    assert unsafe_site_reason("https://a.example") is None
+
+
 def test_load_sites_drops_unsafe_entries(tmp_path: Path) -> None:
     conf = tmp_path / "sites.conf"
     conf.write_text("https://ok.example\n--evil-flag\nhttp://\n", encoding="utf-8")

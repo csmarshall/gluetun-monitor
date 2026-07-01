@@ -646,8 +646,18 @@ class Monitor:
         # non-empty set; a runtime edit down to empty just tests nothing this loop.
         # Specs carry any per-URL |timeout/|tries overrides (#60); cache the url->spec
         # map so the probe call sites can resolve a site's effective knobs.
-        specs = load_specs(self.config.config_file, self.config.sites_env)
-        self._specs = {s.url: s for s in specs}
+        # A failed reload (unreadable file, a parse bug) must never take the
+        # watchdog's checks down with it: fall back to the last good set and
+        # keep monitoring — a stale site list beats a silent halt (#73).
+        try:
+            specs = load_specs(self.config.config_file, self.config.sites_env)
+            self._specs = {s.url: s for s in specs}
+        except Exception as exc:
+            self.log.error(
+                f"Failed to reload sites config ({self.config.config_file}): {exc} "
+                f"— keeping the previous {len(self._specs)} site(s)"
+            )
+            specs = list(self._specs.values())
         sites = [s.url for s in specs]
 
         breached = self.check_gluetun_sites(sites)

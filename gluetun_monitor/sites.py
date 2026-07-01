@@ -72,7 +72,10 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
         if key not in _OPTION_KEYS:
             warnings.append(f"unknown option {key!r} (known: {', '.join(_OPTION_KEYS)})")
             continue
-        if not value.isdigit() or int(value) < 1:
+        # isascii() first: str.isdigit() is True for Unicode digits (e.g. '²')
+        # that int() refuses, so isdigit() alone lets the int() below raise —
+        # turning a config typo into a crash instead of a warn-and-skip (#73).
+        if not (value.isascii() and value.isdigit()) or int(value) < 1:
             warnings.append(f"invalid {key} {value!r} (want a positive integer)")
             continue
         values[key] = int(value)
@@ -89,18 +92,32 @@ def trim(s: str) -> str:
     return s.strip()
 
 
+def strip_inline_comment(line: str) -> str:
+    """Drop an inline ``#`` comment: a ``#`` preceded by whitespace starts a
+    comment (``https://a.example  # note`` → ``https://a.example``); a ``#``
+    with no whitespace before it is URL content (a fragment) and is kept.
+
+    v2 extension (v1 skipped whole-line comments only): without it the trailing
+    comment becomes part of the URL — a phantom site that fails every poll and
+    counts toward FAIL_THRESHOLD (#73).
+    """
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
 def parse_sites_conf(path: str | Path) -> list[str]:
     """Read a sites.conf and return the list of test URLs.
 
-    Skips blank/whitespace-only lines and ``#`` comments; trims each entry.
-    Raises FileNotFoundError if the file is missing (caller decides severity).
+    Skips blank/whitespace-only lines and ``#`` comments (whole-line and
+    inline — see :func:`strip_inline_comment`); trims each entry. Raises
+    FileNotFoundError if the file is missing (caller decides severity).
     """
     sites: list[str] = []
     text = Path(path).read_text(encoding="utf-8")
     for raw_line in text.splitlines():
-        if raw_line.lstrip().startswith("#"):
-            continue
-        site = trim(raw_line)
+        site = trim(strip_inline_comment(raw_line))
         if not site:
             continue
         sites.append(site)
@@ -119,10 +136,15 @@ def unsafe_site_reason(site: str) -> str | None:
     rather than a URL — e.g. ``--directory-prefix=/etc`` could write files inside
     a container (the exec layer also guards this with a ``--`` separator; this
     keeps such a bogus "flag URL" out of the test set entirely — Tenet 1). An
-    entry with no host component tests nothing.
+    entry with no host component tests nothing. Embedded whitespace never
+    belongs in a URL — it means something leaked past parsing (e.g. an inline
+    comment in a ``SITES`` env entry, which unlike the file is not
+    comment-stripped) and would only ever poll as a phantom failure (#73).
     """
     if site.startswith("-"):
         return "looks like a command-line flag (leading '-')"
+    if any(ch.isspace() for ch in site):
+        return "contains whitespace (inline comment or malformed entry?)"
     if not hostname_of(site):
         return "no host component"
     return None

@@ -1,6 +1,7 @@
 # Gluetun Monitor - Sites to test for VPN connectivity
 # Add one URL per line
-# Lines starting with # are comments
+# Lines starting with # are comments; a "#" after whitespace starts an
+# inline comment (https://example.com  # like this)
 #
 # All sites are tested in parallel. If any site fails consecutively
 # (based on FAIL_THRESHOLD), Gluetun will be restarted.
