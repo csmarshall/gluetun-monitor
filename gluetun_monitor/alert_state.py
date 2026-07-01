@@ -16,6 +16,13 @@ subjects it has stopped managing via :meth:`forget`. At loop end :meth:`events` 
   from config, dependent excluded/gone) — "no longer monitored", since a "recovered"
   there would be a lie.
 
+A loop that could not evaluate every subject — it died on an exception, or bailed
+early (gluetun down, recovery failed) before reaching the dependent phase — must
+call :meth:`mark_incomplete`: on such a loop, silence is *absence of evidence*, not
+recovery, so unreported active alerts are held instead of resolved (#74). Problems
+that WERE reported (or explicitly forgotten) before the abort still process
+normally — they were evaluated.
+
 State persists to a JSON sidecar, and the loop counter persists with it, so a restart
 of the monitor neither re-spams still-broken problems nor misses a resolve that
 happened while it was down.
@@ -56,6 +63,7 @@ class AlertState:
         self._active: dict[str, _Active] = {}
         self._reported: dict[str, tuple[str, str, str]] = {}  # this loop: key -> (tier,title,body)
         self._forgotten: set[str] = set()  # this loop: subjects no longer monitored
+        self._incomplete = False  # this loop: aborted before evaluating everything
         self._load()
 
     # ----- per-loop input from the monitor -----
@@ -65,6 +73,15 @@ class AlertState:
         self._loop += 1
         self._reported = {}
         self._forgotten = set()
+        self._incomplete = False
+
+    def mark_incomplete(self) -> None:
+        """Declare that this loop did NOT evaluate every subject (it aborted on an
+        exception or bailed early). :meth:`events` will then hold unreported active
+        alerts instead of resolving them — an unevaluated problem didn't clear, we
+        just never looked (#74).
+        """
+        self._incomplete = True
 
     def report(self, key: str, tier: str, title: str, body: str) -> None:
         """Declare that problem ``key`` is currently true this loop."""
@@ -101,6 +118,11 @@ class AlertState:
 
         for key in list(self._active):
             if key in self._reported:
+                continue
+            if self._incomplete and key not in self._forgotten:
+                # The loop never got as far as evaluating this subject: hold the
+                # alert. A forget is an explicit statement and still processes.
+                self._log.debug(f"notify: {key} held (loop incomplete — not evaluated)")
                 continue
             active = self._active.pop(key)
             active_for = self._loop - active.since_loop

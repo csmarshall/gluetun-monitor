@@ -76,6 +76,54 @@ def test_forgotten_subject_emits_deprecation_not_resolve() -> None:
     assert "no longer monitored" in events[0].title
 
 
+def test_incomplete_loop_holds_unreported_alerts() -> None:
+    """#74: a loop that aborted before evaluating everything must not read the
+    silence of an active alert as recovery — it is held, and resolves only on
+    the next COMPLETE loop that doesn't report it."""
+    s = _state()
+    s.begin_loop()
+    s.report("k", "attention", "P", "b")
+    s.events()
+
+    s.begin_loop()  # aborted loop: k never evaluated
+    s.mark_incomplete()
+    assert s.events() == []  # no false "resolved"
+    assert s.active_count() == 1  # still firing
+
+    s.begin_loop()  # complete loop, not reported → NOW it genuinely cleared
+    resolved = s.events()
+    assert [e.key for e in resolved] == ["resolve:k"]
+
+
+def test_incomplete_loop_still_fires_new_reports_and_forgets() -> None:
+    """A problem reported (or explicitly forgotten) before the abort WAS
+    evaluated — those process normally even on an incomplete loop."""
+    s = _state()
+    s.begin_loop()
+    s.report("old", "attention", "Old", "b")
+    s.events()
+
+    s.begin_loop()
+    s.report("new", "attention", "New", "b")  # evaluated before the abort
+    s.forget("old")  # explicit statement — still honored
+    s.mark_incomplete()
+    keys = {e.key for e in s.events()}
+    assert keys == {"new", "deprecated:old"}
+
+
+def test_incomplete_resets_each_loop() -> None:
+    """mark_incomplete applies to the current loop only."""
+    s = _state()
+    s.begin_loop()
+    s.report("k", "attention", "P", "b")
+    s.events()
+    s.begin_loop()
+    s.mark_incomplete()
+    s.events()
+    s.begin_loop()  # fresh loop: complete unless marked again
+    assert [e.key for e in s.events()] == ["resolve:k"]
+
+
 def test_active_count_reflects_firing_problems() -> None:
     s = _state()
     s.begin_loop()
