@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.1...v2.2.2) (2026-07-02)
+
+
+### Fixed
+
+* **advisory:** evaluate the flaky-site advisory every loop, not only on breaches ([#75](https://github.com/csmarshall/gluetun-monitor/issues/75)) ([#95](https://github.com/csmarshall/gluetun-monitor/issues/95)) ([013cc3f](https://github.com/csmarshall/gluetun-monitor/commit/013cc3f7302edef5076255fddc216f2880280748))
+* **alerts:** hold active alerts on aborted loops; notify when gluetun is down ([#74](https://github.com/csmarshall/gluetun-monitor/issues/74)) ([#94](https://github.com/csmarshall/gluetun-monitor/issues/94)) ([401b4af](https://github.com/csmarshall/gluetun-monitor/commit/401b4afef92779e0d62bc080d4d7070bdcad573b))
+* **endpoint:** bound the log fetch behind get_endpoint_info ([#78](https://github.com/csmarshall/gluetun-monitor/issues/78)) ([#100](https://github.com/csmarshall/gluetun-monitor/issues/100)) ([9333394](https://github.com/csmarshall/gluetun-monitor/commit/933339486824ec47db583c9a14c3ab0a9ddbc706))
+* **probe:** size the Docker transport from effective per-URL timeouts ([#77](https://github.com/csmarshall/gluetun-monitor/issues/77)) ([#99](https://github.com/csmarshall/gluetun-monitor/issues/99)) ([ebb89d9](https://github.com/csmarshall/gluetun-monitor/commit/ebb89d96951617711da428109a68b1d6eec7ed53))
+* **recreate:** close the destructive remove→create window ([#76](https://github.com/csmarshall/gluetun-monitor/issues/76)) ([#96](https://github.com/csmarshall/gluetun-monitor/issues/96)) ([674479a](https://github.com/csmarshall/gluetun-monitor/commit/674479a53b7eb6d9550b38e32c5a3a38175afd78))
+* **sites:** never let a bad sites.conf entry crash or halt monitoring ([#73](https://github.com/csmarshall/gluetun-monitor/issues/73)) ([#92](https://github.com/csmarshall/gluetun-monitor/issues/92)) ([d33ea06](https://github.com/csmarshall/gluetun-monitor/commit/d33ea0601427aeb9397f79144f86f54917959667))
+
+
+### Dependencies
+
+* bump ruff from 0.15.18 to 0.15.20 ([#72](https://github.com/csmarshall/gluetun-monitor/issues/72)) ([fa8e7cf](https://github.com/csmarshall/gluetun-monitor/commit/fa8e7cf6b0ad626e77f19dab56a7537e19ba29db))
+
 ## [2.2.1](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.0...v2.2.1) (2026-06-29)
 
 
