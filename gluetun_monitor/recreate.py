@@ -37,6 +37,19 @@ if TYPE_CHECKING:
 # collide with a real container name.
 _OLD_SUFFIX = ".gm-recreate-old"
 
+
+def is_parked_name(name: str) -> bool:
+    """True if ``name`` is a recreate-parked container (``*.gm-recreate-old``).
+
+    Parked containers are recreate MACHINERY, owned exclusively by
+    :func:`gc_recreate_leftover` and :func:`sweep_recreate_leftovers`. Nothing
+    else — discovery, the remembered set, the orphan-adoption scan — may treat
+    one as a dependent: adopting a parked twin re-parks it under a stacked
+    suffix and mints a fresh orphan container every loop (observed live during
+    the #97 dogfood when an unremovable parked twin met the adoption scan).
+    """
+    return name.endswith(_OLD_SUFFIX)
+
 # Config fields the daemon rejects (or that are meaningless) when NetworkMode is
 # container:<id> — the shared netns owns the hostname and the port surface.
 _STRIP_CONFIG_FIELDS = ("Hostname", "Domainname", "ExposedPorts", "MacAddress")
@@ -235,6 +248,12 @@ def recreate_dependent(
     mount (two live instances would corrupt the volumes). ``volumes=False`` on
     remove is the data-preservation guarantee (ROC, ADR-0005).
     """
+    if is_parked_name(dep_name):
+        # Belt-and-braces for the same invariant guarded at the scan layer: a
+        # parked twin must never be treated as a dependent (stacked-suffix
+        # runaway). gc/sweep are the only paths allowed to touch these.
+        logger.error(f"Refusing to recreate {dep_name}: recreate-parked containers are machinery, not dependents")
+        return False
     info = client.inspect(dep_name)
     if info is None:
         logger.error(f"Cannot recreate {dep_name}: container not found")

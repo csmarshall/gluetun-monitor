@@ -33,7 +33,7 @@ from .endpoint import get_endpoint_info
 from .monitor_state import MonitorState
 from .notify import Notifier, NotifyEvent, NullNotifier
 from .recovery import remediate_dependent, restart_gluetun
-from .recreate import sweep_recreate_leftovers
+from .recreate import is_parked_name, sweep_recreate_leftovers
 from .site_stats import SiteStatsStore, format_window
 from .sites import (
     SiteSpec,
@@ -140,7 +140,12 @@ class Monitor:
         # longer matches it — but we remember it from before the recreate and
         # keep checking it (ADR-0004: track across cycles). Pruned to existing.
         # Seeded from the persisted memory; _resolve_dependents prunes to existing.
-        self._known_dependents: set[str] = set(self.mstate.known_dependents)
+        # Parked (*.gm-recreate-old) names are filtered even here: a state file
+        # written by a version without the parked-name guard may carry them, and
+        # they are recreate machinery, never dependents.
+        self._known_dependents: set[str] = {
+            n for n in self.mstate.known_dependents if not is_parked_name(n)
+        }
         # The set managed last loop — to retire an alert ("no longer monitored") when
         # a dependent leaves (excluded or gone), rather than a false "resolved" (ADR-0012).
         self._managed_dependents: set[str] = set()
@@ -487,7 +492,9 @@ class Monitor:
         # Re-arm the warning for any name that has since reappeared.
         self._warned_missing &= {name for name, exists in present.items() if not exists}
 
-        self._known_dependents.update(name for name, exists in present.items() if exists)
+        self._known_dependents.update(
+            name for name, exists in present.items() if exists and not is_parked_name(name)
+        )
         # Prune the remembered set to containers that still exist. Reuse the
         # existence we already learned for the current names; only inspect a
         # remembered name we haven't already checked this loop (e.g. one stranded
@@ -937,6 +944,11 @@ class Monitor:
                 continue  # name-form target resolves normally; not a dangling id
             referenced.add(target)
             if info.name in skip:
+                continue
+            if is_parked_name(info.name):
+                # Recreate machinery (gc/sweep territory) — adopting a parked
+                # twin would re-park it under a stacked suffix and mint a fresh
+                # orphan every loop (found by the #97 dogfood).
                 continue
             if self.client.inspect(target) is not None:
                 continue  # the netns parent still exists — not stranded
