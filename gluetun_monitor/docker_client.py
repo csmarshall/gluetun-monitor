@@ -68,6 +68,17 @@ class DockerClient(Protocol):
         """IDs of currently running containers."""
         ...
 
+    def list_all_ids(self) -> list[str]:
+        """IDs of ALL containers, including stopped/exited ones.
+
+        The stranded-orphan adoption scan (#97) must see exited containers: a
+        dependent stranded by a gluetun recreate is usually driven to Exited by
+        its own restart policy (a start onto a dead netns id fails hard), and a
+        running-only listing would hide exactly the containers most in need of
+        healing.
+        """
+        ...
+
     def inspect(self, name_or_id: str) -> ContainerInfo | None:
         """Inspect a container, or None if it does not exist."""
         ...
@@ -140,6 +151,10 @@ class DockerPyClient:
     def list_running_ids(self) -> list[str]:
         """``GET /containers/json`` (running only) → their ids."""
         return [c["Id"] for c in self._api.containers(all=False)]
+
+    def list_all_ids(self) -> list[str]:
+        """``GET /containers/json?all=1`` (every container) → their ids."""
+        return [c["Id"] for c in self._api.containers(all=True)]
 
     def inspect(self, name_or_id: str) -> ContainerInfo | None:
         """``GET /containers/{id}/json`` → ContainerInfo, or None if not found."""

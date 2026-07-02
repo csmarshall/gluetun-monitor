@@ -5,6 +5,10 @@ gluetun's old, now-gone id, so current-id discovery can't see it. We surface it
 with an actionable WARN suggesting DEPENDENT_CONTAINERS — but we deliberately do
 NOT auto-recreate it, because an orphan whose parent is gone can't be confirmed
 as *this* gluetun's dependent (Tenet 1, first do no harm).
+
+Since #97 these are the NEGATIVE-path pins for the adoption scan: a dead parent
+id that is NOT in the persisted gluetun history keeps exactly this warn-only
+behavior (the positive/adoption paths live in test_dependent_memory.py).
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ def test_warns_about_dangling_orphan_but_does_not_recreate() -> None:
     # 'orphan' points at a container id that doesn't exist (dead netns parent).
     fake.add_container("orphan", network_mode=f"container:{DEAD_ID}")
     mon, stream = _mon(fake)
-    mon._warn_dangling_orphans()
+    mon._scan_stranded_orphans(GLUETUN_ID)
     out = stream.getvalue()
     assert "orphan" in out and "no longer exists" in out
     assert "DEPENDENT_CONTAINERS" in out
@@ -49,7 +53,7 @@ def test_no_warn_when_netns_parent_exists() -> None:
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
     mon, stream = _mon(fake)
-    mon._warn_dangling_orphans()
+    mon._scan_stranded_orphans(GLUETUN_ID)
     assert "no longer exists" not in stream.getvalue()
 
 
@@ -60,7 +64,7 @@ def test_no_warn_for_excluded_or_listed() -> None:
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("orphan", network_mode=f"container:{DEAD_ID}")
     mon, stream = _mon(fake, exclude_containers="orphan")
-    mon._warn_dangling_orphans()
+    mon._scan_stranded_orphans(GLUETUN_ID)
     assert "no longer exists" not in stream.getvalue()
 
 
@@ -69,6 +73,6 @@ def test_orphan_warning_dedups() -> None:
     fake.add_container("gluetun", id=GLUETUN_ID)
     fake.add_container("orphan", network_mode=f"container:{DEAD_ID}")
     mon, stream = _mon(fake)
-    mon._warn_dangling_orphans()
-    mon._warn_dangling_orphans()
+    mon._scan_stranded_orphans(GLUETUN_ID)
+    mon._scan_stranded_orphans(GLUETUN_ID)
     assert stream.getvalue().count("no longer exists") == 1

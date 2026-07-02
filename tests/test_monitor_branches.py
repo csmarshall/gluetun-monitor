@@ -145,5 +145,5 @@ def test_orphan_warn_skips_nameform_target() -> None:
     # dangling id, so no orphan warning.
     fake.add_container("buddy", network_mode="container:gluetun")
     mon = _mon(fake, dependent_containers="auto")
-    mon._warn_dangling_orphans()
+    mon._scan_stranded_orphans("f" * 64)
     assert "no longer exists" not in _stream(mon).getvalue()

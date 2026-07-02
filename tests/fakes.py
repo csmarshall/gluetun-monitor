@@ -120,6 +120,9 @@ class FakeDockerClient:
             if raw.get("State", {}).get("Running", False)
         ]
 
+    def list_all_ids(self) -> list[str]:
+        return list(self._store.keys())
+
     def inspect(self, name_or_id: str) -> ContainerInfo | None:
         raw = self._resolve(name_or_id)
         return ContainerInfo.from_inspect(raw) if raw is not None else None

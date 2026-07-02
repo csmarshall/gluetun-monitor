@@ -30,6 +30,7 @@ from .dependents import (
 )
 from .dns_check import DnsResult, DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
+from .monitor_state import MonitorState
 from .notify import Notifier, NotifyEvent, NullNotifier
 from .recovery import remediate_dependent, restart_gluetun
 from .recreate import sweep_recreate_leftovers
@@ -93,6 +94,7 @@ class Monitor:
         sleep: Sleep = time.sleep,
         stats: SiteStatsStore | None = None,
         notifier: Notifier | None = None,
+        state: MonitorState | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -129,17 +131,22 @@ class Monitor:
         # per-URL timeout/tries override (#60). Refreshed each loop in _run_once_body
         # alongside the (deduplicated) URL list; empty until the first load.
         self._specs: dict[str, SiteSpec] = {}
+        # Durable dependent memory (#97): gluetun id history + known dependent
+        # names, persisted so neither a monitor restart nor a gluetun recreate
+        # inside the first-loop window can blind remediation. Injectable for tests.
+        self.mstate = state if state is not None else MonitorState(config.monitor_state_file)
         # Dependents seen at least once. A dependent stranded by a gluetun
         # *recreate* still points at the dead old id, so current-id discovery no
         # longer matches it — but we remember it from before the recreate and
         # keep checking it (ADR-0004: track across cycles). Pruned to existing.
-        self._known_dependents: set[str] = set()
+        # Seeded from the persisted memory; _resolve_dependents prunes to existing.
+        self._known_dependents: set[str] = set(self.mstate.known_dependents)
         # The set managed last loop — to retire an alert ("no longer monitored") when
         # a dependent leaves (excluded or gone), rather than a false "resolved" (ADR-0012).
         self._managed_dependents: set[str] = set()
         # Dedup so a missing explicitly-listed dependent warns once, not per loop.
         self._warned_missing: set[str] = set()
-        # Dedup for the dangling-orphan warning (see _warn_dangling_orphans).
+        # Dedup for the dangling-orphan warning (see _scan_stranded_orphans).
         self._warned_orphans: set[str] = set()
         # Dedup for "can't validate DNS (no usable tool)" — re-armed if it later validates.
         self._warned_dns_unvalidated: set[str] = set()
@@ -490,6 +497,9 @@ class Monitor:
             if d not in existence:
                 existence[d] = self.client.inspect(d) is not None
         self._known_dependents = {d for d in self._known_dependents if existence.get(d, False)}
+        # Mirror the pruned remembered set into the durable memory (#97) so a
+        # monitor restart resumes with exactly what this instance knew.
+        self.mstate.set_known_dependents(self._known_dependents)
         excluded = set(parse_csv_names(self.config.exclude_containers))
         return sorted(self._known_dependents - excluded)
 
@@ -625,6 +635,7 @@ class Monitor:
             raise
         finally:
             self._flush_notifications()
+            self.mstate.save()  # dirty-checked; no-op unless the memory changed
 
     def _run_once_body(self) -> None:
         """Execute one monitoring cycle (no inter-loop sleep)."""
@@ -650,6 +661,11 @@ class Monitor:
             return
         if gluetun.health != "healthy":
             self.log.warn(f"Gluetun health status: {gluetun.health}")
+        # Remember every id gluetun runs under, and adopt any container stranded
+        # on a dead FORMER gluetun id (#97) — before dependent resolution, so an
+        # adopted orphan is probed and remediated in this same loop.
+        self.mstate.record_gluetun_id(gluetun.id)
+        self._scan_stranded_orphans(gluetun.id)
 
         # Observability before the site curls: log the gateway's own L3 interfaces
         # (symmetry with the dependent checks; presence of tun0 = tunnel up at L3).
@@ -864,22 +880,36 @@ class Monitor:
         excluded = parse_csv_names(self.config.exclude_containers)
         if excluded:
             self.log.info(f"Excluded from management (EXCLUDE_CONTAINERS): {','.join(excluded)}")
-        self._warn_dangling_orphans()
+        # Seed the id history with the current gluetun and adopt anything already
+        # stranded (#97) BEFORE the first loop, so a recreate that happened while
+        # the monitor was down is healed immediately rather than never seen.
+        gluetun_info = self.client.inspect(self.config.gluetun_container)
+        if gluetun_info is not None:
+            self.mstate.record_gluetun_id(gluetun_info.id)
+        self._scan_stranded_orphans(gluetun_info.id if gluetun_info is not None else None)
+        self.mstate.save()
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))
 
-    def _warn_dangling_orphans(self) -> None:
-        """Surface a running container stranded on a *dead* netns parent that we
-        are not managing — most likely a gluetun dependent that was recreate-
-        stranded before the monitor started (its NetworkMode still points at
-        gluetun's old, now-gone id, so current-id discovery can't see it).
+    def _scan_stranded_orphans(self, current_gluetun_id: str | None) -> None:
+        """Adopt containers stranded on a dead FORMER gluetun id; warn about the
+        rest (#97). Also reference-prunes the persisted gluetun id history.
 
-        We *warn and suggest* DEPENDENT_CONTAINERS rather than recreate it: an
-        orphan whose parent is gone can't be confidently attributed to *this*
-        gluetun (it might belong to some other netns owner), and acting on that
-        guess could re-home or churn the wrong container (Tenet 1 — first, do no
-        harm). Names already listed or excluded are skipped (we either manage them
-        or were told not to touch them).
+        A container — running *or* exited — whose ``NetworkMode`` points at a
+        dead id is stranded. If that id is in the persisted gluetun history it
+        provably shared OUR gluetun's netns (Docker ids are never reused), so it
+        is adopted into the remembered set and healed through the normal
+        remediation path. A dead parent NOT in the history cannot be attributed
+        to this gluetun (it might belong to some other netns owner), so acting
+        on it could re-home the wrong container (Tenet 1) — those get the
+        pre-#97 behavior: a once-per-name warning suggesting
+        ``DEPENDENT_CONTAINERS``, and only when running (an exited container on
+        an unknown dead parent is ordinary leftover junk, not a page).
+
+        The scan must include exited containers: a stranded dependent's own
+        restart policy usually drives it to Exited (a start onto a dead netns id
+        fails hard) — the running-only view would hide exactly the containers
+        most in need of healing.
         """
         gluetun = self.config.gluetun_container
         listed = (
@@ -887,10 +917,17 @@ class Monitor:
             if self.config.dependent_containers == "auto"
             else set(parse_csv_names(self.config.dependent_containers))
         )
-        skip = listed | set(parse_csv_names(self.config.exclude_containers)) | {gluetun}
-        for cid in self.client.list_running_ids():
+        excluded = set(parse_csv_names(self.config.exclude_containers))
+        skip = listed | excluded | {gluetun} | self._known_dependents
+        # Every netns-parent id any existing container references: the keep-set
+        # for reference-based pruning of the id history (an id stays exactly as
+        # long as it can still matter to an adoption decision).
+        referenced: set[str] = set()
+        if current_gluetun_id:
+            referenced.add(current_gluetun_id)
+        for cid in self.client.list_all_ids():
             info = self.client.inspect(cid)
-            if info is None or info.name in skip:
+            if info is None:
                 continue
             nm = info.network_mode
             if not nm.startswith("container:"):
@@ -898,9 +935,20 @@ class Monitor:
             target = nm.split(":", 1)[1]
             if not is_container_id(target):
                 continue  # name-form target resolves normally; not a dangling id
+            referenced.add(target)
+            if info.name in skip:
+                continue
             if self.client.inspect(target) is not None:
                 continue  # the netns parent still exists — not stranded
-            if info.name not in self._warned_orphans:
+            if self.mstate.is_former_gluetun(target):
+                self.log.warn(
+                    f"Adopting stranded dependent '{info.name}': its network parent "
+                    f"({target[:12]}) was a previous {gluetun} container — it will be "
+                    f"remediated this loop"
+                )
+                self._known_dependents.add(info.name)
+                self._warned_orphans.discard(info.name)
+            elif info.running and info.name not in self._warned_orphans:
                 self.log.warn(
                     f"Container '{info.name}' is running but its network parent "
                     f"({target[:12]}) no longer exists; if it depends on gluetun, add it "
@@ -908,6 +956,7 @@ class Monitor:
                     f"its parent can't be confirmed as gluetun)"
                 )
                 self._warned_orphans.add(info.name)
+        self.mstate.prune_gluetun_ids(referenced)
 
     def run(self) -> None:
         """Run forever: loop run_once + sleep CHECK_INTERVAL."""

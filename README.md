@@ -183,6 +183,7 @@ docker compose up -d
 | `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
 | `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort, atomic; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
 | `STATS_RETENTION_DAYS` | `90` | Drop a site's stats if it hasn't been tested (e.g. removed from `sites.conf`) for this many days; `0` keeps them forever |
+| `MONITOR_STATE_FILE` | `/logs/monitor-state.json` | Durable dependent memory: gluetun's container-id history + known dependent names, so dependents stranded by a gluetun recreate stay visible (and healable) across monitor restarts. Best-effort, atomic |
 | `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
 | `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
