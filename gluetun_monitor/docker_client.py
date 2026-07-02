@@ -76,8 +76,13 @@ class DockerClient(Protocol):
         """Run ``cmd`` inside a container; return its exit code + combined output."""
         ...
 
-    def logs(self, name_or_id: str) -> str:
-        """Fetch a container's logs (stdout+stderr) as text."""
+    def logs(self, name_or_id: str, *, tail: int) -> str:
+        """Fetch the last ``tail`` lines of a container's logs (stdout+stderr).
+
+        ``tail`` is required: an unbounded fetch of a long-lived container's
+        history is potentially hundreds of MB decoded in memory, landing exactly
+        mid-recovery (#78) — every call site must state its window.
+        """
         ...
 
     def restart(self, name_or_id: str) -> None:
@@ -155,9 +160,11 @@ class DockerPyClient:
         # A still-running/unknown exec reports None; treat as a generic failure.
         return ExecResult(exit_code=exit_code if exit_code is not None else 1, output=output)
 
-    def logs(self, name_or_id: str) -> str:
-        """``GET /containers/{id}/logs`` (stdout+stderr) decoded to text."""
-        raw = self._api.logs(name_or_id, stdout=True, stderr=True)
+    def logs(self, name_or_id: str, *, tail: int) -> str:
+        """``GET /containers/{id}/logs`` (stdout+stderr, last ``tail`` lines)
+        decoded to text.
+        """
+        raw = self._api.logs(name_or_id, stdout=True, stderr=True, tail=tail)
         return raw.decode("utf-8", errors="replace") if raw else ""
 
     def restart(self, name_or_id: str) -> None:

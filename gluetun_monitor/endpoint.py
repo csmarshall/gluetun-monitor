@@ -86,10 +86,19 @@ def parse_endpoint(logs: str) -> EndpointInfo:
     return EndpointInfo(public_ip=public_ip, country=country, city=city, wg_server=wg_server)
 
 
+# Log window for the endpoint parse (#78). Only the NEWEST ip/country/server
+# lines matter (each parse takes the last match), and gluetun re-announces all
+# of them on every (re)connect — a few thousand lines comfortably spans several
+# reconnect cycles plus health-check noise, while an unbounded fetch of a
+# long-lived container's history (potentially hundreds of MB, decoded and
+# split in memory) would land exactly mid-recovery.
+_ENDPOINT_LOG_TAIL = 2000
+
+
 def get_endpoint_info(client: DockerClient, container: str) -> EndpointInfo:
-    """Fetch and parse the current endpoint from ``container``'s logs."""
+    """Fetch and parse the current endpoint from ``container``'s recent logs."""
     try:
-        logs = client.logs(container)
+        logs = client.logs(container, tail=_ENDPOINT_LOG_TAIL)
     except Exception:
         return EndpointInfo()
     return parse_endpoint(logs)

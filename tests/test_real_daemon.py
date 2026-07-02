@@ -122,7 +122,7 @@ def test_real_docker_paths_and_volume_survives_recreate(world: dict[str, Any]) -
     assert SENTINEL in read.output
 
     # logs: smoke — decodes to text without error
-    assert isinstance(client.logs(world["gluetun"]), str)
+    assert isinstance(client.logs(world["gluetun"], tail=2000), str)
 
     # restart preserves identity (same container id) and never touches the volume
     client.restart(dep)

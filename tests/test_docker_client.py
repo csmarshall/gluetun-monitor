@@ -46,7 +46,9 @@ class _StubAPI:
     def exec_inspect(self, exec_id: str) -> dict[str, Any]:
         return {"ExitCode": self.exec_exit_code}
 
-    def logs(self, name: str, stdout: bool = True, stderr: bool = True) -> bytes:
+    def logs(self, name: str, stdout: bool = True, stderr: bool = True,
+             tail: int | str = "all") -> bytes:
+        self.logs_tail = tail
         return b"log line"
 
     def restart(self, name: str) -> None:
@@ -133,10 +135,12 @@ def test_exec_run_empty_output() -> None:
     assert client.exec_run("c", ["x"]).output == ""
 
 
-def test_logs_decodes() -> None:
-    """logs() returns decoded text (the endpoint parser consumes a str)."""
-    client, _ = _client()
-    assert client.logs("c") == "log line"
+def test_logs_decodes_and_passes_the_tail_bound() -> None:
+    """logs() returns decoded text (the endpoint parser consumes a str) and
+    forwards the required tail= window to the API — never an unbounded fetch (#78)."""
+    client, api = _client()
+    assert client.logs("c", tail=500) == "log line"
+    assert api.logs_tail == 500
 
 
 def test_restart_remove_create_start_delegate() -> None:

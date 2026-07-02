@@ -33,7 +33,7 @@ def test_get_endpoint_info_handles_logs_exception() -> None:
     logging is best-effort and must never gate the loop."""
     fake = FakeDockerClient()
 
-    def boom(name: str) -> str:
+    def boom(name: str, *, tail: int) -> str:
         raise RuntimeError("logs unavailable")
 
     fake.logs = boom  # type: ignore[method-assign]
