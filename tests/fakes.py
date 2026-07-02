@@ -80,6 +80,7 @@ class FakeDockerClient:
         self.started: list[str] = []
         self.renamed: list[tuple[str, str]] = []  # (name_or_id, new_name)
         self.ensured_timeouts: list[int] = []  # every ensure_timeout() call (#77)
+        self.logs_tails: list[int] = []  # tail= of every logs() call (#78)
         self._id_seq = 1000
 
     # ----- test setup helpers -----
@@ -126,9 +127,14 @@ class FakeDockerClient:
     def exec_run(self, name_or_id: str, cmd: list[str]) -> ExecResult:
         return self.on_exec(name_or_id, cmd)
 
-    def logs(self, name_or_id: str) -> str:
+    def logs(self, name_or_id: str, *, tail: int) -> str:
+        # Honor the window like the daemon does (last N lines) and record the
+        # requested tail so tests can assert the fetch is bounded (#78).
+        self.logs_tails.append(tail)
         raw = self._resolve(name_or_id)
-        return raw.get("_logs", "") if raw else ""
+        text = raw.get("_logs", "") if raw else ""
+        lines = text.splitlines(keepends=True)
+        return "".join(lines[-tail:]) if len(lines) > tail else text
 
     def restart(self, name_or_id: str) -> None:
         raw = self._resolve(name_or_id)

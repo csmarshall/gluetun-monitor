@@ -94,3 +94,38 @@ def test_get_endpoint_info_from_client() -> None:
     fake.add(raw)
     info = get_endpoint_info(fake, "gluetun")
     assert info.public_ip == "31.40.215.70"
+
+
+def test_get_endpoint_info_fetch_is_bounded() -> None:
+    """The endpoint fetch must pass a bounded tail — an unbounded fetch of a
+    long-lived gluetun's history (potentially hundreds of MB, decoded in memory)
+    lands at startup and twice per restart, exactly mid-recovery (#78)."""
+    fake = FakeDockerClient()
+    raw = make_inspect("gluetun", id="gid")
+    raw["_logs"] = _IP_GETTER
+    fake.add(raw)
+    get_endpoint_info(fake, "gluetun")
+    assert fake.logs_tails, "logs() was never called"
+    assert all(isinstance(t, int) and 0 < t <= 10_000 for t in fake.logs_tails)
+
+
+def test_parse_finds_newest_lines_when_the_window_truncates_history() -> None:
+    """Only the NEWEST ip/country/server lines matter: with a long history where
+    the tail window drops the oldest matches, the parse still reports the most
+    recent (re)connect — truncation loses nothing the parse wanted (#78)."""
+    stale = (
+        "2026-05-09T02:00:00+02:00 INFO [wireguard] Connecting to 10.0.0.1:51820\n"
+        "2026-05-09T02:00:05+02:00 INFO [ip getter] Public IP address is 10.9.9.9 "
+        "(Nowhere, Oldtown - source: ipinfo)\n"
+    )
+    noise = "".join(f"2026-05-10T12:00:{i % 60:02d}+02:00 INFO healthy!\n" for i in range(5000))
+    fake = FakeDockerClient()
+    raw = make_inspect("gluetun", id="gid")
+    raw["_logs"] = stale + noise + f"{_WG}\n{_IP_GETTER}\n"
+    fake.add(raw)
+    info = get_endpoint_info(fake, "gluetun")
+    # The stale entries fell outside the window (the fake honors tail); the
+    # newest announcement is what's reported.
+    assert info.public_ip == "31.40.215.70"
+    assert info.wg_server == "185.156.46.20"
+    assert info.country == "Switzerland"
