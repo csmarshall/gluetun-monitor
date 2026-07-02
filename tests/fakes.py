@@ -79,6 +79,7 @@ class FakeDockerClient:
         self.created: list[tuple[dict[str, Any], str]] = []  # (body, name)
         self.started: list[str] = []
         self.renamed: list[tuple[str, str]] = []  # (name_or_id, new_name)
+        self.ensured_timeouts: list[int] = []  # every ensure_timeout() call (#77)
         self._id_seq = 1000
 
     # ----- test setup helpers -----
@@ -168,3 +169,6 @@ class FakeDockerClient:
             raise RuntimeError(f"no such container: {name_or_id}")
         raw["State"]["Running"] = True
         self.started.append(name_or_id)
+
+    def ensure_timeout(self, seconds: int) -> None:
+        self.ensured_timeouts.append(seconds)

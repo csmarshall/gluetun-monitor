@@ -28,6 +28,16 @@ from urllib.parse import urlsplit
 # existing ``probe_site`` params, so honoring them needs no probe rework.
 _OPTION_KEYS = ("timeout", "tries")
 
+# Sanity ceilings for per-URL overrides (#77). The Docker transport read-timeout
+# is sized from the worst-case probe (see ``worst_case_probe_seconds``), so an
+# absurd override would silently stretch every loop and the transport with it —
+# a probe stuck for minutes stalls ALL site checks (they fan out, but the loop
+# joins them). 300s tolerates genuinely slow-but-alive sites; anything beyond
+# is a config mistake, warned about and skipped per the forgiving+loud contract.
+MAX_URL_TIMEOUT = 300
+MAX_URL_TRIES = 5
+_OPTION_CAPS = {"timeout": MAX_URL_TIMEOUT, "tries": MAX_URL_TRIES}
+
 
 @dataclass(frozen=True, slots=True)
 class SiteSpec:
@@ -78,8 +88,34 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
         if not (value.isascii() and value.isdigit()) or int(value) < 1:
             warnings.append(f"invalid {key} {value!r} (want a positive integer)")
             continue
+        if int(value) > _OPTION_CAPS[key]:
+            warnings.append(
+                f"{key}={value} exceeds the maximum {_OPTION_CAPS[key]} (#77) — "
+                f"ignoring the override"
+            )
+            continue
         values[key] = int(value)
     return SiteSpec(url, timeout=values.get("timeout"), tries=values.get("tries")), warnings
+
+
+def worst_case_probe_seconds(
+    specs: list[SiteSpec], default_timeout: int, default_tries: int
+) -> int:
+    """Worst-case single-probe runtime across ``specs``: the max of each site's
+    *effective* ``timeout*tries`` (its overrides, else the globals).
+
+    This is what the Docker transport read-timeout must comfortably exceed (#77):
+    ``wget --spider`` emits nothing while it waits, so an exec that legitimately
+    runs long looks idle to the transport — if the transport gives up first, a
+    slow *success* is misreported as a probe failure, and a per-URL override
+    meant to stop restarts guarantees them instead.
+    """
+    worst = default_timeout * max(1, default_tries)
+    for s in specs:
+        timeout = s.timeout if s.timeout is not None else default_timeout
+        tries = s.tries if s.tries is not None else default_tries
+        worst = max(worst, timeout * max(1, tries))
+    return worst
 
 
 def trim(s: str) -> str:

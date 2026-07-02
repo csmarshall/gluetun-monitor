@@ -100,6 +100,17 @@ class DockerClient(Protocol):
         """Start an existing (created) container."""
         ...
 
+    def ensure_timeout(self, seconds: int) -> None:
+        """Raise the transport read-timeout to at least ``seconds``; never lower it.
+
+        Per-URL ``|timeout=`` overrides can push a probe's legitimate runtime past
+        the transport ceiling sized from the global ``TIMEOUT`` (#77) — the sites
+        set reloads every loop, so the ceiling must be able to follow it upward.
+        Raise-only: lowering mid-flight could clip a concurrent long probe, and
+        a too-generous ceiling costs nothing when everything is fast.
+        """
+        ...
+
 
 class DockerPyClient:
     """``DockerClient`` over docker-py's low-level API (honors DOCKER_HOST).
@@ -171,3 +182,9 @@ class DockerPyClient:
     def start(self, name_or_id: str) -> None:
         """``POST /containers/{id}/start``."""
         self._api.start(name_or_id)
+
+    def ensure_timeout(self, seconds: int) -> None:  # pragma: no cover - needs a live daemon
+        """Bump docker-py's per-request read-timeout (it reads ``api.timeout`` on
+        every call, so mutating it takes effect for subsequent requests).
+        """
+        self._api.timeout = max(self._api.timeout or 0, seconds)
