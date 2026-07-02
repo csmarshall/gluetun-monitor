@@ -213,3 +213,67 @@ def test_gluetun_id_history_prunes_by_reference_not_count(tmp_path: Path) -> Non
     assert dep.id  # (dep was recreated; the old record is gone from the store)
     mon.run_once()
     assert mon.mstate.gluetun_ids == [NEW_ID]
+
+
+# ----- parked containers are machinery, never dependents (dogfood regression) -----
+
+
+def test_parked_twin_is_never_adopted(tmp_path: Path) -> None:
+    """The #97 dogfood runaway: an unremovable parked twin (dead former-gluetun
+    parent) met the adoption scan, was adopted as a 'dependent', re-parked under
+    a stacked suffix, and a fresh orphan was minted every loop. Parked names are
+    recreate machinery — the scan must skip them entirely."""
+    prior = MonitorState(str(tmp_path / "state.json"))
+    prior.record_gluetun_id(OLD_ID)
+    prior.save()
+
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=NEW_ID)
+    fake.add_container(
+        "dep.gm-recreate-old", network_mode=f"container:{OLD_ID}", running=False
+    )
+    mon, stream = _monitor(fake, tmp_path / "state.json", tmp_path / "sites.conf")
+    mon.run_once()
+    mon.run_once()  # a second loop must not stack suffixes either
+
+    out = stream.getvalue()
+    assert "Adopting" not in out
+    assert fake.created == [] and fake.renamed == []  # no re-park, no minting
+    assert not any(
+        n.count(".gm-recreate-old") > 1
+        for n in (fake.inspect(cid).name for cid in fake.list_all_ids())
+    )
+
+
+def test_parked_name_seeded_from_old_state_is_ignored(tmp_path: Path) -> None:
+    """A state file written before the guard may carry parked names in
+    known_dependents — they must be filtered at seed time, not remediated."""
+    prior = MonitorState(str(tmp_path / "state.json"))
+    prior.record_gluetun_id(NEW_ID)
+    prior.set_known_dependents({"dep", "dep.gm-recreate-old"})
+    prior.save()
+
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=NEW_ID)
+    fake.add_container("dep", network_mode=f"container:{NEW_ID}", running=True)
+    fake.add_container(
+        "dep.gm-recreate-old", network_mode=f"container:{NEW_ID}", running=False
+    )
+    mon, _ = _monitor(fake, tmp_path / "state.json", tmp_path / "sites.conf")
+    assert "dep.gm-recreate-old" not in mon._known_dependents
+    mon.run_once()
+    assert "dep.gm-recreate-old" not in mon.mstate.known_dependents
+
+
+def test_recreate_refuses_a_parked_name(tmp_path: Path) -> None:
+    """Belt-and-braces at the recreate layer: even if a parked name reaches
+    recreate_dependent, it must refuse rather than stack suffixes."""
+    from gluetun_monitor.recreate import recreate_dependent
+
+    fake = FakeDockerClient()
+    fake.add_container("dep.gm-recreate-old", network_mode=f"container:{OLD_ID}")
+    stream = io.StringIO()
+    logger = Logger(log_file=None, level="DEBUG", stream=stream)
+    assert recreate_dependent(fake, "dep.gm-recreate-old", NEW_ID, logger) is False
+    assert fake.renamed == [] and fake.created == []
+    assert "machinery" in stream.getvalue()
