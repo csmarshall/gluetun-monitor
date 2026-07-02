@@ -183,6 +183,7 @@ docker compose up -d
 | `DRY_RUN` | `0` | Observe-only: run all detection/probing but **take no action** — log `[DRY-RUN] would …` instead of restarting/recreating. For soak-testing alongside an active monitor |
 | `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort, atomic; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
 | `STATS_RETENTION_DAYS` | `90` | Drop a site's stats if it hasn't been tested (e.g. removed from `sites.conf`) for this many days; `0` keeps them forever |
+| `MONITOR_STATE_FILE` | `/logs/monitor-state.json` | Durable dependent memory: gluetun's container-id history + known dependent names, so dependents stranded by a gluetun recreate stay visible (and healable) across monitor restarts. Best-effort, atomic |
 | `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
 | `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
@@ -458,6 +459,17 @@ network_mode: "container:<GLUETUN_CONTAINER>"
 This just works out of the box - no configuration needed. Discovery runs at startup (for logging) and again before each restart operation to ensure newly added containers are included.
 
 **Note:** Containers added after startup will be discovered and restarted when the next failure triggers a recovery. There's no continuous polling for new containers during normal operation.
+
+#### Dependent memory — surviving restarts and recreates together
+
+Discovery alone has a blind spot: a dependent stranded by a gluetun *recreate* points at the **old** container id, so current-id discovery can no longer see it — and if the monitor itself restarted moments earlier, its in-memory record of that dependent is gone too. The monitor closes this with a small persistent sidecar (`MONITOR_STATE_FILE`, default `/logs/monitor-state.json`) remembering two things Docker forgets:
+
+- every container id gluetun has run under (Docker ids are never reused, so a container whose `network_mode` points at a dead id from this list *provably* belonged to this gluetun), and
+- the names of dependents it has managed.
+
+Each loop the monitor scans **all** containers (including exited ones — a stranded dependent's own restart policy usually drives it to Exited) and **adopts** any container stranded on a dead former-gluetun id, healing it through the normal remediation path. A container stranded on a dead id the monitor has *never* seen as gluetun is only warned about, never touched — it might belong to some other network owner.
+
+The file is best-effort and human-readable; deleting it (or a corrupt file) simply resets the memory. One bootstrap gap: on the very first run there is no history yet, so dependents that were *already* stranded before the monitor ever saw gluetun can't be confirmed — list them explicitly in `DEPENDENT_CONTAINERS` for that one recovery. Details in [ADR-0014](docs/adr/0014-durable-dependent-memory.md).
 
 #### Advanced: Manual Override
 

@@ -147,6 +147,9 @@ class Config:
     dry_run: bool = False
     # Persistent per-site stats sidecar (ADR-0008). Observability only; best-effort.
     stats_file: str = "/logs/site-stats.json"
+    # Durable dependent memory (#97): gluetun id history + known dependent names,
+    # so stranded dependents stay visible across monitor restarts. Best-effort.
+    monitor_state_file: str = "/logs/monitor-state.json"
     # Drop a site's stats if it hasn't been polled (e.g. removed from sites.conf)
     # for this many days; <=0 keeps them forever.
     stats_retention_days: int = 90
@@ -241,6 +244,7 @@ class Config:
             max_jitter_ms=_env_int("MAX_JITTER_MS", 0, errors, minimum=0),
             dry_run=_env_bool("DRY_RUN", False, errors),
             stats_file=os.environ.get("STATS_FILE", "/logs/site-stats.json"),
+            monitor_state_file=os.environ.get("MONITOR_STATE_FILE", "/logs/monitor-state.json"),
             # No lower bound: <= 0 intentionally means "keep stats forever".
             stats_retention_days=_env_int("STATS_RETENTION_DAYS", 90, errors),
             advisory_window=_env_int("ADVISORY_WINDOW", 86400, errors, minimum=1),
