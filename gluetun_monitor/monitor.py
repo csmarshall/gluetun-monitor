@@ -41,6 +41,7 @@ from .sites import (
     is_ip_literal,
     load_specs,
     resolvable_pool,
+    worst_case_probe_seconds,
 )
 from .state import Counter, InterfaceStatus, RemediationAction
 from .tunables import suggest_tunables
@@ -679,6 +680,13 @@ class Monitor:
             )
             specs = list(self._specs.values())
         sites = [s.url for s in specs]
+        # A per-URL |timeout= override can push a probe's legitimate runtime past
+        # the transport read-timeout sized from the globals — the probe would be
+        # killed by the transport and a slow SUCCESS misreported as a failure
+        # (#77). Track the worst case on every reload; raise-only, so a config
+        # edit can never clip a probe already in flight.
+        worst = worst_case_probe_seconds(specs, self.config.timeout, self.config.wget_tries)
+        self.client.ensure_timeout(max(worst * 2, 60))
 
         breached = self.check_gluetun_sites(sites)
         if not breached:
@@ -814,7 +822,9 @@ class Monitor:
         if st is None:
             return ""
         sugg = suggest_tunables(
-            {site: st}, global_timeout=self.config.timeout, global_tries=self.config.wget_tries
+            {site: st}, global_timeout=self.config.timeout,
+            global_tries=self.config.wget_tries,
+            specs=self._specs,  # judge against the site's EFFECTIVE knobs (#77)
         )
         if sugg and sugg[0].config_line:
             return (f" The stats suggest `{sugg[0].config_line}` — run "

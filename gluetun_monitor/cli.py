@@ -14,7 +14,7 @@ from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
 from .notify import Notifier, NotifyEvent, build_notifier
 from .site_stats import SiteStatsStore
-from .sites import hostname_of, load_sites_report
+from .sites import hostname_of, load_sites_report, load_specs, worst_case_probe_seconds
 from .tunables import suggest_tunables
 
 
@@ -194,8 +194,13 @@ def _run_suggest_tunables(config: Config, logger: Logger) -> int:
             "run the monitor a while, then retry."
         )
         return 0
+    try:
+        specs = {s.url: s for s in load_specs(config.config_file, config.sites_env)}
+    except Exception:
+        specs = {}  # unreadable sites config → judge against the globals, as before
     suggestions = suggest_tunables(
-        store.sites, global_timeout=config.timeout, global_tries=config.wget_tries
+        store.sites, global_timeout=config.timeout, global_tries=config.wget_tries,
+        specs=specs,  # judge each site against its EFFECTIVE knobs (#77)
     )
     print("gluetun-monitor — per-URL tunable suggestions")
     print(
@@ -220,6 +225,26 @@ def _run_suggest_tunables(config: Config, logger: Logger) -> int:
     if healthy:
         print(f"  Healthy (no change): {', '.join(healthy)}")
     return 0
+
+
+def _transport_timeout(config: Config) -> int:
+    """Initial Docker transport read-timeout: double the worst-case probe runtime,
+    floored at 60s (the pre-#77 shape, so no-override configs size identically).
+
+    Sized from the *effective* per-URL knobs, not just the global ``TIMEOUT``: a
+    ``|timeout=`` override above the global-derived ceiling would otherwise have
+    its probes killed by the transport — a slow success misreported as a failure,
+    by the very knob meant to stop that (#77). The monitor re-raises the ceiling
+    on every sites reload (``DockerClient.ensure_timeout``); this only has to be
+    right for startup.
+    """
+    worst = config.timeout * max(1, config.wget_tries)
+    try:
+        specs = load_specs(config.config_file, config.sites_env)
+        worst = worst_case_probe_seconds(specs, config.timeout, config.wget_tries)
+    except Exception:
+        pass  # unreadable sites config is reported at loop time; size from the globals
+    return max(worst * 2, 60)
 
 
 def _run_notify_test(config: Config, notifier: Notifier, logger: Logger) -> int:
@@ -274,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        client: DockerClient = DockerPyClient(timeout=max(config.timeout * 2, 60))
+        client: DockerClient = DockerPyClient(timeout=_transport_timeout(config))
     except Exception as exc:
         logger.error(f"Failed to initialize Docker client: {exc}")
         notifier.notify(NotifyEvent(

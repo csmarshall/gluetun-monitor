@@ -23,6 +23,7 @@ import math
 from dataclasses import dataclass
 
 from .site_stats import SiteStat
+from .sites import MAX_URL_TIMEOUT, SiteSpec
 
 # A site counts as "slow, not dead" when it has answered at >= this fraction of the
 # current timeout ceiling — proof a wider timeout would convert its read-timeouts
@@ -69,10 +70,28 @@ def _latency(st: SiteStat) -> dict[str, int]:
     return lifetime if lifetime.get("samples", 0) else st.latency_summary()
 
 
+def _config_line(url: str, *, timeout: int | None, tries: int | None) -> str:
+    """The paste-ready ``url|key=value...`` carrying EVERY override the site should
+    end up with — a suggestion for one knob must not silently drop an override the
+    operator already set for the other (#77).
+    """
+    line = url
+    if timeout is not None:
+        line += f"|timeout={timeout}"
+    if tries is not None:
+        line += f"|tries={tries}"
+    return line
+
+
 def _suggest_one(
-    url: str, st: SiteStat, *, global_timeout: int, global_tries: int
+    url: str, st: SiteStat, *, timeout: int, tries: int, spec: SiteSpec | None
 ) -> Suggestion | None:
     """The single best suggestion for one site, or None if it's behaving fine.
+
+    ``timeout``/``tries`` are the site's *effective* knobs — its ``|key=value``
+    overrides where set, else the globals (#77): evaluating an already-overridden
+    site against the globals re-suggests what's already set (or a lower value),
+    and the slow-not-dead discriminator misfires against the wrong ceiling.
 
     Priority is by *which fix actually helps*: a wider timeout for a slow-but-alive
     site (the surgical keep-it-useful fix), else "investigate" when restarts are
@@ -88,11 +107,16 @@ def _suggest_one(
 
     # (1) Slow-but-alive: a *pattern* of read-timeouts AND it has answered
     # near/over the ceiling (so a wider timeout converts those into passes).
-    if timeouts >= _MIN_TIMEOUT_FAILURES and max_ms >= global_timeout * 1000 * _SLOW_LATENCY_FRACTION:
-        suggested = _round_up_5(math.ceil(max_ms / 1000) + _TIMEOUT_HEADROOM_S)
-        if suggested > global_timeout:
+    # Capped at the parse-time maximum — suggesting a value parse_entry would
+    # reject is a paste-ready line that doesn't work.
+    if timeouts >= _MIN_TIMEOUT_FAILURES and max_ms >= timeout * 1000 * _SLOW_LATENCY_FRACTION:
+        suggested = min(
+            _round_up_5(math.ceil(max_ms / 1000) + _TIMEOUT_HEADROOM_S), MAX_URL_TIMEOUT
+        )
+        if suggested > timeout:
             return Suggestion(
-                url, "timeout", f"{url}|timeout={suggested}",
+                url, "timeout",
+                _config_line(url, timeout=suggested, tries=spec.tries if spec else None),
                 f"{timeouts} read-timeout failure(s) but answers within "
                 f"p99={p99}ms / max={max_ms}ms — slow, not dead; a {suggested}s timeout "
                 f"keeps it a useful canary instead of triggering restarts",
@@ -116,13 +140,14 @@ def _suggest_one(
     # (3) Isolated one-poll blips that nonetheless tripped a restart — a retry
     # absorbs the transient before it counts (only when not already retrying).
     if (
-        global_tries < 2
+        tries < 2
         and st.restarts_triggered > 0
         and st.total_failures > 0
         and st.longest_fail_streak <= 1
     ):
         return Suggestion(
-            url, "tries", f"{url}|tries=2",
+            url, "tries",
+            _config_line(url, timeout=spec.timeout if spec else None, tries=2),
             f"{st.total_failures} isolated single-poll failure(s) triggering "
             f"{st.restarts_triggered} restart(s); tries=2 retries the blip before it "
             f"counts as a failure",
@@ -133,18 +158,29 @@ def _suggest_one(
 
 
 def suggest_tunables(
-    sites: dict[str, SiteStat], *, global_timeout: int, global_tries: int
+    sites: dict[str, SiteStat],
+    *,
+    global_timeout: int,
+    global_tries: int,
+    specs: dict[str, SiteSpec] | None = None,
 ) -> list[Suggestion]:
     """Per-URL tunable suggestions across all sites, ranked by restarts triggered.
 
     Pure function of the persisted stats — feed it a ``SiteStatsStore.sites`` map.
+    ``specs`` (url → :class:`SiteSpec`) supplies each site's current overrides so
+    it is judged against its *effective* knobs, not the globals (#77); omitted
+    (or missing a URL) means the site inherits the globals, as before.
     Returns only sites worth acting on (healthy sites yield nothing), most-impactful
     first so the operator fixes the biggest restart driver before the long tail.
     """
-    out = [
-        s for url, st in sites.items()
-        if (s := _suggest_one(url, st, global_timeout=global_timeout,
-                              global_tries=global_tries)) is not None
-    ]
+    specs = specs or {}
+    out = []
+    for url, st in sites.items():
+        spec = specs.get(url)
+        timeout = spec.timeout if spec and spec.timeout is not None else global_timeout
+        tries = spec.tries if spec and spec.tries is not None else global_tries
+        s = _suggest_one(url, st, timeout=timeout, tries=tries, spec=spec)
+        if s is not None:
+            out.append(s)
     out.sort(key=lambda s: s.restarts, reverse=True)
     return out
