@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.2...v2.2.3) (2026-07-02)
+
+
+### Fixed
+
+* **monitor:** never treat recreate-parked containers as dependents ([#97](https://github.com/csmarshall/gluetun-monitor/issues/97)) ([#103](https://github.com/csmarshall/gluetun-monitor/issues/103)) ([0f79836](https://github.com/csmarshall/gluetun-monitor/commit/0f79836ac166fd653b58444d1da72bd697b0db40))
+* **monitor:** persist dependent memory; adopt orphans of former gluetun ids ([#97](https://github.com/csmarshall/gluetun-monitor/issues/97)) ([#101](https://github.com/csmarshall/gluetun-monitor/issues/101)) ([755b242](https://github.com/csmarshall/gluetun-monitor/commit/755b24266362b716cb5e2e14acc8ed457b8640c3))
+
 ## [2.2.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.1...v2.2.2) (2026-07-02)
 
 
