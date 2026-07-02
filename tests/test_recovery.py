@@ -134,7 +134,7 @@ def test_remediate_restart_path() -> None:
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
     fake.on_exec = _live_exec
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
-    assert ok is True
+    assert ok.ok is True
     assert fake.restarted == ["dep"]
     assert fake.created == []  # restart, not recreate
 
@@ -146,7 +146,7 @@ def test_remediate_recreate_path() -> None:
     fake.add_container("dep", network_mode=f"container:{OLD_ID}")  # gluetun id moved
     fake.on_exec = _live_exec
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
-    assert ok is True
+    assert ok.ok is True
     assert fake.removed == [("dep.gm-recreate-old", False)]  # parked old, volumes kept
     assert len(fake.created) == 1
     assert fake.restarted == []  # recreate, not restart
@@ -160,7 +160,7 @@ def test_remediate_recreate_disabled_is_failed() -> None:
     fake.on_exec = _live_exec
     cfg = Config(auto_recreate=False)
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, cfg, _logger(), sleep=lambda _s: None)
-    assert ok is False
+    assert ok.ok is False
     assert fake.removed == []  # nothing destroyed when disabled
 
 
@@ -176,5 +176,5 @@ def test_remediate_try_restart_escalates_to_recreate() -> None:
 
     fake.restart = failing_restart  # type: ignore[method-assign]
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
-    assert ok is True
+    assert ok.ok is True
     assert len(fake.created) == 1  # escalated to recreate

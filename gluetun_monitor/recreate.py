@@ -25,6 +25,7 @@ import signal
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -172,28 +173,49 @@ def _defer_stop_signals(logger: Logger) -> Iterator[None]:
             os.kill(os.getpid(), signum)  # re-deliver to the restored handler
 
 
-def gc_recreate_leftover(client: DockerClient, dep_name: str, logger: Logger) -> bool:
+@dataclass(frozen=True, slots=True)
+class Wedge:
+    """An unremovable parked twin blocking remediation of a dependent (#98).
+
+    Produced by :func:`gc_recreate_leftover` when the leftover exists but the
+    daemon refuses to remove it (observed live: ZFS "dataset is busy" — the
+    force-killed container's process tree survived and pinned the mount). The
+    fields feed the escalation alert: the exact driver error is the failure
+    signature, and ``parked_status`` ("dead") is the tell that points an
+    operator at the zombie-process cause.
+    """
+
+    parked_name: str
+    error: str
+    parked_status: str  # inspect State.Status at failure time
+
+
+def gc_recreate_leftover(client: DockerClient, dep_name: str, logger: Logger) -> Wedge | None:
     """Remove a parked ``<dep>.gm-recreate-old`` left by an interrupted recreate.
 
     Called before ANY remediation of ``dep_name``: if the leftover still exists
     alongside the (already-replaced or about-to-be-replaced) dependent, it holds
     the same volume mounts — starting/recreating the dependent with it still
-    around risks two instances writing the same data. Returns False when a
-    leftover exists but cannot be removed (the caller must NOT proceed).
+    around risks two instances writing the same data. Returns None when clear to
+    proceed; a :class:`Wedge` when a leftover exists but cannot be removed (the
+    caller must NOT proceed, and should escalate — #98).
     """
     leftover = f"{dep_name}{_OLD_SUFFIX}"
-    if client.inspect(leftover) is None:
-        return True
+    info = client.inspect(leftover)
+    if info is None:
+        return None
     try:
         client.remove(leftover, volumes=False)
     except Exception as exc:
+        state = info.raw.get("State", {}) or {}
+        status = str(state.get("Status") or ("running" if info.running else "exited"))
         logger.error(
             f"Cannot remove leftover {leftover} from an interrupted recreate: {exc} "
             f"— refusing to remediate {dep_name} while it exists (shared volumes)"
         )
-        return False
+        return Wedge(parked_name=leftover, error=str(exc), parked_status=status)
     logger.warn(f"Removed leftover {leftover} from a previously interrupted recreate")
-    return True
+    return None
 
 
 def sweep_recreate_leftovers(client: DockerClient, logger: Logger) -> None:

@@ -60,7 +60,7 @@ def test_remediate_restart_failure_returns_false() -> None:
     fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")  # same id -> RESTART
     fake.on_exec = lambda n, c: ExecResult(1, "")
     assert remediate_dependent(fake, "dep", GLUETUN_ID, _cfg(), _logger(),
-                               sleep=lambda _s: None) is False
+                               sleep=lambda _s: None).ok is False
 
 
 # ----- TRY_RESTART escalates, recreate disabled -> fails (recovery.py:188-189) -----
@@ -69,13 +69,13 @@ def test_remediate_nameform_restart_fail_escalates_to_disabled_recreate() -> Non
     fake = _RestartRaises()
     fake.add_container("dep", network_mode="container:gluetun")  # name form -> TRY_RESTART
     assert remediate_dependent(fake, "dep", GLUETUN_ID, _cfg(auto_recreate=False),
-                               _logger(), sleep=lambda _s: None) is False
+                               _logger(), sleep=lambda _s: None).ok is False
 
 
 def test_remediate_missing_container_returns_false() -> None:
     fake = FakeDockerClient()
     assert remediate_dependent(fake, "ghost", GLUETUN_ID, _cfg(), _logger(),
-                               sleep=lambda _s: None) is False
+                               sleep=lambda _s: None).ok is False
 
 
 # ----- recreate spec-build failure (recreate.py:135-137) -----

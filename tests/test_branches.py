@@ -113,7 +113,7 @@ def test_remediate_missing_container_returns_false() -> None:
     act on) rather than raising."""
     fake = FakeDockerClient()
     ok = remediate_dependent(fake, "ghost", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
-    assert ok is False
+    assert ok.ok is False
 
 
 def test_remediate_try_restart_success_without_escalation() -> None:
@@ -129,6 +129,6 @@ def test_remediate_try_restart_success_without_escalation() -> None:
 
     fake.on_exec = handler
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
-    assert ok is True
+    assert ok.ok is True
     assert fake.restarted == ["dep"]
     assert fake.created == []  # restart worked, no escalation to recreate

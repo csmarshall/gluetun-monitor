@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .dependents import interface_check, remediation_action
 from .endpoint import get_endpoint_info
-from .recreate import gc_recreate_leftover, recreate_dependent
+from .recreate import Wedge, gc_recreate_leftover, recreate_dependent
 from .state import InterfaceStatus, RemediationAction
 
 if TYPE_CHECKING:
@@ -24,6 +25,26 @@ if TYPE_CHECKING:
     from .logging_setup import Logger
 
 Sleep = Callable[[float], None]
+
+
+@dataclass(frozen=True, slots=True)
+class RemediationOutcome:
+    """Result of one dependent remediation attempt.
+
+    Truthiness == success, so boolean call sites keep reading naturally.
+    ``detail`` is the failure signature: the monitor compares it across loops to
+    recognize *the same* failure repeating (the wedge-escalation trigger, #98).
+    ``wedge`` carries the unremovable-parked-twin specifics when that is the
+    blocker, so the escalation alert can ship the runbook.
+    """
+
+    ok: bool
+    detail: str = ""
+    wedge: Wedge | None = None
+
+    def __bool__(self) -> bool:
+        """Truthiness is success, so ``if outcome:`` reads like the old bool API."""
+        return self.ok
 
 
 def get_health(client: DockerClient, container: str) -> str:
@@ -137,14 +158,19 @@ def verify_dependent(client: DockerClient, dep_name: str) -> bool:
     return interface_check(client, dep_name) != InterfaceStatus.STRANDED
 
 
-def _do_restart(client: DockerClient, dep_name: str, logger: Logger, *, sleep: Sleep) -> bool:
+def _do_restart(
+    client: DockerClient, dep_name: str, logger: Logger, *, sleep: Sleep
+) -> str | None:
+    """Restart ``dep_name``. Returns None on success, the error detail on failure
+    (the caller feeds it into the failure signature — #98).
+    """
     try:
         client.restart(dep_name)
     except Exception as exc:
         logger.error(f"{dep_name} restart raised: {exc}")
-        return False
+        return f"restart failed: {exc}"
     sleep(2)  # brief settle before the verify, as v1.x did
-    return True
+    return None
 
 
 def _maybe_recreate(
@@ -153,14 +179,19 @@ def _maybe_recreate(
     gluetun_id: str,
     config: Config,
     logger: Logger,
-) -> bool:
+) -> str | None:
+    """Recreate ``dep_name`` if allowed. Returns None on success, else the
+    failure detail (#98 signature).
+    """
     if not config.auto_recreate:
         logger.error(
             f"{dep_name} needs recreate (gluetun id changed) but AUTO_RECREATE is "
             f"disabled — FAILED, manual intervention required"
         )
-        return False
-    return recreate_dependent(client, dep_name, gluetun_id, logger)
+        return "needs recreate but AUTO_RECREATE is disabled"
+    if not recreate_dependent(client, dep_name, gluetun_id, logger):
+        return "recreate failed (see log for the failing step)"
+    return None
 
 
 def remediate_dependent(
@@ -171,39 +202,50 @@ def remediate_dependent(
     logger: Logger,
     *,
     sleep: Sleep = time.sleep,
-) -> bool:
-    """Remediate a failing dependent and verify recovery. Returns success."""
+) -> RemediationOutcome:
+    """Remediate a failing dependent and verify recovery.
+
+    The outcome is truthy on success; on failure it carries the signature the
+    monitor uses to spot the same failure repeating loop after loop (#98).
+    """
     info = client.inspect(dep_name)
     if info is None:
         logger.error(f"Cannot remediate {dep_name}: container not found")
-        return False
+        return RemediationOutcome(False, "container not found")
 
     # A parked twin from an interrupted recreate shares every volume with this
     # container — restarting/recreating alongside it risks two writers on the
     # same data. Clear it first; refuse to act if it can't be cleared (#76).
-    if not gc_recreate_leftover(client, dep_name, logger):
-        return False
+    wedge = gc_recreate_leftover(client, dep_name, logger)
+    if wedge is not None:
+        return RemediationOutcome(
+            False,
+            f"unremovable parked twin {wedge.parked_name}: {wedge.error}",
+            wedge,
+        )
 
     action = remediation_action(info, gluetun_id)
 
     if action is RemediationAction.RESTART:
         logger.info(f"Restarting {dep_name} (same netns id)")
-        if not _do_restart(client, dep_name, logger, sleep=sleep):
-            return False
+        err = _do_restart(client, dep_name, logger, sleep=sleep)
+        if err is not None:
+            return RemediationOutcome(False, err)
     elif action is RemediationAction.TRY_RESTART:
         logger.info(f"Restarting {dep_name} (name-form netns)")
-        if not _do_restart(client, dep_name, logger, sleep=sleep):
+        if _do_restart(client, dep_name, logger, sleep=sleep) is not None:
             logger.warn(f"{dep_name} restart failed; escalating to recreate")
-            if not _maybe_recreate(client, dep_name, gluetun_id, config, logger):
-                return False
+            err = _maybe_recreate(client, dep_name, gluetun_id, config, logger)
+            if err is not None:
+                return RemediationOutcome(False, err)
     elif action is RemediationAction.RECREATE:
         logger.warn(f"{dep_name} netns moved (gluetun recreated) → recreate")
-        if not _maybe_recreate(client, dep_name, gluetun_id, config, logger):
-            return False
+        err = _maybe_recreate(client, dep_name, gluetun_id, config, logger)
+        if err is not None:
+            return RemediationOutcome(False, err)
 
-    ok = verify_dependent(client, dep_name)
-    if ok:
+    if verify_dependent(client, dep_name):
         logger.info(f"{dep_name} verified healthy after remediation")
-    else:
-        logger.error(f"{dep_name} still unhealthy after remediation — FAILED")
-    return ok
+        return RemediationOutcome(True)
+    logger.error(f"{dep_name} still unhealthy after remediation — FAILED")
+    return RemediationOutcome(False, "still unhealthy after remediation")

@@ -106,7 +106,7 @@ def test_gc_removes_leftover_and_blocks_when_it_cannot() -> None:
     fake = FakeDockerClient()
     _stranded_dep(fake)
     fake.add_container("dep.gm-recreate-old", network_mode=f"container:{OLD_ID}")
-    assert gc_recreate_leftover(fake, "dep", _logger()) is True
+    assert gc_recreate_leftover(fake, "dep", _logger()) is None
     assert ("dep.gm-recreate-old", False) in fake.removed
 
     class _RemoveRaises(FakeDockerClient):
@@ -116,13 +116,13 @@ def test_gc_removes_leftover_and_blocks_when_it_cannot() -> None:
     blocked = _RemoveRaises()
     _stranded_dep(blocked)
     blocked.add_container("dep.gm-recreate-old", network_mode=f"container:{OLD_ID}")
-    assert gc_recreate_leftover(blocked, "dep", _logger()) is False  # caller must not act
+    assert gc_recreate_leftover(blocked, "dep", _logger()) is not None  # caller must not act
 
 
 def test_gc_noop_without_leftover() -> None:
     fake = FakeDockerClient()
     _stranded_dep(fake)
-    assert gc_recreate_leftover(fake, "dep", _logger()) is True
+    assert gc_recreate_leftover(fake, "dep", _logger()) is None
     assert fake.removed == []
 
 
