@@ -144,6 +144,10 @@ class Monitor:
         # Persistent per-site stats (ADR-0008). Injectable for tests.
         self.stats = stats if stats is not None else SiteStatsStore(config.stats_file)
         self._advised_site: str | None = None  # dedup the flaky-site advisory
+        # Sites that triggered an active gluetun-unrecovered alert (#106). Held so
+        # the alert resolves only on OBSERVED recovery, not on the mechanical
+        # post-restart counter reset that makes the next loop look sub-threshold.
+        self._unrecovered_sites: set[str] = set()
         self.site_failures = Counter()
         self.dependent_failures = Counter()
         self._last_sites: set[str] | None = None
@@ -856,6 +860,13 @@ class Monitor:
             # fresh announce on the next one. Evaluated every loop, the alert
             # stays active until the dominance window genuinely clears.
             self._emit_advisory()
+            # #106: a failed recovery zeroes every site counter, so the very next
+            # loop is sub-threshold ("not breached") even while the triggering site
+            # is still down. That mechanical dip used to auto-resolve an active
+            # gluetun-unrecovered alert — a false "recovered". Hold it until the
+            # sites that triggered it have OBSERVABLY cleared this loop.
+            failing_now = {url for url in sites if self.site_failures.get(url) > 0}
+            self._reconcile_unrecovered(failing_now)
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
             self.run_dependent_phase(gluetun.id, sites)
@@ -897,6 +908,7 @@ class Monitor:
                 f"Was failing on {', '.join(breached)}; restarted but it did not come back "
                 f"healthy — manual intervention may be required.",
             )
+            self._unrecovered_sites = set(breached)  # #106: hold until these clear
             self.alerts.mark_incomplete()  # dependents were never evaluated (#74)
             return
 
@@ -915,6 +927,7 @@ class Monitor:
                 f"Restarted {self.config.gluetun_container} but it's still failing: "
                 f"{', '.join(reverify_breached)} — manual intervention may be required.",
             )
+            self._unrecovered_sites = set(reverify_breached)  # #106: hold until these clear
             self.site_failures.reset_all()
             self.alerts.mark_incomplete()  # dependents left untouched = unevaluated (#74)
             return
@@ -926,11 +939,47 @@ class Monitor:
             f"Was failing on {', '.join(breached)}; restarted and connectivity is healthy again.",
             key="gluetun-recovered",
         )
+        self._unrecovered_sites = set()  # #106: observed recovery — let the alert resolve
         self.site_failures.reset_all()
         # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
         gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
         self.run_dependent_phase(gluetun.id, sites)
         self._save_stats()
+
+    def _reconcile_unrecovered(self, failing_now: set[str]) -> None:
+        """Hold or resolve the ``gluetun-unrecovered`` alert from OBSERVED recovery
+        rather than the mechanical post-restart counter reset (#106).
+
+        The failed-recovery path zeroes every site counter, so the loop right after
+        it is always sub-threshold — which let :class:`AlertState` auto-resolve the
+        alert (a false "recovered") while the triggering site was still failing.
+        Called on every "not breached" loop: re-report the alert while its
+        triggering sites are still failing so it stays active, and let it resolve
+        only when they have genuinely cleared. Symmetric with ``_emit_advisory``,
+        which #75 hardened the same way.
+        """
+        if not self.alerts.is_active("gluetun-unrecovered"):
+            self._unrecovered_sites = set()
+            return
+        # Restart-safe: the alert can outlive the process (persisted sidecar), but
+        # the in-RAM triggering set does not. If it survived a monitor restart,
+        # adopt whatever is failing right now as the condition to hold on — a
+        # genuinely clean loop still resolves it below.
+        if not self._unrecovered_sites:
+            self._unrecovered_sites = set(failing_now)
+        remaining = self._unrecovered_sites & failing_now
+        if remaining:
+            self._problem(
+                "gluetun-unrecovered",
+                "attention",
+                f"gluetun cannot recover ({self.config.gluetun_container})",
+                f"Restarted {self.config.gluetun_container} but it's still failing: "
+                f"{', '.join(sorted(remaining))} — manual intervention may be required.",
+            )
+        else:
+            # The sites that triggered it are passing again → observed recovery.
+            # Not re-reporting lets the lifecycle emit the (true) resolve.
+            self._unrecovered_sites = set()
 
     def _emit_advisory(self) -> None:
         """Surface a flaky-site advisory when one site dominates recent restarts.
