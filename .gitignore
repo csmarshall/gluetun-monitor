@@ -5,6 +5,7 @@ logs/
 # Local config (copy from .example files)
 sites.conf
 docker-compose.yml
+.env
 
 # Local overrides
 docker-compose.override.yml
@@ -28,6 +29,8 @@ issue*.sh
 build-smoketest.sh
 rebuild-and-validate.sh
 deploy-v2.sh
+enable-notifications.sh
+rosa-reboot-precheck.sh
 
 # Python
 __pycache__/
