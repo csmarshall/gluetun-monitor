@@ -32,7 +32,7 @@ from .dns_check import DnsResult, DnsStatus, validate_dns
 from .endpoint import get_endpoint_info
 from .monitor_state import MonitorState
 from .notify import Notifier, NotifyEvent, NullNotifier
-from .recovery import remediate_dependent, restart_gluetun
+from .recovery import RemediationOutcome, remediate_dependent, restart_gluetun
 from .recreate import is_parked_name, sweep_recreate_leftovers
 from .site_stats import SiteStatsStore, format_window
 from .sites import (
@@ -66,6 +66,26 @@ class DependentProbe:
     reason: str
     dns_unvalidated: bool = False  # True = no usable DNS tool in the container
     interfaces: str = "?"  # the dependent's net interfaces, for DEBUG visibility
+
+
+@dataclass(slots=True)
+class _WedgeTrack:
+    """Consecutive-identical-remediation-failure bookkeeping for one dependent (#98).
+
+    ``signature`` is the failure detail from the last attempt; a repeat with the
+    SAME signature increments ``consecutive``, a different one starts the track
+    over (a new failure is a new situation, not a deeper wedge). Once escalated,
+    ``backoff_loops`` doubles per failed attempt (capped) and ``skip_remaining``
+    counts down the loops until the next attempt — probing is never skipped,
+    only the doomed remediation.
+    """
+
+    signature: str
+    consecutive: int = 1
+    escalated: bool = False
+    backoff_loops: int = 0  # current retry delay, in loops
+    skip_remaining: int = 0  # loops left before the next attempt
+    body: str = ""  # last escalation-alert body, re-reported on skipped loops
 
 
 def _fmt_reach(host: str, r: DnsResult) -> str:
@@ -155,6 +175,11 @@ class Monitor:
         self._warned_orphans: set[str] = set()
         # Dedup for "can't validate DNS (no usable tool)" — re-armed if it later validates.
         self._warned_dns_unvalidated: set[str] = set()
+        # Per-dependent wedge escalation + retry backoff (#98). In-memory only:
+        # a restart mid-wedge re-detects within one attempt (the active
+        # `dependent-wedged:` alert persists in the alert sidecar and is picked
+        # up via alerts.is_active, so no re-announce and no false resolve).
+        self._wedges: dict[str, _WedgeTrack] = {}
 
     def _notify(self, tier: str, title: str, body: str, key: str) -> None:
         """Buffer a one-shot point event for this loop's rollup (ADR-0011)."""
@@ -518,6 +543,8 @@ class Monitor:
         # would imply it recovered (ADR-0012).
         for gone in self._managed_dependents - set(dependents):
             self._forget(f"dependent-unhealthy:{gone}")
+            self._forget(f"dependent-wedged:{gone}")
+            self._wedges.pop(gone, None)
         self._managed_dependents = set(dependents)
         if not dependents:
             return
@@ -590,6 +617,13 @@ class Monitor:
         else:
             self.log.info(f"dependents: {healthy}/{len(probes)} ok")
 
+        # A dependent that came back healthy WITHOUT our help (e.g. the operator
+        # cleared the wedge and it recovered) drops its failure bookkeeping; its
+        # wedged alert stops being reported, so the lifecycle resolves it.
+        failing = {dep for dep, _ in to_remediate}
+        for dep in [d for d in self._wedges if d not in failing]:
+            del self._wedges[dep]
+
         for dep, reason in to_remediate:
             if self.config.dry_run:
                 # Observe-only: report the decision + the action we'd take, but
@@ -599,11 +633,29 @@ class Monitor:
                 action = remediation_action(info, gluetun_id).name if info else "UNKNOWN"
                 self.log.warn(f"[DRY-RUN] would remediate {dep}: {reason} (action={action})")
                 continue
+            track = self._wedges.get(dep)
+            if track is not None and track.escalated and track.skip_remaining > 0:
+                # Wedged and backing off: the same attempt has failed identically
+                # every time — don't drive another doomed removal through the
+                # daemon this loop. Keep the alert active (the lifecycle resolves
+                # anything not re-reported) and keep probing every loop.
+                track.skip_remaining -= 1
+                self._problem(
+                    f"dependent-wedged:{dep}", "attention",
+                    f"dependent WEDGED: {dep}", track.body,
+                )
+                self.log.debug(
+                    f"{dep} is wedged; backing off — next remediation attempt in "
+                    f"{track.skip_remaining + 1} loop(s) (probes continue)"
+                )
+                continue
             self.log.warn(f"Remediating dependent {dep}: {reason}")
             self.stats.record_dependent_remediation()
-            if remediate_dependent(
+            outcome = remediate_dependent(
                 self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
-            ):
+            )
+            if outcome:
+                self._wedges.pop(dep, None)
                 self.dependent_failures.reset(dep)
                 self._notify(
                     "recovery",
@@ -612,15 +664,99 @@ class Monitor:
                     key=f"dependent-remediated:{dep}",
                 )
             else:
-                # An ongoing problem → the lifecycle (edge-triggered, repeat, resolve),
-                # not a per-loop point event.
-                self._problem(
-                    f"dependent-unhealthy:{dep}",
-                    "attention",
-                    f"dependent unhealthy: {dep}",
-                    f"{dep} is still unhealthy after remediation ({reason}) — "
-                    f"manual intervention may be required.",
-                )
+                self._record_remediation_failure(dep, reason, outcome)
+
+    def _record_remediation_failure(
+        self, dep: str, reason: str, outcome: RemediationOutcome
+    ) -> None:
+        """Track consecutive identical remediation failures for ``dep``; escalate
+        to a distinct wedged alert + retry backoff once the same failure has
+        repeated WEDGE_ESCALATE_AFTER times (#98).
+
+        Below the threshold this is exactly the pre-#98 behavior (the generic
+        ``dependent-unhealthy`` lifecycle alert, retry next loop). A failure with
+        a DIFFERENT signature restarts the count — a new error is a new
+        situation, not a deeper wedge.
+        """
+        track = self._wedges.get(dep)
+        if track is None or track.signature != outcome.detail:
+            track = _WedgeTrack(signature=outcome.detail)
+            self._wedges[dep] = track
+        else:
+            track.consecutive += 1
+        # A wedged alert persisted from before a monitor restart means this
+        # dependent was already escalated — stay escalated rather than demoting
+        # to the generic alert (which would re-announce AND falsely resolve the
+        # wedged one). report() on an active key refreshes silently.
+        already = self.alerts.is_active(f"dependent-wedged:{dep}")
+        if track.consecutive < self.config.wedge_escalate_after and not already:
+            self._problem(
+                f"dependent-unhealthy:{dep}",
+                "attention",
+                f"dependent unhealthy: {dep}",
+                f"{dep} is still unhealthy after remediation ({reason}) — "
+                f"manual intervention may be required.",
+            )
+            return
+        first = not track.escalated
+        track.escalated = True
+        # Doubling backoff per failed attempt, in loops, capped. cap=0 disables
+        # the backoff (attempt every loop) but keeps the escalated alert.
+        cap_loops = self.config.wedge_backoff_cap // max(1, self.config.check_interval)
+        track.backoff_loops = (
+            min(max(2, track.backoff_loops * 2), cap_loops) if cap_loops > 0 else 0
+        )
+        track.skip_remaining = track.backoff_loops
+        track.body = self._wedged_body(dep, track, outcome)
+        if first:
+            # The wedged alert supersedes the generic one: silently retire it (no
+            # false "resolved" — the problem didn't clear, it got more specific).
+            self.alerts.supersede(f"dependent-unhealthy:{dep}")
+            self.log.warn(
+                f"{dep} is WEDGED: the same remediation failure has repeated "
+                f"{track.consecutive}x ({outcome.detail}) — operator action required; "
+                f"backing off to one attempt every {track.backoff_loops or 1} loop(s) "
+                f"(probes continue every loop)"
+            )
+        self._problem(
+            f"dependent-wedged:{dep}", "attention",
+            f"dependent WEDGED: {dep}", track.body,
+        )
+
+    def _wedged_body(self, dep: str, track: _WedgeTrack, outcome: RemediationOutcome) -> str:
+        """The wedged-alert body: what is stuck, the exact error, and — when the
+        blocker is an unremovable parked twin — the operator runbook, so the alert
+        itself is enough to act on (#98).
+        """
+        retry_s = track.backoff_loops * self.config.check_interval
+        cadence = (
+            f"retries remediation only every ~{retry_s}s"
+            if retry_s > 0
+            else "keeps retrying every loop"
+        )
+        lines = [
+            f"{dep} remediation has failed {track.consecutive} consecutive times with "
+            f"the same error and cannot succeed without operator action. The monitor "
+            f"keeps probing every loop but now {cadence}; it will finish the heal "
+            f"itself once the blocker is cleared.",
+            f"Error: {outcome.detail}",
+        ]
+        if outcome.wedge is not None:
+            w = outcome.wedge
+            lines += [
+                f"Parked twin: {w.parked_name} (state: {w.parked_status}) — an "
+                f"interrupted recreate's copy that Docker cannot remove; it shares "
+                f"every volume with {dep}, so remediation is refused while it exists. "
+                f"A 'dead' state with a busy-filesystem error usually means its "
+                f"process tree is still alive and pinning the mount.",
+                f"Runbook: 1) find the pinning processes — match the container's "
+                f"storage/dataset id in /proc/*/mountinfo to LOCATE holders, but kill "
+                f"only pids whose /proc/<pid>/cgroup contains this container's id "
+                f"(host-namespace processes match mountinfo innocently); "
+                f"2) docker rm -f {w.parked_name} (never remove the storage layer "
+                f"directly — Docker owns it); 3) done — no monitor action needed.",
+            ]
+        return "\n".join(lines)
 
     # ----- one full loop iteration (node 1 -> 22, minus the sleep) -----
 

@@ -199,6 +199,8 @@ docker compose up -d
 | `NOTIFY_REPEAT_INTERVAL` | `0` | Re-notify cadence for an *ongoing* problem, in **loops**. `0` = announce once, then silent until it resolves; `N` = remind every `N` loops. Alerts are edge-triggered. See [Notifications](#notifications) |
 | `NOTIFY_STATE_FILE` | `/logs/notify-state.json` | Where the active-alert lifecycle persists (so a monitor restart doesn't re-spam or miss a resolve). Best-effort. See [Notifications](#notifications) |
 | `NOTIFY_TIMEOUT` | `10` | Max seconds to wait for a notification send before carrying on (sends run off the loop, so a slow backend can't stall the watchdog). See [Notifications](#notifications) |
+| `WEDGE_ESCALATE_AFTER` | `3` | Consecutive **identical** remediation failures on one dependent before it's declared wedged: a distinct `dependent WEDGED` alert (with the operator runbook when the blocker is an unremovable parked twin) replaces the generic one, and remediation attempts back off. See [Notifications](#notifications) |
+| `WEDGE_BACKOFF_CAP` | `600` | Ceiling (seconds) for the doubling remediation-retry backoff once wedged. Probes still run every loop — only the doomed remediation attempt is throttled. `0` = no backoff (retry every loop) but still escalate the alert |
 
 ### Configuration is validated — sane defaults, but bad config is fatal
 
@@ -307,6 +309,7 @@ Uses `wget --spider` which only fetches headers (no response body downloaded).
 | `DNS_WAIT_TIMEOUT` | `30` | post-restart budget | poll for DNS to stabilize after a restart | — |
 | `NOTIFY_TIMEOUT` | `10` | per-send | max wait for one (off-thread) notification send | — |
 | `NOTIFY_REPEAT_INTERVAL` | `0` | alert cadence | reminder cadence for an ongoing problem (`0` = announce once) | — |
+| `WEDGE_BACKOFF_CAP` | `600` | retry backoff | ceiling for the doubling remediation-retry delay on a wedged dependent (`0` = no backoff) | — |
 
 (The Docker API client timeout isn't a separate knob — it's derived as
 `max(TIMEOUT × 2, 60)`.)
@@ -700,6 +703,33 @@ dependent excluded) you get a "no longer monitored" note instead (the alert is
 retired, not recovered). This state persists to `NOTIFY_STATE_FILE`,
 so restarting the monitor neither re-spams still-broken problems nor misses a
 resolve (ADR-0012).
+
+### Wedged dependents — escalation with the runbook attached
+
+Most remediation failures are transient and the next loop's retry clears them. But
+some states **cannot** self-heal — the canonical one is an unremovable parked twin
+left by an interrupted recreate (a storage-driver `dataset is busy` refusal: the
+force-killed container's process tree survived and pinned the mount). Retrying is
+free but futile, and the failure looks identical every loop.
+
+When the **same** remediation failure repeats `WEDGE_ESCALATE_AFTER` consecutive
+times (default 3), the monitor declares the dependent **wedged**:
+
+- the generic `dependent unhealthy` alert is superseded by a distinct
+  **`dependent WEDGED`** alert carrying the exact error, the parked twin's inspect
+  state, and the **operator runbook** — the alert alone is enough to act on;
+- remediation attempts **back off** (doubling per failed attempt, capped at
+  `WEDGE_BACKOFF_CAP` seconds, default 10 min) instead of hammering the daemon with
+  a doomed removal every loop;
+- **probing never stops** — the dependent is still checked every loop, so once the
+  blocker is cleared (or the container recovers on its own) the monitor finishes
+  the heal itself and resolves the alert. A failure that *changes* restarts the
+  count: a new error is a new situation, not a deeper wedge.
+
+One deployment note: **a wedged alert is only as good as the `APPRISE_URLS` behind
+it**. In log-only mode (the default) every attention-tier alert — this one included
+— is just a log line, and "escalation" means hoping someone tails the log. If you
+rely on the monitor to summon you when it's stuck, configure notifications.
 
 ### Grouped, best-effort
 

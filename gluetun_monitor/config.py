@@ -180,6 +180,19 @@ class Config:
     # monitoring loop, so a slow/hung backend can't stall the watchdog). Tenet 7.
     notify_timeout: int = 10
 
+    # --- Wedged-remediation escalation + retry backoff (#98) ---
+    # Consecutive IDENTICAL remediation failures on one dependent before the
+    # monitor declares it wedged: a distinct attention alert (runbook included
+    # when the blocker is an unremovable parked twin) replaces the generic
+    # unhealthy alert, and remediation attempts back off. The first N-1 failures
+    # keep the pre-#98 behavior (retry every loop, generic alert).
+    wedge_escalate_after: int = 3
+    # Ceiling (seconds) for the doubling retry backoff once wedged. Probes still
+    # run every loop — only the doomed remediation attempt is throttled, so a
+    # wedge cleared by the operator is noticed within one retry interval at worst
+    # (and immediately if the dependent comes back healthy on its own).
+    wedge_backoff_cap: int = 600
+
     # Fatal config errors (malformed env values), collected during from_env and
     # surfaced by the CLI once the logger exists — the CLI then refuses to start.
     # Not an env var.
@@ -258,5 +271,8 @@ class Config:
             notify_repeat_interval=_env_int("NOTIFY_REPEAT_INTERVAL", 0, errors, minimum=0),
             notify_state_file=os.environ.get("NOTIFY_STATE_FILE", "/logs/notify-state.json"),
             notify_timeout=_env_int("NOTIFY_TIMEOUT", 10, errors, minimum=1),
+            wedge_escalate_after=_env_int("WEDGE_ESCALATE_AFTER", 3, errors, minimum=1),
+            # 0 = no backoff (retry every loop), but still escalate the alert.
+            wedge_backoff_cap=_env_int("WEDGE_BACKOFF_CAP", 600, errors, minimum=0),
             errors=tuple(errors),
         )

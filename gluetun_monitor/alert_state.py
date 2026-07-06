@@ -91,6 +91,25 @@ class AlertState:
         """Declare that ``key``'s subject is no longer monitored (silent clear)."""
         self._forgotten.add(key)
 
+    def is_active(self, key: str) -> bool:
+        """Whether ``key`` is currently an active (announced, unresolved) alert.
+
+        Lets the monitor recognize a problem it had already escalated before a
+        restart (#98) without persisting separate bookkeeping — the alert sidecar
+        already remembers.
+        """
+        return key in self._active
+
+    def supersede(self, key: str) -> None:
+        """Silently retire ``key``: a stronger alert for the same subject replaces
+        it (#98 unhealthy→wedged escalation). No resolve event (the problem did
+        not clear) and no deprecation (the subject is still monitored) — the
+        successor alert is the continuation of the same story.
+        """
+        if self._active.pop(key, None) is not None:
+            self._log.debug(f"notify: {key} superseded")
+        self._reported.pop(key, None)
+
     # ----- per-loop output -----
 
     def events(self) -> list[NotifyEvent]:
