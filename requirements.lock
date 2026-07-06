@@ -4,9 +4,9 @@
 #
 #    pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
 #
-apprise==1.11.0 \
-    --hash=sha256:3b1e6f5365b302d1fae270c0c8007958e54224b9b7808acec69006ea27f5b8a2 \
-    --hash=sha256:6abc6d9f8dddedfe14b2918c3553146894ac6e3dad401deaf854b20b4c455d38
+apprise==1.12.0 \
+    --hash=sha256:28edabfec5a9d5dbcd9aa28bdfd8928ecb68764e40214b6e648eab6d974b5a93 \
+    --hash=sha256:ffe9860d99cbde05fd156c610d4bcb49d953200c4ed3cb2db001ed50722fc142
     # via gluetun-monitor (pyproject.toml)
 certifi==2026.5.20 \
     --hash=sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897 \
