@@ -112,3 +112,21 @@ def test_from_dict_tolerates_garbage() -> None:
     assert LatencyHistogram.from_dict({"buckets": "nope"}).count == 0
     # partial / wrong-typed values degrade to empty, never raise
     assert LatencyHistogram.from_dict({"count": "x", "buckets": {}}).count == 0
+
+
+def test_from_dict_rejects_count_bucket_mismatch() -> None:
+    """#91: a corrupt-but-parseable sidecar whose count disagrees with its buckets
+    (e.g. count=100, empty buckets) is rejected to empty rather than loaded — an
+    inconsistent sketch would make quantile() seek a rank the buckets can't satisfy."""
+    h = LatencyHistogram.from_dict(
+        {"count": 100, "sum_ms": 5000, "min_ms": 1, "max_ms": 99, "buckets": {}}
+    )
+    assert h.count == 0
+    assert h.summary()["samples"] == 0
+
+
+def test_quantile_never_crashes_on_inconsistent_instance() -> None:
+    """Defense-in-depth: even a hand-built inconsistent histogram (count>0, no
+    buckets) must not turn the quantile fallback's max({}) into a ValueError."""
+    broken = LatencyHistogram(count=5, sum_ms=0, min_ms=0, max_ms=0, buckets={})
+    assert broken.quantile(0.5) == 0

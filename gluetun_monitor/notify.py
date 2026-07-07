@@ -116,6 +116,13 @@ class AppriseNotifier:
         self._level = tier_rank(level)
         self._timeout = timeout_seconds
         self._log = logger
+        # An unrecognized NOTIFY_LEVEL silently ranks 0 (the loudest floor) — say so
+        # once at startup rather than leave the operator wondering why everything sends.
+        if level.lower() not in _TIER_RANK:
+            self._log.warn(
+                f"NOTIFY_LEVEL '{level}' is not a recognized tier {TIERS}; "
+                f"treating it as the loudest floor ('attention')"
+            )
         self._apprise = self._build(urls, apprise_factory)
         # At most ONE send in flight: a backend that ignores its own socket timeout
         # would otherwise leak one abandoned daemon thread per loop, unbounded (#85).
@@ -180,7 +187,7 @@ class AppriseNotifier:
 
     def _compose(self, events: list[NotifyEvent]) -> tuple[str, str, str]:
         """Render survivors into one (title, body, notify_type). Worst tier wins the type."""
-        ordered = sorted(events, key=lambda e: tier_rank(e.tier))  # action first
+        ordered = sorted(events, key=lambda e: tier_rank(e.tier))  # attention first
         ntype = _TIER_NOTIFY_TYPE.get(ordered[0].tier, "info")
         if len(ordered) == 1:
             return ordered[0].title, ordered[0].body, ntype

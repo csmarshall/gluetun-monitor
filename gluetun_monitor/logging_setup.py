@@ -44,10 +44,19 @@ class _BashFormatter(logging.Formatter):
     """Render ``[ts] [LEVEL] msg``, displaying WARNING as WARN (v1.x parity)."""
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format a record, displaying WARNING as WARN for v1.x parity."""
-        if record.levelname == "WARNING":
+        """Format a record, displaying WARNING as WARN for v1.x parity.
+
+        The rename is restored before returning: ``LogRecord`` is shared across all
+        handlers on the logger, so mutating ``levelname`` in place would leak "WARN"
+        into any other handler (or a future second one) that formats the same record.
+        """
+        original = record.levelname
+        if original == "WARNING":
             record.levelname = "WARN"
-        return super().format(record)
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original
 
 
 def install_bash_format_on_root(level: str = "WARNING") -> None:
