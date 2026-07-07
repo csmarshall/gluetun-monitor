@@ -45,6 +45,9 @@ jobs:
           if [ -z "${current}" ]; then
             echo "::warning::could not resolve current digest — skipping this run"; exit 0
           fi
+          if ! printf '%s' "${current}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::warning::resolved digest '${current}' is malformed — refusing to pin"; exit 0
+          fi
           if [ "${current}" = "${pinned}" ]; then
             echo "Base image unchanged — nothing to do."; exit 0
           fi

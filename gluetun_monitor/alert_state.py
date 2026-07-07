@@ -31,6 +31,7 @@ happened while it was down.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -224,10 +225,26 @@ class AlertState:
             "active": {key: asdict(a) for key, a in self._active.items()},
         }
         try:
-            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            target = Path(self._path)
+            target.parent.mkdir(parents=True, exist_ok=True)
             tmp = Path(f"{self._path}.tmp")
             with tmp.open("w", encoding="utf-8") as fh:
                 json.dump(payload, fh, indent=2, sort_keys=True)
-            tmp.replace(self._path)
+                fh.flush()
+                os.fsync(fh.fileno())  # data on disk before the rename
+            tmp.replace(self._path)  # atomic rename
+            self._fsync_dir(target.parent)  # persist the rename itself (mirror SiteStatsStore)
         except OSError as exc:
             self._log.debug(f"notify: could not persist alert state: {exc}")
+
+    @staticmethod
+    def _fsync_dir(directory: Path) -> None:
+        """Best-effort fsync of a directory so the rename survives power loss."""
+        try:
+            fd = os.open(str(directory), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass

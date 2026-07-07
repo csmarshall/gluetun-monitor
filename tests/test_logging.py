@@ -140,3 +140,18 @@ def test_install_bash_format_on_root_formats_third_party() -> None:
     line = fmt.format(rec)
     assert _LINE_RE.match(line), line   # [ts] [WARN] pool full
     assert "[WARN]" in line
+
+
+def test_bash_formatter_does_not_mutate_record_levelname() -> None:
+    """#91: WARNING renders as WARN, but the shared LogRecord must be restored —
+    mutating levelname in place would leak "WARN" into any other handler formatting
+    the same record."""
+    import logging
+
+    from gluetun_monitor.logging_setup import _BashFormatter
+
+    fmt = _BashFormatter("[%(levelname)s] %(message)s")
+    record = logging.LogRecord("t", logging.WARNING, "f", 1, "hi", None, None)
+    rendered = fmt.format(record)
+    assert "[WARN]" in rendered            # display parity preserved
+    assert record.levelname == "WARNING"   # ...without corrupting the record

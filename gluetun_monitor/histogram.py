@@ -75,7 +75,10 @@ class LatencyHistogram:
             cumulative += self.buckets[key]
             if cumulative >= rank:
                 return _bucket_value(key)
-        return _bucket_value(max(self.buckets))  # unreachable; defensive
+        # Defensive: with a consistent sketch (count == sum of bucket counts, which
+        # from_dict now enforces) this is unreachable. Guard the empty case anyway so
+        # a future inconsistency can't turn max({}) into a ValueError crash.
+        return _bucket_value(max(self.buckets)) if self.buckets else 0
 
     def summary(self) -> dict[str, int]:
         """Samples + exact avg/min/max + approximate p50/p90/p99 (ms)."""
@@ -92,7 +95,12 @@ class LatencyHistogram:
         }
 
     def merge(self, other: LatencyHistogram) -> None:
-        """Fold ``other`` into this one (the mergeable property — counts add)."""
+        """Fold ``other`` into this one (the mergeable property — counts add).
+
+        Retained deliberately (no production caller yet): merging is the defining
+        operation of this DDSketch-style sketch, and the recency-weighted all-time
+        view (#25) folds per-period histograms through it.
+        """
         if other.count == 0:
             return
         for key, cnt in other.buckets.items():
@@ -126,8 +134,16 @@ class LatencyHistogram:
                 for k, v in raw_buckets.items()
                 if isinstance(v, int | float)
             }
+            count = int(data.get("count", 0))
+            # A valid sketch always has count == sum of bucket counts (observe() bumps
+            # both together). A corrupt-but-parseable sidecar that breaks this invariant
+            # — e.g. count=100 with empty buckets — would make quantile() seek a rank the
+            # buckets can't satisfy. Reject to empty rather than load an inconsistent one
+            # (honors the "malformed → empty, never crash" contract above).
+            if count < 0 or count != sum(buckets.values()):
+                return cls()
             return cls(
-                count=int(data.get("count", 0)),
+                count=count,
                 sum_ms=int(data.get("sum_ms", 0)),
                 min_ms=int(data.get("min_ms", 0)),
                 max_ms=int(data.get("max_ms", 0)),

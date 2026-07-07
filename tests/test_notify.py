@@ -180,3 +180,15 @@ def test_hung_backend_does_not_leak_a_thread_per_dispatch() -> None:
         assert threading.active_count() - before <= 1  # one in-flight worker, not five
     finally:
         release.set()
+
+
+def test_unknown_notify_level_warns() -> None:
+    """#91: an unrecognized NOTIFY_LEVEL silently ranks 0 (loudest); warn once at
+    construction so the operator isn't left guessing why everything sends."""
+    stream = io.StringIO()
+    logger = Logger(log_file=None, level="DEBUG", stream=stream)
+    AppriseNotifier(
+        ("memory://",), level="bogus", logger=logger,
+        apprise_factory=lambda _urls: _FakeApprise(),
+    )
+    assert "not a recognized tier" in stream.getvalue()
