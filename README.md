@@ -704,6 +704,12 @@ retired, not recovered). This state persists to `NOTIFY_STATE_FILE`,
 so restarting the monitor neither re-spams still-broken problems nor misses a
 resolve (ADR-0012).
 
+A resolve means the condition was **observed** to clear, not that a counter
+momentarily dipped. In particular the "gluetun cannot recover" alert stays active
+until the sites that triggered it actually pass again — a site that is unreachable
+through an otherwise-healthy tunnel (e.g. geo-blocked from the current exit) keeps
+the alert firing once, without a false "recovered" every restart cycle.
+
 ### Wedged dependents — escalation with the runbook attached
 
 Most remediation failures are transient and the next loop's retry clears them. But
