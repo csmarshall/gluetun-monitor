@@ -19,6 +19,19 @@ from .fakes import FakeDockerClient
 GLUETUN_ID = "a" * 64
 
 
+@pytest.fixture(autouse=True)
+def _restore_signal_handlers():
+    """Installing real SIGTERM/SIGINT handlers here leaks process-wide: without
+    this, every LATER test in the run inherits handlers that turn a Ctrl-C / CI
+    timeout kill into SystemExit(0) — a green-looking abort (#90). Save + restore."""
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+
+
 class _StopLoop(Exception):
     """Sentinel used to break the otherwise-infinite run() loop in tests."""
 

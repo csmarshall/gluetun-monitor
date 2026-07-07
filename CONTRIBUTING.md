@@ -19,12 +19,12 @@ retained only as a differential test oracle (see below).
    ```
 4. Make your change with tests, run the gate (below), open a PR.
 
-Python **3.13** is the target (`requires-python`/`target-version`).
+Python **3.14** is the target (`requires-python`/`target-version`).
 
 ## The gate — run this before every PR
 
 ```bash
-ruff check gluetun_monitor tests     # lint + import order (line length 100)
+ruff check gluetun_monitor tests     # lint + import order (line length 120)
 mypy gluetun_monitor                 # types — strict
 pytest                               # tests, incl. the differential suite vs. bash
 pytest --cov=gluetun_monitor --cov-report=term-missing --cov-fail-under=95
@@ -74,7 +74,9 @@ CI runs exactly these (plus a Docker build, an integration smoke test, and
 ## Commit messages & PRs
 
 - Imperative mood, first line < 72 chars, reference issues (`Fixes #123`).
-- Update `CHANGELOG.md` under `[Unreleased]` when you change behavior.
+- Don't edit `CHANGELOG.md` — release-please owns it, generating entries from your
+  Conventional Commit messages (`feat:`/`fix:`/…). Write a clear commit message
+  instead; that becomes the changelog line.
 - Update the relevant docs; for a **significant or hard-to-reverse design
   decision**, add an ADR under `docs/adr/` (see `docs/adr/README.md` for the bar —
   routine choices belong in code/docs, not an ADR).

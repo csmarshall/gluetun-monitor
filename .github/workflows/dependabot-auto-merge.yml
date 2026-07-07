@@ -7,8 +7,8 @@ name: Dependabot auto-merge
 # default ("Allow GitHub Actions to approve pull requests" is off, correctly) and
 # a review-bypass anti-pattern. Enabling auto-merge is all that's needed.
 #
-# "Auto-merge" still waits for every required status check (the 3.13/3.14 test
-# matrix, shellcheck, bats, build, integration) to go green — so a bump that
+# "Auto-merge" still waits for every required status check (the Python 3.14 test
+# job, shellcheck, bats, build, integration) to go green — so a bump that
 # breaks anything fails its own CI and stays open for a human. This workflow only
 # widens *which already-green PRs* merge without a manual click; it never bypasses
 # the gate. (Requires repo "Allow auto-merge" + branch protection with required

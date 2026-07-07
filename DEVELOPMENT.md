@@ -27,12 +27,20 @@ gluetun_monitor/
 ├── config.py         # Config dataclass, from_env() (the env-var contract)
 ├── logging_setup.py  # stdlib logging, formatted to the v1.x line format
 ├── docker_client.py  # the seam: DockerClient Protocol + DockerPyClient + ContainerInfo
-├── sites.py          # sites.conf parsing, trim, resolvable-vs-IP classification
-├── connectivity.py   # probe_site() — wget --spider, the v1.x exit-code map (0/6/8 pass)
+├── sites.py          # sites.conf parsing (+ per-URL |role/timeout/tries), IP-vs-host
+├── connectivity.py   # probe_site() — wget --spider, HTTP-response-first classification
+├── dns_check.py      # per-dependent DNS validation (wget→getent→ping cascade)
 ├── endpoint.py       # parse gluetun logs for IP/location/server (issue #17 safe)
 ├── dependents.py     # discovery, interface check, restart-vs-recreate decision
 ├── recreate.py       # build_create_body() (pure) + recreate_dependent() — ADR-0005
 ├── recovery.py       # gluetun restart waits + dependent remediation/verify
+├── monitor_state.py  # durable dependent memory: gluetun-id history + known deps (ADR-0014)
+├── site_stats.py     # persistent per-site stats + flaky-site advisory (ADR-0008)
+├── histogram.py      # bounded DDSketch-style latency percentiles (ADR-0009)
+├── tunables.py       # --suggest-tunables: per-URL timeout/tries recommendations
+├── report.py         # gluetun-monitor-stats CLI (human/JSON stats view)
+├── notify.py         # opt-in Apprise notifier: tier filter + rollup (ADR-0010/0011)
+├── alert_state.py    # edge-triggered alert lifecycle + persistence (ADR-0012)
 ├── state.py          # consecutive-failure Counter + enums
 └── monitor.py        # Monitor: the per-loop state machine (ADR-0006 nodes 1-22)
 ```
