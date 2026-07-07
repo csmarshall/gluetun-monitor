@@ -135,3 +135,12 @@ def test_pools_split_resolvable_from_ip_literals() -> None:
     sites = ["https://www.google.com", "https://1.1.1.1", "https://cloudflare.com"]
     assert resolvable_pool(sites) == ["https://www.google.com", "https://cloudflare.com"]
     assert ip_pool(sites) == ["https://1.1.1.1"]
+
+
+def test_unsafe_site_reason_rejects_embedded_credentials() -> None:
+    """A creds-bearing URL must be rejected so a password never enters logs or
+    notifications (#86); a clean URL is still accepted."""
+    from gluetun_monitor.sites import unsafe_site_reason
+
+    assert unsafe_site_reason("https://user:s3cret@example.com") is not None
+    assert unsafe_site_reason("https://example.com") is None
