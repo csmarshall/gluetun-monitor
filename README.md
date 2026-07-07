@@ -419,7 +419,12 @@ https://slow-and-flaky.example|role=advisory|timeout=25
   stats, but its failure **never** triggers a gluetun restart, and it's excluded
   from the flaky-site advisory (you've already acknowledged it). Startup logs it
   under `Per-URL probe overrides: … role=advisory`, and a failing advisory site
-  shows in the heartbeat as `failing: host (advisory)`.
+  shows in the heartbeat as `failing: host (advisory)`. If you want to *hear* when
+  an advisory site goes unreachable, it emits an opt-in, edge-triggered alert at the
+  **`activity`** notification tier (silent at the default `attention`) — announced
+  once it's been unreachable `FAIL_THRESHOLD` checks, resolved when it's back. So
+  you can watch a geo-blocked endpoint's reachability without it ever restarting the
+  tunnel or paging you.
 
 Use `advisory` for a site you want to **watch** but that can't be reached through
 the VPN regardless of tunnel health — a geo-blocked/anti-VPN endpoint (a torrent
@@ -731,7 +736,7 @@ line looks. Each level adds its own row to everything above it (ADR-0011):
 |---|---|---|
 | **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **flaky-site advisory** |
 | `recovery` | + self-healed incidents | gluetun recovered, dependent remediated |
-| `activity` | + non-fault changes | `sites.conf` reloaded |
+| `activity` | + non-fault changes | `sites.conf` reloaded, **advisory site unreachable / recovered** |
 | `all` | + the firehose | per-loop checks, restart play-by-play |
 
 So enabling notifications gets you **`attention` only** — the monitor stays silent
