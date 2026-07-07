@@ -81,11 +81,17 @@ Failures are inevitable, so optimize for fast, safe **recovery** rather than
 elaborate prevention or detection
 ([Recovery-Oriented Computing](https://en.wikipedia.org/wiki/Recovery-oriented_computing)).
 Recovery here is cheap and **non-destructive** (ADR-0005 — volumes preserved),
-so the monitor **re-acts rather than remembers**: consecutive in-memory counters,
-no persistence, no backoff/circuit-breakers. Treat restart/recreate as the
+so the monitor **prefers to re-act rather than remember**: consecutive in-memory
+counters and restart-first, not elaborate state. State has to *earn* its place —
+and a few things since have: what Docker forgets across a monitor restart is
+persisted deliberately (site stats ADR-0008, alert lifecycle ADR-0012, dependent
+memory ADR-0014), and a *provably futile* repeat backs off (the wedged-dependent
+case #98) instead of hammering a doomed remediation every loop. The default stays
+stateless and backoff-free; each exception is bounded and ADR-recorded, never the
+clever-fragile state this tenet warns against. Treat restart/recreate as the
 first-class repair, isolate the fault to the smallest unit (one container), and
 accept an occasional extra restart over state that can rot or mislead — a restart
-that fixes it beats a clever guess that might not. <sub>ADR-0005, 0006; Recovery-Oriented Computing</sub>
+that fixes it beats a clever guess that might not. <sub>ADR-0005, 0006, 0008, 0012, 0014; #98; Recovery-Oriented Computing</sub>
 
 ---
 
