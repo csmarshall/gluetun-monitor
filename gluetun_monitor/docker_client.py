@@ -51,6 +51,28 @@ class ContainerInfo:
             raw=raw,
         )
 
+    @classmethod
+    def from_list_entry(cls, entry: dict[str, Any]) -> ContainerInfo:
+        """Build a ContainerInfo from a ``GET /containers/json`` **list** entry.
+
+        The list payload's ``HostConfig`` carries only ``NetworkMode`` and its state is
+        the string ``"running"`` (vs. inspect's ``State.Running`` bool and nested
+        ``Health``) — enough for dependent discovery (id / name / network_mode) without
+        an inspect per container. ``health`` is left ``"unknown"`` and ``raw`` is the
+        list entry (NOT a full inspect), so any caller needing ``Config``/``Mounts``
+        must still ``inspect()``.
+        """
+        names = entry.get("Names") or []
+        host_config = entry.get("HostConfig", {}) or {}
+        return cls(
+            id=entry.get("Id", ""),
+            name=str(names[0]).lstrip("/") if names else "",
+            network_mode=str(host_config.get("NetworkMode", "")),
+            running=str(entry.get("State", "")).lower() == "running",
+            health="unknown",
+            raw=entry,
+        )
+
 
 class DockerClient(Protocol):
     """The minimal Docker surface the monitor depends on."""
@@ -66,6 +88,13 @@ class DockerClient(Protocol):
 
     def list_running_ids(self) -> list[str]:
         """IDs of currently running containers."""
+        ...
+
+    def list_running(self) -> list[ContainerInfo]:
+        """Running containers as ContainerInfo, from a single list call — so callers
+        that only need id/name/network_mode (dependent discovery) avoid an inspect
+        per container. ``raw`` is the list entry, not a full inspect.
+        """
         ...
 
     def list_all_ids(self) -> list[str]:
@@ -151,6 +180,12 @@ class DockerPyClient:
     def list_running_ids(self) -> list[str]:
         """``GET /containers/json`` (running only) → their ids."""
         return [c["Id"] for c in self._api.containers(all=False)]
+
+    def list_running(self) -> list[ContainerInfo]:
+        """``GET /containers/json`` (running only) → ContainerInfo from each list
+        entry — one API call for the whole set, no per-container inspect.
+        """
+        return [ContainerInfo.from_list_entry(c) for c in self._api.containers(all=False)]
 
     def list_all_ids(self) -> list[str]:
         """``GET /containers/json?all=1`` (every container) → their ids."""

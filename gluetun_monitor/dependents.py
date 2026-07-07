@@ -52,10 +52,11 @@ def discover_dependents(client: DockerClient, gluetun_container: str) -> list[st
     id_form = f"container:{gluetun_id}"
     short_prefix = f"container:{short_id}"
 
+    # One list call carries every running container's name + network_mode, so we no
+    # longer inspect() each container individually (was an N+1 per loop).
     found: list[str] = []
-    for cid in client.list_running_ids():
-        info = client.inspect(cid)
-        if info is None or info.name == gluetun_container:
+    for info in client.list_running():
+        if info.name == gluetun_container:
             continue
         nm = info.network_mode
         if nm in (name_form, id_form) or nm.startswith(short_prefix):

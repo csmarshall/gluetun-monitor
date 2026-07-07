@@ -81,6 +81,7 @@ class FakeDockerClient:
         self.renamed: list[tuple[str, str]] = []  # (name_or_id, new_name)
         self.ensured_timeouts: list[int] = []  # every ensure_timeout() call (#77)
         self.logs_tails: list[int] = []  # tail= of every logs() call (#78)
+        self.inspect_count = 0  # total inspect() calls (assert no per-container N+1)
         self._id_seq = 1000
 
     # ----- test setup helpers -----
@@ -120,10 +121,21 @@ class FakeDockerClient:
             if raw.get("State", {}).get("Running", False)
         ]
 
+    def list_running(self) -> list[ContainerInfo]:
+        # The fake stores inspect-shaped dicts, so from_inspect yields the correct
+        # name/network_mode a caller reads — regardless of the real client parsing
+        # the (leaner) list payload via from_list_entry.
+        return [
+            ContainerInfo.from_inspect(raw)
+            for raw in self._store.values()
+            if raw.get("State", {}).get("Running", False)
+        ]
+
     def list_all_ids(self) -> list[str]:
         return list(self._store.keys())
 
     def inspect(self, name_or_id: str) -> ContainerInfo | None:
+        self.inspect_count += 1  # so tests can assert discover_dependents isn't N+1
         raw = self._resolve(name_or_id)
         return ContainerInfo.from_inspect(raw) if raw is not None else None
 

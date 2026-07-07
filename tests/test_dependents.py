@@ -158,3 +158,23 @@ class _NullLogger:
     def debug(self, m: str) -> None: ...
     def check(self, m: str) -> None: ...
     def endpoint(self, m: str) -> None: ...
+
+
+def test_discover_dependents_is_not_n_plus_one() -> None:
+    """discover_dependents reads name+network_mode from the single list_running()
+    payload, so its inspect() count is O(1) (just the gluetun lookup) — not one per
+    running container. Guards against a regression back to the per-container inspect.
+    """
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+    for i in range(8):
+        fake.add_container(f"dep{i}", network_mode=f"container:{GLUETUN_ID}")
+    # A few unrelated running containers that must NOT be picked up (or inspected).
+    for i in range(4):
+        fake.add_container(f"other{i}", network_mode="bridge")
+
+    fake.inspect_count = 0
+    found = discover_dependents(fake, "gluetun")
+
+    assert sorted(found) == [f"dep{i}" for i in range(8)]
+    assert fake.inspect_count == 1  # only the gluetun inspect; no per-container N+1
