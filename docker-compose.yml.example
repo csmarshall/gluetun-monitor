@@ -16,10 +16,18 @@ services:
     #   security_opt:
     #     - seccomp=unconfined      # or a custom profile allowing the syscalls it needs
     #     # - apparmor=unconfined   # only if an AppArmor profile is the blocker
+    # Least privilege: enable ONLY these three — no IMAGES / NETWORKS / SERVICES /
+    # SWARM / SYSTEM. Why POST=1 is unavoidable (verified — see issue #29): the monitor
+    # must exec (site probes) and restart containers, and tecnativa's POST is a *binary*
+    # master switch — with POST=0 the EXEC/ALLOW_RESTARTS carve-outs are inert, so
+    # exec/restart require POST=1. POST=1 then also permits create/remove, and there's
+    # no tecnativa knob to deny just those. Tighter isolation (scoping exec to only the
+    # managed containers) needs a regex-allowlist proxy and is diminishing returns vs.
+    # the added complexity and fragility — tracked, not recommended, in issue #135.
     environment:
-      - CONTAINERS=1  # Allow container list/inspect/logs
-      - POST=1        # Allow container restart
-      - EXEC=1        # Allow exec into gluetun for site tests
+      - CONTAINERS=1  # container list/inspect/logs (+ exec/restart/… once POST=1)
+      - POST=1        # required: enables exec + restart (see note above)
+      - EXEC=1        # exec into gluetun/dependents for the connectivity probes
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
