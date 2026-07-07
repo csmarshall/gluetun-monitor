@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.4.0...v2.5.0) (2026-07-07)
+
+
+### Added
+
+* **monitor:** stream probe results as they land, with (n/total) progress ([#123](https://github.com/csmarshall/gluetun-monitor/issues/123)) ([#124](https://github.com/csmarshall/gluetun-monitor/issues/124)) ([f062e5f](https://github.com/csmarshall/gluetun-monitor/commit/f062e5fa95ba074254ae6a72ab68f30c48e5f67a))
+
 ## [2.4.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.3.0...v2.4.0) (2026-07-07)
 
 
