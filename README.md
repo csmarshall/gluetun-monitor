@@ -383,9 +383,10 @@ https://flaky.example|timeout=20|tries=2
 - **Keys:** `timeout` (seconds) and `tries` (attempts) — the per-URL equivalents of
   `TIMEOUT`/`WGET_TRIES`. A site with no override inherits the globals, so nothing
   changes for the rest.
-- **Forgiving:** an unknown key or non-positive value is **warned about at startup
-  and skipped** — the URL is still monitored on the defaults; a typo never drops a
-  site.
+- **Forgiving:** an unknown key or non-positive value is **warned about and skipped**
+  — the URL is still monitored on the defaults; a typo never drops a site. The
+  warning fires **the same way at startup and on a live reload** (deduped on reload),
+  so a bad edit made while running is never applied silently.
 - File overrides are **re-read live** like the URLs themselves, and the reload
   detects a change to a site's **full config** — not just added/removed URLs but a
   changed `role`/`timeout`/`tries` on an existing one. Any edit is logged with the

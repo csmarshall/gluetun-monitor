@@ -41,8 +41,9 @@ from .sites import (
     hostname_of,
     ip_pool,
     is_ip_literal,
-    load_specs,
+    load_specs_report,
     resolvable_pool,
+    warn_rejects,
     worst_case_probe_seconds,
 )
 from .state import Counter, InterfaceStatus, RemediationAction
@@ -154,6 +155,9 @@ class Monitor:
         # Last-seen full specs (url -> SiteSpec), so a live edit is detected on ANY
         # config change — not just add/remove, but a site's role/timeout/tries too.
         self._last_specs: dict[str, SiteSpec] | None = None
+        # Last-seen rejected (entry, reason) pairs, so a bad entry introduced by a
+        # live edit is warned once — not re-warned every loop it persists.
+        self._last_rejects: set[tuple[str, str]] = set()
         # url -> SiteSpec for the current loop, so probe call sites can resolve a
         # per-URL timeout/tries override (#60). Refreshed each loop in _run_once_body
         # alongside the (deduplicated) URL list; empty until the first load.
@@ -272,6 +276,16 @@ class Monitor:
         """
         spec = self._specs.get(url)
         return spec.role if spec is not None else "critical"
+
+    def _warn_new_rejects(self, rejected: list[tuple[str, str]]) -> None:
+        """Warn about bad sites.conf entries introduced by a live edit — the same
+        way startup does (:func:`warn_rejects`), but only NEW ones. The file is
+        re-read every loop, so a persistent bad line is announced once when it
+        appears, not every loop it lingers.
+        """
+        current = set(rejected)
+        warn_rejects(self.log.warn, sorted(current - self._last_rejects))
+        self._last_rejects = current
 
     def _describe_spec_change(self, old: SiteSpec, new: SiteSpec) -> str:
         """Human summary of what changed between two specs for the same URL — role
@@ -908,8 +922,15 @@ class Monitor:
         # watchdog's checks down with it: fall back to the last good set and
         # keep monitoring — a stale site list beats a silent halt (#73).
         try:
-            specs = load_specs(self.config.config_file, self.config.sites_env)
+            specs, rejected = load_specs_report(self.config.config_file, self.config.sites_env)
             self._specs = {s.url: s for s in specs}
+            # Surface bad entries on a live reload the same way startup does. On the
+            # FIRST load the CLI preflight already warned them, so just seed the
+            # dedup set; afterwards, warn only newly-appeared rejects.
+            if self._last_specs is None:
+                self._last_rejects = set(rejected)
+            else:
+                self._warn_new_rejects(rejected)
         except Exception as exc:
             self.log.error(
                 f"Failed to reload sites config ({self.config.config_file}): {exc} "

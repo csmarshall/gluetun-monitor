@@ -20,6 +20,7 @@ global defaults.
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -245,6 +246,18 @@ def load_specs_report(
         rejected.extend((spec.url, w) for w in warnings)
         specs.append(spec)
     return specs, rejected
+
+
+def warn_rejects(warn: Callable[[str], None], rejected: Iterable[tuple[str, str]]) -> None:
+    """Emit one WARN per rejected ``(entry, reason)`` from :func:`load_specs_report`.
+
+    Shared by the startup preflight and the live-reload path so a bad ``sites.conf``
+    entry (an unsafe URL dropped, or a per-URL option warned-and-defaulted) is
+    surfaced identically whenever the file is parsed — not loudly at startup but
+    silently on a live edit.
+    """
+    for entry, reason in rejected:
+        warn(f"Ignoring unsafe site entry {entry!r}: {reason}")
 
 
 def load_specs(config_file: str | Path, sites_env: str | None) -> list[SiteSpec]:

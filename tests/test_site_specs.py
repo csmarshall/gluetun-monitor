@@ -179,10 +179,10 @@ def test_reload_failure_keeps_previous_sites_and_monitoring(
     mon, cmds, stream = _probing_monitor(conf)
     mon.run_once()  # loads the good set
 
-    def boom(*_a: object) -> list[SiteSpec]:
+    def boom(*_a: object) -> tuple[list[SiteSpec], list[tuple[str, str]]]:
         raise OSError("bind-mount blip")
 
-    monkeypatch.setattr("gluetun_monitor.monitor.load_specs", boom)
+    monkeypatch.setattr("gluetun_monitor.monitor.load_specs_report", boom)
     mon.run_once()
     assert _wget_urls(cmds).count("https://a.example") == 2  # still probing
     assert "Failed to reload sites config" in stream.getvalue()
