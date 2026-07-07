@@ -13,13 +13,13 @@ import random
 import threading
 import time
 import traceback
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .alert_state import AlertState
-from .connectivity import probe_site
+from .connectivity import SiteResult, probe_site
 from .dependents import (
     classify_interfaces,
     discover_dependents,
@@ -379,24 +379,32 @@ class Monitor:
                             self._forget(f"advisory-down:{url}")  # no longer an advisory site
             self._last_specs = current
 
-        results = self._fan_out(
-            sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
-                                          *self._probe_knobs(url))
-        )
-
         # Site tests run *inside the gluetun container* (the VPN gateway, through
         # the tunnel). Tag each line with the role + container — "[gateway:<name>]"
         # — so it's unambiguous what kind of container and which one (cf.
         # "[dependent:<name>]" below). Greppable: `grep gateway:` / `grep dependent:`.
+        # Results stream in as each probe lands (completion order) with an (n/total)
+        # progress marker, so a slow site is visibly the one still outstanding rather
+        # than hiding the fast results behind one batched burst at gather-end.
         gw = f"gateway:{self.config.gluetun_container}"
+        total = len(sites)
+        results: list[SiteResult] = []
         failed: list[str] = []
-        for result in results:
+        for done, result in enumerate(
+            self._fan_out(
+                sites, lambda url: probe_site(self.client, self.config.gluetun_container,
+                                              url, *self._probe_knobs(url))
+            ),
+            start=1,
+        ):
+            results.append(result)
             if record:
                 self.stats.record_poll(result.url, result.ok, result.duration_ms, result.reason)
             if result.ok:
                 self.site_failures.reset(result.url)
                 self.log.debug(
-                    f"[{gw}] reach ok: {result.url} ({result.reason}, {result.duration_ms}ms)"
+                    f"[{gw}] ({done}/{total}) reach ok: {result.url} "
+                    f"({result.reason}, {result.duration_ms}ms)"
                 )
                 continue
             count = self.site_failures.fail(result.url)
@@ -421,19 +429,20 @@ class Monitor:
                         f"restarted.",
                     )
                 self.log.debug(
-                    f"[{gw}] reach fail: {result.url} ({result.reason}) "
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
                     f"[{count} · advisory — not gating]"
                 )
                 continue
             if count >= threshold:
                 failed.append(result.url)
                 self.log.warn(
-                    f"[{gw}] reach fail: {result.url} ({result.reason}) "
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
                     f"[{count}/{threshold} → restart]"
                 )
             else:
                 self.log.debug(
-                    f"[{gw}] reach fail: {result.url} ({result.reason}) [{count}/{threshold}]"
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
+                    f"[{count}/{threshold}]"
                 )
 
         if failed:
@@ -701,23 +710,29 @@ class Monitor:
                 "testing connectivity only against IP literals"
             )
 
-        probes = self._fan_out(
-            dependents, lambda d: self._probe_dependent(d, gluetun_id, resolvable, ips)
-        )
-
         # State mutation + remediation decisions are single-threaded. Each
         # dependent logs two ordered DEBUG lines: first the L3 network-path check
         # (which interfaces / can it route out), THEN the L7 viability result —
         # so the logs show the path was validated before the DNS/connect test.
+        # Probes stream in as each lands (completion order); the (n/total) marker
+        # rides the leading link line so mid-phase progress is visible.
+        dep_total = len(dependents)
+        probes: list[DependentProbe] = []
         to_remediate: list[tuple[str, str]] = []
         # Dependents the loop could NOT evaluate this cycle (link/DNS couldn't tell):
         # an active alert for them must be HELD, not resolved, and their wedge kept.
         unevaluated: set[str] = set()
-        for probe in probes:
+        for done, probe in enumerate(
+            self._fan_out(
+                dependents, lambda d: self._probe_dependent(d, gluetun_id, resolvable, ips)
+            ),
+            start=1,
+        ):
+            probes.append(probe)
             dep = probe.name
             tag = f"dependent:{dep}"  # role + name, mirrors "[gateway:<name>]"
             link = _link_line(probe.status.name.lower(), probe.interfaces)
-            self.log.debug(f"[{tag}] link {link}")
+            self.log.debug(f"[{tag}] ({done}/{dep_total}) link {link}")
             if probe.status is InterfaceStatus.STRANDED:
                 to_remediate.append((dep, probe.reason))
                 continue
@@ -1353,10 +1368,24 @@ class Monitor:
 
     # ----- helpers -----
 
-    def _fan_out[T, R](self, items: list[T], fn: Callable[[T], R]) -> list[R]:
-        """Run ``fn`` over ``items`` with a bounded thread pool, preserving order."""
+    def _fan_out[T, R](self, items: list[T], fn: Callable[[T], R]) -> Iterator[R]:
+        """Run ``fn`` over ``items`` with a bounded thread pool, yielding each result
+        the moment it lands — in **completion order**, not input order.
+
+        Streaming (vs. the old ``pool.map`` that returned the whole list only once the
+        slowest item finished) is what lets the caller log/interpret each probe as it
+        comes back: a slow site no longer hides the fast ones behind a single batched
+        burst at gather-end. Only ``fn`` runs in the worker threads; the caller drains
+        this generator single-threaded, so result interpretation (stats, failure
+        counters, alerting) stays serial and thread-safe — the concurrency is confined
+        to the probe itself.
+        """
         workers = max(1, min(self.config.max_parallel_checks, len(items)))
         if workers == 1:
-            return [fn(item) for item in items]
+            for item in items:
+                yield fn(item)
+            return
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(fn, items))
+            futures = [pool.submit(fn, item) for item in items]
+            for future in as_completed(futures):
+                yield future.result()

@@ -1,0 +1,75 @@
+name: socket-proxy-drift
+
+# Weekly check that the digest-pinned tecnativa/docker-socket-proxy hasn't drifted.
+# Unlike base-drift.yml, this image does NOT ship in our published artifact — it's
+# only the CI test fixture and the docker-compose.yml.example users copy to deploy.
+# The example is a security boundary (it mediates Docker-socket access), so letting
+# its pin rot is the real risk; but a bump must NOT cut a release of our image
+# (immutable semvers — our artifact didn't change). So instead of committing to main
+# like base-drift, this opens a PR (auto-merged on green) that refreshes the pin in
+# both spots. Manual `workflow_dispatch` for testing.
+
+on:
+  schedule:
+    - cron: "0 6 * * 2"  # Tuesdays 06:00 UTC (base-drift runs Mondays — stagger them)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # PAT so the PR branch's push triggers CI (a GITHUB_TOKEN push would not,
+          # and auto-merge would then wait forever for checks that never start).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - name: Open a PR if the socket-proxy digest moved
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          REPO: tecnativa/docker-socket-proxy
+          TAG: "latest"
+        run: |
+          set -euo pipefail
+          token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO}:pull" | jq -r .token)
+          current=$(curl -sI \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://registry-1.docker.io/v2/${REPO}/manifests/${TAG}" \
+            | grep -i '^docker-content-digest:' | awk '{print $2}' | tr -d '\r')
+          pinned=$(grep -oP 'docker-socket-proxy@\Ksha256:[0-9a-f]+' docker-compose.yml.example | head -1)
+          echo "pinned:  ${pinned}"
+          echo "current: ${current:-<none>}"
+          if [ -z "${current}" ]; then
+            echo "::warning::could not resolve current digest — skipping this run"; exit 0
+          fi
+          if [ "${current}" = "${pinned}" ]; then
+            echo "socket-proxy unchanged — nothing to do."; exit 0
+          fi
+          branch="chore/socket-proxy-${current#sha256:}"
+          branch="${branch:0:52}"
+          # Idempotent: if we already opened this PR on a previous run, do nothing.
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "PR branch ${branch} already exists — nothing to do."; exit 0
+          fi
+          echo "socket-proxy :latest re-published → opening a refresh PR."
+          sed -i "s|docker-socket-proxy@${pinned}|docker-socket-proxy@${current}|g" \
+            docker-compose.yml.example .github/workflows/ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git add docker-compose.yml.example .github/workflows/ci.yml
+          git commit -m "chore(ci): bump tecnativa/docker-socket-proxy digest (${current})"
+          git push origin "${branch}"
+          gh pr create \
+            --title "chore(ci): bump socket-proxy digest" \
+            --body "Automated by socket-proxy-drift: \`tecnativa/docker-socket-proxy:latest\` was re-published. Refreshes the digest pin in the CI test fixture and \`docker-compose.yml.example\`. No release — the image is not part of our published artifact. Merges automatically once CI is green." \
+            --label dependencies \
+            --assignee csmarshall
+          # Self-merge on green (CI is the guard); harmless no-op if auto-merge is off.
+          gh pr merge --auto --squash || echo "auto-merge unavailable — left for manual merge"
