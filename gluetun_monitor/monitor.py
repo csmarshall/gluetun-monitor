@@ -363,6 +363,7 @@ class Monitor:
                 for url in removed:
                     self.site_failures.discard(url)
                     self._forget(f"advisory:{url}")
+                    self._forget(f"advisory-down:{url}")  # its reachability alert too
                 # On ANY role change, discard the live failure counter so the new role
                 # starts clean (#110): an advisory site accumulates fails without
                 # gating, so flipping it to critical must NOT inherit that count and
@@ -372,7 +373,9 @@ class Monitor:
                     if current[url].role != prev[url].role:
                         self.site_failures.discard(url)
                         if current[url].role == "advisory":
-                            self._forget(f"advisory:{url}")
+                            self._forget(f"advisory:{url}")       # no longer a restart driver
+                        else:
+                            self._forget(f"advisory-down:{url}")  # no longer an advisory site
             self._last_specs = current
 
         results = self._fan_out(
@@ -401,6 +404,21 @@ class Monitor:
                 # #110: an advisory site is probed and recorded (reachability), but
                 # its failure NEVER gates a restart — a site blocked through every
                 # exit can't be rolled to health, so it must not roll the tunnel.
+                # Still surface its reachability as an OPT-IN, edge-triggered alert
+                # at the `activity` tier (silent at the default `attention`): announce
+                # once it's been unreachable FAIL_THRESHOLD checks, resolve when it's
+                # back. Only on the primary poll (record); flap-free because the
+                # counter climbs while failing and resets to 0 only on a pass — which
+                # is exactly the resolve condition (not re-reported → lifecycle clears).
+                if record and count >= threshold:
+                    host = hostname_of(result.url)
+                    self._problem(
+                        f"advisory-down:{result.url}", "activity",
+                        f"advisory site unreachable: {host}",
+                        f"{result.url} (role=advisory) failed {count} consecutive checks "
+                        f"({result.reason}) — reachability watch only; the tunnel is not "
+                        f"restarted.",
+                    )
                 self.log.debug(
                     f"[{gw}] reach fail: {result.url} ({result.reason}) "
                     f"[{count} · advisory — not gating]"

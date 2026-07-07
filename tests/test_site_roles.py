@@ -257,3 +257,47 @@ def test_role_switch_advisory_to_critical_resets_failure_grace(tmp_path: Path) -
     assert fake.restarted == []
     mon.run_once()  # now 2/2 -> restart
     assert "gluetun" in fake.restarted
+
+
+def test_advisory_down_alert_is_opt_in_activity_edge_triggered(tmp_path: Path) -> None:
+    """An advisory site's unreachability surfaces as an opt-in `activity`-tier alert:
+    announced once after FAIL_THRESHOLD, not re-announced while it persists, and
+    resolved when it recovers. Never gates a restart."""
+    from .fakes import FakeNotifier
+
+    badurl = "https://blocked.example"
+    conf = tmp_path / "sites.conf"
+    conf.write_text(f"{GOOD}\n{badurl}|role=advisory\n")
+    state = {"block": True}
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd and cmd[0] == "nslookup":
+            return ExecResult(0, "")
+        if badurl in cmd and state["block"]:
+            return ExecResult(4, "")
+        return ExecResult(0, "")
+
+    fake.on_exec = handler
+    notifier = FakeNotifier()
+    cfg = Config(config_file=str(conf), gluetun_container="gluetun", fail_threshold=2,
+                 dns_wait_timeout=2, advisory_min_restarts=1000)
+    mon = Monitor(fake, cfg, Logger(log_file=None, stream=io.StringIO()),
+                  rng=random.Random(0), sleep=lambda _s: None,
+                  stats=SiteStatsStore(None), notifier=notifier)
+    key = f"advisory-down:{badurl}"
+
+    mon.run_once()  # count 1/2 -> not yet announced
+    assert key not in notifier.event_keys()
+    mon.run_once()  # count 2/2 -> announce
+    assert key in notifier.event_keys()
+    ev = next(e for e in notifier.events if e.key == key)
+    assert ev.tier == "activity"                       # opt-in, silent at default attention
+    mon.run_once()  # still down -> edge-triggered, no re-announce
+    assert notifier.event_keys().count(key) == 1
+    assert fake.restarted == []                         # advisory NEVER restarts
+
+    state["block"] = False
+    mon.run_once()  # recovered -> resolve
+    assert f"resolve:{key}" in notifier.event_keys()
