@@ -3,8 +3,9 @@
 # Lines starting with # are comments; a "#" after whitespace starts an
 # inline comment (https://example.com  # like this)
 #
-# All sites are tested in parallel. If any site fails consecutively
-# (based on FAIL_THRESHOLD), Gluetun will be restarted.
+# All sites are tested in parallel. If any *critical* site fails consecutively
+# (based on FAIL_THRESHOLD), Gluetun will be restarted. Sites are critical by
+# default; see the role note below to make one advisory-only.
 #
 # Tips:
 # - Use HTTPS sites for reliable connectivity testing
@@ -19,6 +20,16 @@
 #       https://flaky.example|timeout=20|tries=2
 #   A bare URL (no "|") behaves exactly as before. Run the monitor with
 #   --suggest-tunables to have it recommend these from observed history.
+#
+# Per-URL role (#110) — "|role=critical|advisory", default critical:
+# - critical (default): its failure counts toward restarting Gluetun (today's behavior).
+# - advisory: still probed and recorded for reachability, but its failure NEVER
+#   restarts Gluetun. Use it for a site you want to watch that can't be reached
+#   through the VPN regardless of tunnel health (e.g. geo-blocked from your exit) —
+#   so it doesn't roll the tunnel pointlessly. If you stop caring about a site's
+#   reachability entirely, just delete the line.
+#       https://geo-blocked.example|role=advisory
+#       https://slow-and-flaky.example|role=advisory|timeout=25
 
 # General connectivity tests
 https://www.google.com

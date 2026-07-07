@@ -225,13 +225,29 @@ class Monitor:
         """Surface per-URL probe overrides so the operator sees what's in effect
         (#60) — INFO when any exist (discoverability, like the notify summary), a
         DEBUG confirmation of the global defaults otherwise.
+
+        Also emits one DEBUG line per site with its FULLY-RESOLVED config (role +
+        effective timeout/tries, defaults folded in), so the complete picture is
+        greppable at startup and on every live reload — including sites running on
+        pure defaults, which the INFO overrides summary intentionally omits.
         """
+        for url in sorted(self._specs):
+            spec = self._specs[url]
+            eff_t = spec.timeout if spec.timeout is not None else self.config.timeout
+            eff_n = spec.tries if spec.tries is not None else self.config.wget_tries
+            self.log.debug(
+                f"site {url} [role={spec.role} timeout={eff_t}s tries={eff_n}]"
+            )
         overrides: list[str] = []
         for url in sorted(self._specs):
             spec = self._specs[url]
             knobs = [f"{k}={v}{u}" for k, v, u in (
                 ("timeout", spec.timeout, "s"), ("tries", spec.tries, "")
             ) if v is not None]
+            # Surface a non-default role too (#110) so advisory sites are visible
+            # at startup — they silently don't gate restarts, worth stating plainly.
+            if spec.role != "critical":
+                knobs.append(f"role={spec.role}")
             if knobs:
                 overrides.append(f"{hostname_of(url)} {' '.join(knobs)}")
         defaults = f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}"
@@ -241,6 +257,15 @@ class Monitor:
             )
         else:
             self.log.debug(f"No per-URL probe overrides; all sites use {defaults}")
+
+    def _role_of(self, url: str) -> str:
+        """The configured role for ``url`` (#110): ``critical`` (default, gates a
+        restart on failure) or ``advisory`` (probed + recorded, never gates). A URL
+        with no loaded spec — shouldn't happen mid-loop — defaults to critical, the
+        safe (fail-closed) choice: unknown sites still protect the tunnel.
+        """
+        spec = self._specs.get(url)
+        return spec.role if spec is not None else "critical"
 
     def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
         """Test the full URL set from inside gluetun. Return the sites that have
@@ -309,6 +334,15 @@ class Monitor:
                 continue
             count = self.site_failures.fail(result.url)
             threshold = self.config.fail_threshold
+            if self._role_of(result.url) == "advisory":
+                # #110: an advisory site is probed and recorded (reachability), but
+                # its failure NEVER gates a restart — a site blocked through every
+                # exit can't be rolled to health, so it must not roll the tunnel.
+                self.log.debug(
+                    f"[{gw}] reach fail: {result.url} ({result.reason}) "
+                    f"[{count} · advisory — not gating]"
+                )
+                continue
             if count >= threshold:
                 failed.append(result.url)
                 self.log.warn(
@@ -328,7 +362,12 @@ class Monitor:
         # post-restart re-verify, which has its own "verified" line).
         if record:
             ok_results = [r for r in results if r.ok]
-            failing = [hostname_of(r.url) for r in results if not r.ok]
+            # Mark advisory failures so the heartbeat makes clear they are NOT the
+            # reason for any restart (#110) — "failing: x (advisory)".
+            failing = [
+                hostname_of(r.url) + (" (advisory)" if self._role_of(r.url) == "advisory" else "")
+                for r in results if not r.ok
+            ]
             if failing:
                 self.log.info(
                     f"[{gw}] sites: {len(ok_results)}/{len(results)} ok — "
@@ -865,7 +904,10 @@ class Monitor:
             # is still down. That mechanical dip used to auto-resolve an active
             # gluetun-unrecovered alert — a false "recovered". Hold it until the
             # sites that triggered it have OBSERVABLY cleared this loop.
-            failing_now = {url for url in sites if self.site_failures.get(url) > 0}
+            failing_now = {
+                url for url in sites
+                if self.site_failures.get(url) > 0 and self._role_of(url) != "advisory"
+            }
             self._reconcile_unrecovered(failing_now)
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).

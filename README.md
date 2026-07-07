@@ -254,8 +254,9 @@ the in-container `wget`/`ping`), is **dropped with a startup warning** rather th
 probed. The probes also pass URLs/hosts after a `--` end-of-options separator, so
 a stray value can never be interpreted as a flag.
 
-An entry may also carry a `|key=value` suffix (e.g. `https://slow.example|timeout=25`)
-to override the probe timeout/retries for **that URL only** — see
+An entry may also carry a `|key=value` suffix (e.g. `https://slow.example|timeout=25`
+or `https://geo-blocked.example|role=advisory`) to override the probe timeout/retries
+or the site's **role** for **that URL only** — see
 [Per-URL tunables](#per-url-tunables). A bare URL behaves exactly as before.
 
 #### `DOCKER_HOST`
@@ -395,6 +396,38 @@ https://flaky.example|timeout=20|tries=2
 > budgets** — they wait for the *gluetun container* to recover, which has nothing to
 > do with any single site, so there's nothing to scope to a URL. See
 > [Timeouts & retries](#timeouts--retries--one-model-everywhere) for the full split.
+
+#### Site roles — `critical` (default) vs `advisory`
+
+`timeout`/`tries` tune *how* a site is probed; `role` decides *what its failure
+means*. It's the same `|key=value` syntax:
+
+```bash
+https://www.google.com                     # critical (default)
+https://geo-blocked.example|role=advisory  # probed, but never restarts gluetun
+https://slow-and-flaky.example|role=advisory|timeout=25
+```
+
+- **`critical`** — the default (a bare URL). Its failure counts toward restarting
+  gluetun, exactly as before — so existing configs are unchanged.
+- **`advisory`** — the site is still probed and its reachability recorded in the
+  stats, but its failure **never** triggers a gluetun restart, and it's excluded
+  from the flaky-site advisory (you've already acknowledged it). Startup logs it
+  under `Per-URL probe overrides: … role=advisory`, and a failing advisory site
+  shows in the heartbeat as `failing: host (advisory)`.
+
+Use `advisory` for a site you want to **watch** but that can't be reached through
+the VPN regardless of tunnel health — a geo-blocked/anti-VPN endpoint (a torrent
+indexer, say). As a `critical` site it would restart gluetun every loop trying to
+roll to an exit that can reach it, churning every dependent, when the tunnel is
+fine. As `advisory` you keep the reachability signal without the pointless restarts.
+
+**advisory vs. deleting:** advisory *keeps probing* — the reachability data is the
+value, for a site whose status actually varies. If a site is permanently
+unreachable or you stop caring, just **delete the line** — probing it forever
+teaches nothing. Deleting isn't a role; it's what you do to an advisory site you've
+finished with. An unknown `role=` value is warned about at startup and falls back
+to `critical` (fail-closed — an unrecognized site still protects the tunnel).
 
 #### Let the monitor suggest them — `--suggest-tunables`
 

@@ -43,3 +43,4 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0012](0012-alert-lifecycle.md) | Edge-triggered alert lifecycle (announce once, repeat in loops, resolve vs silent-remove) + persisted state | Accepted |
 | [0013](0013-release-and-versioning-automation.md) | Release & versioning automation — gate by authorship (ours = human, upstream = auto); release-please + `:edge` + base-digest drift check | Accepted |
 | [0014](0014-durable-dependent-memory.md) | Durable dependent memory: persisted gluetun id history + known dependents; adopt-or-warn orphan scan (dead parent in history = provably ours) | Accepted |
+| [0015](0015-per-site-role.md) | Per-site role (`\|role=critical\|advisory`, default critical) — advisory sites are probed but never gate a restart; explicit operator opt-out, not auto-quarantine | Accepted |

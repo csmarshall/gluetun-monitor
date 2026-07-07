@@ -24,9 +24,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# Per-URL option keys understood after the ``|`` separator. Both map onto
+# Integer per-URL option keys understood after the ``|`` separator. Both map onto
 # existing ``probe_site`` params, so honoring them needs no probe rework.
-_OPTION_KEYS = ("timeout", "tries")
+_INT_OPTION_KEYS = ("timeout", "tries")
+
+# Per-URL role (#110): governs whether a site's failure gates a gluetun restart.
+# ``critical`` (the default) restarts as before; ``advisory`` is still probed and
+# recorded for reachability but NEVER triggers a restart — for a site that can't be
+# reached through any exit (geo-blocked/anti-VPN) yet should stay observed.
+DEFAULT_ROLE = "critical"
+_VALID_ROLES = ("critical", "advisory")
+
+# All option keys, for the "unknown option" warning.
+_OPTION_KEYS = (*_INT_OPTION_KEYS, "role")
 
 # Sanity ceilings for per-URL overrides (#77). The Docker transport read-timeout
 # is sized from the worst-case probe (see ``worst_case_probe_seconds``), so an
@@ -52,6 +62,8 @@ class SiteSpec:
     url: str
     timeout: int | None = None
     tries: int | None = None
+    # #110: "critical" (default) gates a restart on failure; "advisory" never does.
+    role: str = DEFAULT_ROLE
 
 
 def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
@@ -69,6 +81,7 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
     if not url:
         return None, []
     values: dict[str, int] = {}
+    role = DEFAULT_ROLE
     warnings: list[str] = []
     for opt in parts[1:]:
         opt = trim(opt)
@@ -79,6 +92,16 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
             continue
         key, _, value = opt.partition("=")
         key, value = trim(key).lower(), trim(value)
+        # Role is a string enum, not an integer knob — handle it before the int path.
+        if key == "role":
+            if value.lower() not in _VALID_ROLES:
+                warnings.append(
+                    f"unknown role {value!r} (known: {', '.join(_VALID_ROLES)}) — "
+                    f"treating as {DEFAULT_ROLE}"
+                )
+                continue
+            role = value.lower()
+            continue
         if key not in _OPTION_KEYS:
             warnings.append(f"unknown option {key!r} (known: {', '.join(_OPTION_KEYS)})")
             continue
@@ -95,7 +118,10 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
             )
             continue
         values[key] = int(value)
-    return SiteSpec(url, timeout=values.get("timeout"), tries=values.get("tries")), warnings
+    return (
+        SiteSpec(url, timeout=values.get("timeout"), tries=values.get("tries"), role=role),
+        warnings,
+    )
 
 
 def worst_case_probe_seconds(
