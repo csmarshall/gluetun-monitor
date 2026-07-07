@@ -155,3 +155,43 @@ def test_startup_debug_enumerates_each_site_resolved_config(tmp_path: Path) -> N
     assert f"site {BAD} [role=advisory timeout=25s tries=1]" in out    # overridden site
     # The defaults summary spells out the global defaults, role included.
     assert "WGET_TRIES=1, role=critical" in out
+
+
+def test_advisory_site_excluded_from_dependent_viability_pool(tmp_path: Path) -> None:
+    """An advisory site must not be probed by DEPENDENTS either (#110): a dependent
+    can't be judged unhealthy for failing to reach a non-gating site. With
+    samples=-1 a dependent probes ALL resolvable sites, so without the exclusion it
+    would hit the advisory one — this pins that it never does, while the gateway
+    still probes it for stats."""
+    goodhost, advhost = "https://good.example", "https://watch.example"
+    conf = tmp_path / "sites.conf"
+    conf.write_text(f"{goodhost}\n{advhost}|role=advisory\n")
+
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
+    calls: list[tuple[str, str]] = []
+
+    def handler(name: str, cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["ls", "/sys/class/net"]:
+            return ExecResult(0, "eth0\nlo\ntun0\n")  # LIVE, not stranded
+        if cmd and cmd[0] == "nslookup":
+            return ExecResult(0, "")
+        if cmd and cmd[0] == "wget":
+            calls.append((name, cmd[-1]))
+            return ExecResult(0, "  HTTP/1.1 200 OK\n") if goodhost in cmd[-1] else ExecResult(4, "")
+        return ExecResult(0, "")
+
+    fake.on_exec = handler
+    cfg = Config(config_file=str(conf), gluetun_container="gluetun",
+                 dependent_containers="dep", fail_threshold=1,
+                 dependent_viability_samples=-1)  # sample ALL -> would hit advisory w/o the fix
+    mon = Monitor(fake, cfg, Logger(log_file=None, stream=io.StringIO()),
+                  rng=random.Random(0), sleep=lambda _s: None, stats=SiteStatsStore(None))
+    mon.run_once()
+
+    dep_targets = [url for n, url in calls if n == "dep"]
+    gw_targets = [url for n, url in calls if n == "gluetun"]
+    assert any(advhost in t for t in gw_targets)          # gateway still probes it (stats)
+    assert all(advhost not in t for t in dep_targets)     # dependents never do
+    assert any(goodhost in t for t in dep_targets)        # but they do probe the critical site

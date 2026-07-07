@@ -641,8 +641,15 @@ class Monitor:
         if not dependents:
             return
 
-        resolvable = resolvable_pool(sites)
-        ips = ip_pool(sites)
+        # Dependents are judged only against CRITICAL sites (#110). An advisory site
+        # is not a reachability signal we act on, so a dependent must never be marked
+        # unhealthy for failing to reach one — nor should a dead advisory site
+        # pollute the sampled viability pool. (Advisory sites are still probed at the
+        # gateway for their reachability stats; they just don't gate remediation,
+        # gluetun OR dependent.)
+        gating = [s for s in sites if self._role_of(s) != "advisory"]
+        resolvable = resolvable_pool(gating)
+        ips = ip_pool(gating)
         if not resolvable and ips:
             self.log.warn(
                 "No resolvable (hostname) test URLs — dependent DNS cannot be validated; "
