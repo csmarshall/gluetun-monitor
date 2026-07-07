@@ -192,7 +192,7 @@ class SiteStatsStore:
             st.current_fail_streak = 0
             st.last_success = now
             st.recent_latencies.append(int(duration_ms))
-            if len(st.recent_latencies) > self._latency_max:
+            if self._latency_max and len(st.recent_latencies) > self._latency_max:
                 del st.recent_latencies[: -self._latency_max]
             st.lifetime_latency.add(int(duration_ms))  # all-time percentiles
         else:
@@ -210,7 +210,7 @@ class SiteStatsStore:
         now = self._clock()
         self._stat(site).restarts_triggered += 1
         self.recent_restarts.append({"ts": now, "site": site})
-        if len(self.recent_restarts) > self._recent_max:
+        if self._recent_max and len(self.recent_restarts) > self._recent_max:
             del self.recent_restarts[: -self._recent_max]
 
     def record_loop(self) -> None:
@@ -274,8 +274,8 @@ class SiteStatsStore:
             r for r in self.recent_restarts
             if isinstance(r.get("ts"), int | float) and float(r["ts"]) >= cutoff  # type: ignore[arg-type]
         ]
-        if len(recent) < min_restarts:
-            return None
+        if not recent or len(recent) < min_restarts:
+            return None  # `not recent` also guards most_common([]) if min_restarts<=0
         counts = Counter(str(r["site"]) for r in recent)
         site, top = counts.most_common(1)[0]
         if top / len(recent) >= dominance:

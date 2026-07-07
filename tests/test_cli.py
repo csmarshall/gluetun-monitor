@@ -107,3 +107,22 @@ def test_suggest_tunables_no_stats_is_graceful(tmp_path: Path) -> None:
     """No stats file yet → a friendly message and a clean exit, not a crash."""
     cfg = Config(stats_file=str(tmp_path / "absent.json"))
     assert _run_suggest_tunables(cfg, _logger()) == 0
+
+
+def test_diag_subcommand_surfaces_config_errors_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed env must be surfaced before a diagnostic sub-command runs, not
+    silently substituted with defaults (review finding)."""
+    from gluetun_monitor.cli import main
+
+    conf = tmp_path / "sites.conf"
+    conf.write_text("https://a.example\n")
+    monkeypatch.setenv("CONFIG_FILE", str(conf))
+    monkeypatch.setenv("TIMEOUT", "abc")  # malformed -> config.errors
+    monkeypatch.delenv("APPRISE_URLS", raising=False)
+
+    rc = main(["--suggest-tunables"])
+    err = capsys.readouterr().err
+    assert "TIMEOUT" in err  # the config error was surfaced...
+    assert rc == 0           # ...and the diagnostic still ran

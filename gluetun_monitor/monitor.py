@@ -508,9 +508,10 @@ class Monitor:
         with self._rng_lock:
             url = self._rng.choice(candidates)
         host = hostname_of(url)
-        return host, validate_dns(
-            self.client, dep, url, host, self.config.timeout, self.config.wget_tries
-        )
+        # Honor the confirm URL's own per-URL |timeout=/|tries= like every other
+        # probe (#60/#77), not the globals — a slow site set specifically for this
+        # URL must not be clipped on the confirm path.
+        return host, validate_dns(self.client, dep, url, host, *self._probe_knobs(url))
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
@@ -731,6 +732,11 @@ class Monitor:
         # Doubling backoff per failed attempt, in loops, capped. cap=0 disables
         # the backoff (attempt every loop) but keeps the escalated alert.
         cap_loops = self.config.wedge_backoff_cap // max(1, self.config.check_interval)
+        # A positive-but-small cap (< CHECK_INTERVAL) floors to 0 loops, which the
+        # code below reads as "backoff disabled" — the opposite of intent. Keep any
+        # positive cap throttling at >= 1 loop; only cap == 0 means disabled.
+        if self.config.wedge_backoff_cap > 0:
+            cap_loops = max(1, cap_loops)
         track.backoff_loops = (
             min(max(2, track.backoff_loops * 2), cap_loops) if cap_loops > 0 else 0
         )
@@ -1103,6 +1109,10 @@ class Monitor:
         if gluetun_info is not None:
             self.mstate.record_gluetun_id(gluetun_info.id)
         self._scan_stranded_orphans(gluetun_info.id if gluetun_info is not None else None)
+        # Mirror any startup-adopted orphan into durable memory BEFORE this save
+        # (matching the loop path), so a crash right after startup doesn't rely on
+        # re-discovery to remember it.
+        self.mstate.set_known_dependents(self._known_dependents)
         self.mstate.save()
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))

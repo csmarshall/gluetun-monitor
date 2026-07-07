@@ -173,3 +173,20 @@ def test_non_object_sidecar_starts_clean(tmp_path: Path) -> None:
         s = AlertState(str(path), logger=_log(), repeat_interval=0)
         s.begin_loop()
         assert s.active_count() == 0  # degraded to empty, no crash
+
+
+def test_forget_wins_over_same_loop_report(tmp_path: Path) -> None:
+    """A forget must retire an alert even if another path re-reported it the same
+    loop (review finding: removed-but-still-dominant flaky site)."""
+    s = AlertState(None, logger=_log(), repeat_interval=0)
+    s.begin_loop()
+    s.report("advisory:x", "attention", "flaky x", "b")
+    s.events()  # announced -> active
+    assert s.is_active("advisory:x")
+
+    s.begin_loop()
+    s.report("advisory:x", "attention", "flaky x", "b")  # re-reported this loop...
+    s.forget("advisory:x")                                # ...but also forgotten
+    ev = s.events()
+    assert not s.is_active("advisory:x")                          # retired, not held active
+    assert any(e.key == "deprecated:advisory:x" for e in ev)     # "no longer monitored"

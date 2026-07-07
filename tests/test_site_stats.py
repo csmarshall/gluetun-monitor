@@ -358,3 +358,10 @@ def test_format_window() -> None:
     assert format_window(3600) == "1h"
     assert format_window(1800) == "30m"
     assert format_window(90) == "90s"
+
+
+def test_advisory_empty_window_is_none_even_if_min_restarts_zero() -> None:
+    """advisory() must not IndexError on an empty most_common() when min_restarts<=0
+    (review finding — the public method now guards `not recent`)."""
+    store = SiteStatsStore(None)
+    assert store.advisory(3600, 0, 0.5) is None

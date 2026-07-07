@@ -129,6 +129,12 @@ class AlertState:
         """Diff this loop's reported problems against the persisted active set."""
         out: list[NotifyEvent] = []
 
+        # A forget wins over a same-loop report: if a subject was declared no-longer-
+        # monitored, retire it even if another path re-reported it this loop (e.g. a
+        # removed-but-still-dominant flaky site whose restarts haven't aged out).
+        for key in self._forgotten:
+            self._reported.pop(key, None)
+
         for key, (tier, title, body) in self._reported.items():
             active = self._active.get(key)
             if active is None:
