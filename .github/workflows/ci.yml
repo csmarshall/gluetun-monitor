@@ -28,8 +28,9 @@ jobs:
         # The image installs runtime deps from the hashed requirements.lock, so a
         # bump in pyproject that didn't regenerate the lock would silently NOT reach
         # the image (and silently break the docker-py/apprise auto-merge promotion).
-        # Fail closed: assert the lock's direct pins equal pyproject's. Regenerate
-        # with: pip-compile --generate-hashes -o requirements.lock pyproject.toml
+        # Fail closed: assert the lock's direct pins equal pyproject's. (The deeper
+        # "lock is faithful to 3.14" check is the lock-audit job below.) Regenerate
+        # in the runtime interpreter, NOT a host python — see scripts/regen-lock.sh.
         run: |
           for pkg in docker apprise; do
             want=$(grep -oP "(?<=\"${pkg}==)[0-9][0-9.]*" pyproject.toml | head -1)
@@ -76,6 +77,43 @@ jobs:
         # without flaking on trivial churn. `not integration` excludes the
         # real-daemon suite (it runs in its own job below).
         run: pytest -m "not integration" --cov=gluetun_monitor --cov-report=term-missing --cov-fail-under=95
+
+  lock-audit:
+    name: requirements.lock faithful to the runtime Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Read the runtime Python version from the Dockerfile
+        # Single source of truth: the base image (FROM python:X.Y-slim) decides the
+        # runtime, so the lock must be resolved under X.Y. Deriving it here means a
+        # base bump (3.14 → 3.15 → …) is a one-line Dockerfile change and this audit
+        # follows automatically — it can never validate the lock against a different
+        # interpreter than the image actually ships (which would silently defeat #82).
+        id: pyver
+        run: echo "version=$(grep -oP 'FROM python:\K[0-9]+\.[0-9]+' Dockerfile | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python ${{ steps.pyver.outputs.version }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ steps.pyver.outputs.version }}
+
+      - name: Assert the committed lock == a fresh pip-compile under that version
+        # #82: exercises requirements.lock (nothing did before) and pins it to the
+        # runtime. pip-compile resolves environment markers against the interpreter it
+        # runs under, so a lock frozen under a different version can pin different
+        # transitives. Compares only the resolved pins/hashes (the comment header —
+        # Python version, invocation — is stripped), so it fails on real dependency
+        # drift, not cosmetic header text.
+        run: |
+          pip install pip-tools==7.5.3
+          cp requirements.lock /tmp/committed.lock
+          pip-compile --quiet --generate-hashes --output-file=requirements.lock pyproject.toml
+          if ! diff -u <(grep -v '^#' /tmp/committed.lock) <(grep -v '^#' requirements.lock); then
+            echo "::error::requirements.lock is stale for the runtime Python. Regenerate with ./scripts/regen-lock.sh"
+            exit 1
+          fi
+          echo "requirements.lock matches pyproject.toml resolved under Python ${{ steps.pyver.outputs.version }}"
 
   pytest-integration:
     name: Integration (real daemon, pytest)
