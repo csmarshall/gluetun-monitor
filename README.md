@@ -82,6 +82,16 @@ permissions** (`CONTAINERS` / `POST` / `EXEC`). In the common case you change
 only the image tag and it keeps working — we validate that the v1 env surface
 boots cleanly against a socket proxy as part of testing.
 
+> **⚠️ v1 has a known defect — it does not actually recover.** A later review of
+> the bash script found a `set -e` bug (#81): the backgrounded site-test subshell
+> exits at the failing `wget` **before** writing its result, for any non-zero wget
+> exit. The upshot is that on a **real** connectivity failure, v1's
+> `restart_gluetun` **never fires** — it logged a DEBUG "test result missing" line
+> and did nothing (and sites answering 4xx/5xx were silently miscounted). So `:1`
+> isn't just unsupported; its core self-healing was broken. **The Python v2 port
+> fixes this** (and is what these docs describe). The `:1` image is retained only
+> as a rollback anchor / differential-test oracle — do not run it in production.
+
 **Image tags** (full policy: [docs/VERSIONING.md](docs/VERSIONING.md)):
 - **`:2`** — **recommended for production**: you get every v2.x patch and never a
   surprise future major.
