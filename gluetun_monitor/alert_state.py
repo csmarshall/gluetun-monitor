@@ -91,6 +91,19 @@ class AlertState:
         """Declare that ``key``'s subject is no longer monitored (silent clear)."""
         self._forgotten.add(key)
 
+    def hold(self, key: str) -> None:
+        """Re-assert an already-active alert *as-is* so this loop doesn't resolve it.
+
+        For a subject the loop couldn't evaluate (e.g. a dependent that came back
+        un-probeable): the problem hasn't cleared, we just didn't get to check it, so
+        the alert must stay active rather than false-resolve. No-op if ``key`` isn't
+        active. Cheaper/more precise than ``mark_incomplete`` when only one subject
+        is unevaluated — it holds that alert, not every active alert.
+        """
+        active = self._active.get(key)
+        if active is not None:
+            self._reported[key] = (active.tier, active.title, active.body)
+
     def is_active(self, key: str) -> bool:
         """Whether ``key`` is currently an active (announced, unresolved) alert.
 
@@ -115,6 +128,12 @@ class AlertState:
     def events(self) -> list[NotifyEvent]:
         """Diff this loop's reported problems against the persisted active set."""
         out: list[NotifyEvent] = []
+
+        # A forget wins over a same-loop report: if a subject was declared no-longer-
+        # monitored, retire it even if another path re-reported it this loop (e.g. a
+        # removed-but-still-dominant flaky site whose restarts haven't aged out).
+        for key in self._forgotten:
+            self._reported.pop(key, None)
 
         for key, (tier, title, body) in self._reported.items():
             active = self._active.get(key)
@@ -187,8 +206,12 @@ class AlertState:
                     since_loop=int(rec["since_loop"]),
                     last_notified_loop=int(rec["last_notified_loop"]),
                 )
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             # Corrupt/missing sidecar: start clean rather than crash the watchdog.
+            # AttributeError covers a well-formed-JSON-but-not-an-object sidecar
+            # (null / [] / 5 / "str"), whose .get()/.items() would otherwise escape
+            # this handler and take the monitor down at startup — violating the
+            # tenet that notifications must never affect monitoring.
             self._loop = 0
             self._active = {}
 

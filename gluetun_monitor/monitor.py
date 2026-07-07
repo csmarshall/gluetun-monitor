@@ -490,7 +490,18 @@ class Monitor:
             # target (TRY_RESTART) is left alone: we can't prove a strand there and
             # must not churn a healthy container (Tenet 3). The id comparison is
             # stable (no flap), so unlike the interface path it needs no re-check.
-            info = self.client.inspect(dep)
+            try:
+                info = self.client.inspect(dep)
+            except Exception as exc:
+                # A transient Docker error (socket blip, APIError) on this ONE
+                # dependent must not abort the whole fan-out and skip every other
+                # dependent's remediation this loop. Skip it conservatively: report
+                # it un-evaluated (running so it isn't remediated as "not running";
+                # viability None so its alert is held, not resolved) and retry next
+                # loop rather than churn a container we couldn't inspect (Tenet 3).
+                self.log.debug(f"[dependent:{dep}] inspect failed ({exc}); skipped this loop")
+                return DependentProbe(dep, InterfaceStatus.UNKNOWN, True, None,
+                                      "inspect unavailable (transient)", interfaces=ifs)
             running = bool(info and info.running)
             if (
                 info is not None
@@ -599,9 +610,10 @@ class Monitor:
         with self._rng_lock:
             url = self._rng.choice(candidates)
         host = hostname_of(url)
-        return host, validate_dns(
-            self.client, dep, url, host, self.config.timeout, self.config.wget_tries
-        )
+        # Honor the confirm URL's own per-URL |timeout=/|tries= like every other
+        # probe (#60/#77), not the globals — a slow site set specifically for this
+        # URL must not be clipped on the confirm path.
+        return host, validate_dns(self.client, dep, url, host, *self._probe_knobs(url))
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
@@ -679,6 +691,9 @@ class Monitor:
         # (which interfaces / can it route out), THEN the L7 viability result —
         # so the logs show the path was validated before the DNS/connect test.
         to_remediate: list[tuple[str, str]] = []
+        # Dependents the loop could NOT evaluate this cycle (link/DNS couldn't tell):
+        # an active alert for them must be HELD, not resolved, and their wedge kept.
+        unevaluated: set[str] = set()
         for probe in probes:
             dep = probe.name
             tag = f"dependent:{dep}"  # role + name, mirrors "[gateway:<name>]"
@@ -691,6 +706,8 @@ class Monitor:
                 self.log.debug(f"[{tag}] {probe.reason} (running={probe.running})")
                 if not probe.running:
                     to_remediate.append((dep, "not running (link check unavailable)"))
+                else:
+                    unevaluated.add(dep)  # running but interfaces unreadable — not judged
                 continue
             if probe.viability_ok is None:
                 if probe.dns_unvalidated:
@@ -703,6 +720,7 @@ class Monitor:
                         self.log.debug(f"[{tag}] reach ?: {probe.reason}")
                 else:
                     self.log.debug(f"[{tag}] reach skip: {probe.reason}")
+                unevaluated.add(dep)  # viability couldn't be determined — not judged
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
             self._warned_dns_unvalidated.discard(dep)
@@ -730,11 +748,18 @@ class Monitor:
         else:
             self.log.info(f"dependents: {healthy}/{len(probes)} ok")
 
+        # A dependent the loop couldn't evaluate wasn't proven healthy — hold any
+        # active alert so it doesn't false-resolve mid-incident (e.g. all sites went
+        # advisory → empty pool, or the container lost its DNS tool), and keep its
+        # wedge track. Only a dependent seen genuinely healthy drops its bookkeeping.
+        for dep in unevaluated:
+            self.alerts.hold(f"dependent-unhealthy:{dep}")
+            self.alerts.hold(f"dependent-wedged:{dep}")
         # A dependent that came back healthy WITHOUT our help (e.g. the operator
         # cleared the wedge and it recovered) drops its failure bookkeeping; its
         # wedged alert stops being reported, so the lifecycle resolves it.
         failing = {dep for dep, _ in to_remediate}
-        for dep in [d for d in self._wedges if d not in failing]:
+        for dep in [d for d in self._wedges if d not in failing and d not in unevaluated]:
             del self._wedges[dep]
 
         for dep, reason in to_remediate:
@@ -816,6 +841,11 @@ class Monitor:
         # Doubling backoff per failed attempt, in loops, capped. cap=0 disables
         # the backoff (attempt every loop) but keeps the escalated alert.
         cap_loops = self.config.wedge_backoff_cap // max(1, self.config.check_interval)
+        # A positive-but-small cap (< CHECK_INTERVAL) floors to 0 loops, which the
+        # code below reads as "backoff disabled" — the opposite of intent. Keep any
+        # positive cap throttling at >= 1 loop; only cap == 0 means disabled.
+        if self.config.wedge_backoff_cap > 0:
+            cap_loops = max(1, cap_loops)
         track.backoff_loops = (
             min(max(2, track.backoff_loops * 2), cap_loops) if cap_loops > 0 else 0
         )
@@ -1207,6 +1237,10 @@ class Monitor:
         if gluetun_info is not None:
             self.mstate.record_gluetun_id(gluetun_info.id)
         self._scan_stranded_orphans(gluetun_info.id if gluetun_info is not None else None)
+        # Mirror any startup-adopted orphan into durable memory BEFORE this save
+        # (matching the loop path), so a crash right after startup doesn't rely on
+        # re-discovery to remember it.
+        self.mstate.set_known_dependents(self._known_dependents)
         self.mstate.save()
         startup = get_endpoint_info(self.client, self.config.gluetun_container)
         self.log.endpoint(startup.format("STARTUP", "Monitor starting"))

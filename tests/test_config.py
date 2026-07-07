@@ -100,3 +100,15 @@ def test_int_fallback_on_garbage(monkeypatch: pytest.MonkeyPatch) -> None:
     separately treats the recorded error as fatal — see test_config_warnings)."""
     monkeypatch.setenv("CHECK_INTERVAL", "not-a-number")
     assert Config.from_env().check_interval == 30
+
+
+def test_absurd_global_timeout_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fat-fingered global TIMEOUT is fatal-at-startup like the per-URL cap (#77),
+    not silently accepted to stall every loop for hours (review finding)."""
+    monkeypatch.setenv("TIMEOUT", "100000")
+    assert any("TIMEOUT" in e and "300" in e for e in Config.from_env().errors)
+
+
+def test_absurd_global_tries_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WGET_TRIES", "100000")
+    assert any("WGET_TRIES" in e and "5" in e for e in Config.from_env().errors)

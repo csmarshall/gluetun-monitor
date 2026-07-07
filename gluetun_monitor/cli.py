@@ -283,6 +283,14 @@ def main(argv: list[str] | None = None) -> int:
     # can alert too; NullNotifier (no-op) unless APPRISE_URLS is configured.
     notifier = build_notifier(config, logger)
 
+    # The diagnostic sub-commands below run before the fatal-config gate, so a
+    # malformed env would otherwise be silently substituted with defaults and the
+    # output judged against the wrong values. Surface the errors first.
+    if config.errors and (args.notify_test or args.suggest_tunables):
+        for err in config.errors:
+            logger.warn(err)
+        logger.warn("Config has errors (above); diagnostic output may use defaults.")
+
     if args.notify_test:
         return _run_notify_test(config, notifier, logger)
 

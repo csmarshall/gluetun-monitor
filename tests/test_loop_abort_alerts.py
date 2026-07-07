@@ -120,3 +120,50 @@ def test_exception_mid_loop_holds_active_alerts(tmp_path: Path) -> None:
     fake.explode = False
     mon.run_once()  # next complete loop: now the resolve is genuine
     assert "resolve:dependent-unhealthy:app" in notifier.event_keys()
+
+
+def test_unprobeable_dependent_holds_its_active_alert(tmp_path: Path) -> None:
+    """A dependent the loop can't evaluate (empty site pool → viability None) must
+    HOLD its active alert, not false-resolve it mid-incident (review finding H3)."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    fake.add_container("app", network_mode=f"container:{GLUETUN_ID}")
+    fake.on_exec = lambda n, c: (
+        ExecResult(0, "eth0\nlo\ntun0\n") if c[:2] == ["ls", "/sys/class/net"]
+        else ExecResult(0, "  HTTP/1.1 200 OK\n"))
+    notifier = FakeNotifier()
+    cfg = Config(config_file=_conf(tmp_path), gluetun_container="gluetun",
+                 dependent_containers="app")
+    mon = Monitor(fake, cfg, Logger(log_file=None, level="DEBUG", stream=io.StringIO()),
+                  rng=random.Random(0), sleep=lambda _s: None,
+                  stats=SiteStatsStore(None), notifier=notifier)
+    _seed_active_alert(mon, "dependent-wedged:app")
+
+    mon.alerts.begin_loop()
+    mon.run_dependent_phase(GLUETUN_ID, [])  # no sites -> app un-probeable this loop
+    keys = [e.key for e in mon.alerts.events()]
+    assert "resolve:dependent-wedged:app" not in keys  # not false-resolved
+    assert mon.alerts.is_active("dependent-wedged:app")  # still active
+
+
+def test_probe_dependent_survives_a_transient_inspect_error(tmp_path: Path) -> None:
+    """One dependent's Docker inspect error must not propagate out of the fan-out
+    and abort every other dependent's remediation (review finding). It returns an
+    un-evaluated probe (running so it isn't churned) instead of raising."""
+    from gluetun_monitor.state import InterfaceStatus
+
+    class Boom(FakeDockerClient):
+        def inspect(self, name_or_id: str):  # type: ignore[no-untyped-def]
+            if name_or_id == "distroless":
+                raise RuntimeError("APIError: socket blip")
+            return super().inspect(name_or_id)
+
+    fake = Boom()
+    fake.add_container("distroless", network_mode=f"container:{GLUETUN_ID}")
+    fake.on_exec = lambda n, c: ExecResult(1, "")  # no shell -> UNKNOWN -> inspect path
+    mon = Monitor(fake, Config(config_file=_conf(tmp_path), gluetun_container="gluetun"),
+                  Logger(log_file=None, stream=io.StringIO()), rng=random.Random(0),
+                  sleep=lambda _s: None, stats=SiteStatsStore(None))
+    probe = mon._probe_dependent("distroless", GLUETUN_ID, [], [])  # must NOT raise
+    assert probe.status is InterfaceStatus.UNKNOWN
+    assert probe.running is True  # conservative: not remediated as "not running"

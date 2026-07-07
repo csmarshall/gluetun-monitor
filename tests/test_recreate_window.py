@@ -155,3 +155,14 @@ def test_sweep_ignores_unrelated_containers() -> None:
     fake.add_container("app", network_mode=f"container:{GLUETUN_ID}")
     sweep_recreate_leftovers(fake, _logger())
     assert fake.removed == [] and fake.renamed == []
+
+
+def test_sweep_restores_an_exited_parked_container() -> None:
+    """A dependent stranded by a gluetun recreate is usually driven EXITED, so the
+    twin from an interrupted recreate of it is exited too. A running-only sweep would
+    miss it and leave the dependent silently down (review finding H2)."""
+    fake = FakeDockerClient()
+    fake.add_container("app.gm-recreate-old", network_mode=f"container:{OLD_ID}", running=False)
+    sweep_recreate_leftovers(fake, _logger())
+    assert fake.inspect("app") is not None  # restored despite being exited
+    assert ("app.gm-recreate-old", "app") in [(o, n) for o, n in fake.renamed]

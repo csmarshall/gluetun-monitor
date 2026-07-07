@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .sites import MAX_URL_TIMEOUT, MAX_URL_TRIES
+
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARN", "WARNING", "ERROR"}
@@ -233,8 +235,11 @@ class Config:
             config_file=os.environ.get("CONFIG_FILE", "/config/sites.conf"),
             log_file=os.environ.get("LOG_FILE", "/logs/gluetun-monitor.log"),
             check_interval=_env_int("CHECK_INTERVAL", 30, errors, minimum=1),
-            timeout=_env_int("TIMEOUT", 10, errors, minimum=1),
-            wget_tries=_env_int("WGET_TRIES", 1, errors, minimum=1),
+            # Cap the globals like the per-URL overrides (#77): both feed the same
+            # worst-case transport sizing, so an absurd global (TIMEOUT=100000) would
+            # otherwise stall every loop for hours. Fatal-at-startup, not silent.
+            timeout=_env_int("TIMEOUT", 10, errors, minimum=1, maximum=MAX_URL_TIMEOUT),
+            wget_tries=_env_int("WGET_TRIES", 1, errors, minimum=1, maximum=MAX_URL_TRIES),
             fail_threshold=fail_threshold,
             gluetun_container=os.environ.get("GLUETUN_CONTAINER", "gluetun"),
             healthy_wait_timeout=_env_int("HEALTHY_WAIT_TIMEOUT", 120, errors, minimum=1),
