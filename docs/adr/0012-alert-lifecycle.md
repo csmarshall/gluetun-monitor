@@ -78,3 +78,13 @@ edge/repeat/resolve logic is here, which keeps both pieces simple and testable.
 - **In-memory only (no sidecar).** Rejected: a monitor restart would re-announce
   every active problem and lose pending resolves — common, since the monitor is
   itself a container that gets updated/restarted.
+
+## Amendments
+- **#106 / #112 — resolve only on *observed* recovery, never a mechanical artifact.**
+  The edge-triggered lifecycle above resolves an active alert when it isn't reported
+  a loop it *could* be — but two paths could go silent without the subject actually
+  clearing. The `gluetun-unrecovered` alert is now held while its triggering sites
+  still fail, rather than false-resolving on the post-restart counter reset (#106);
+  and a dependent the loop couldn't evaluate holds its alert via `AlertState.hold`
+  instead of resolving it (#112). Both apply the incomplete-loop principle
+  (silence ≠ recovery) at per-subject granularity.
