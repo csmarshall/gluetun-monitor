@@ -185,3 +185,14 @@ def test_bad_entry_present_at_first_load_is_not_double_warned(tmp_path: Path) ->
     mon, stream, _, conf = _monitor(tmp_path)
     _loop(mon, conf, [A, B, "--evil-flag"])        # present from the first load
     assert "--evil-flag" not in stream.getvalue()  # suppressed (preflight's job)
+
+
+def test_effective_noop_option_edit_logs_no_change(tmp_path: Path) -> None:
+    """Making an implicit default explicit (|timeout=10 when TIMEOUT=10) changes the
+    raw spec but not the effective config — it must NOT log a spurious change (#110
+    review): no 'Sites changed: url ()' and no activity notification."""
+    mon, stream, _, conf = _monitor(tmp_path)  # Config default timeout=10
+    _loop(mon, conf, [A, B])
+    before = stream.getvalue().count("Sites changed")
+    _loop(mon, conf, [f"{A}|timeout=10", B])  # explicit 10 == global 10 -> no-op
+    assert stream.getvalue().count("Sites changed") == before

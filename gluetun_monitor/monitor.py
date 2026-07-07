@@ -332,33 +332,47 @@ class Monitor:
             assert prev is not None  # the is-None branch above handles first load
             added = sorted(set(current) - set(prev))
             removed = sorted(set(prev) - set(current))
-            changed = sorted(u for u in (set(current) & set(prev)) if current[u] != prev[u])
-            parts = []
-            if added:
-                parts.append(f"added {', '.join(added)}")
-            if removed:
-                parts.append(f"removed {', '.join(removed)}")
-            for url in changed:
-                parts.append(f"{url} ({self._describe_spec_change(prev[url], current[url])})")
-            self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(current)})")
-            self._log_site_overrides()
-            self._notify(
-                "activity",
-                "sites.conf changed",
-                f"Test sites changed: {'; '.join(parts)} (now {len(current)}).",
-                key="sites-changed",
-            )
-            # A removed site keeps no live failure counter — a later re-add starts
-            # clean rather than resuming near the threshold — and any active advisory
-            # for it is retired with a "no longer monitored" notice (not a "resolved").
-            for url in removed:
-                self.site_failures.discard(url)
-                self._forget(f"advisory:{url}")
-            # A site newly switched to advisory is excluded from the flaky-site
-            # advisory (#110), so retire any active one — it no longer gates.
-            for url in changed:
-                if current[url].role == "advisory" and prev[url].role != "advisory":
+            # Only report sites whose EFFECTIVE config changed (globals folded in). A
+            # raw spec diff with no effective change — e.g. adding |timeout=10 when
+            # TIMEOUT is already 10 — is a no-op and must not log a spurious
+            # "Sites changed: url ()" or fire an activity notification.
+            changed = [
+                (u, desc)
+                for u in sorted(set(current) & set(prev))
+                if current[u] != prev[u]
+                and (desc := self._describe_spec_change(prev[u], current[u]))
+            ]
+            if added or removed or changed:
+                parts = []
+                if added:
+                    parts.append(f"added {', '.join(added)}")
+                if removed:
+                    parts.append(f"removed {', '.join(removed)}")
+                parts.extend(f"{url} ({desc})" for url, desc in changed)
+                self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(current)})")
+                self._log_site_overrides()
+                self._notify(
+                    "activity",
+                    "sites.conf changed",
+                    f"Test sites changed: {'; '.join(parts)} (now {len(current)}).",
+                    key="sites-changed",
+                )
+                # A removed site keeps no live failure counter — a later re-add starts
+                # clean rather than resuming near the threshold — and any active advisory
+                # for it is retired with a "no longer monitored" notice (not a "resolved").
+                for url in removed:
+                    self.site_failures.discard(url)
                     self._forget(f"advisory:{url}")
+                # On ANY role change, discard the live failure counter so the new role
+                # starts clean (#110): an advisory site accumulates fails without
+                # gating, so flipping it to critical must NOT inherit that count and
+                # restart grace-lessly; and a site newly switched to advisory has any
+                # active flaky-site alert retired since it no longer gates.
+                for url, _desc in changed:
+                    if current[url].role != prev[url].role:
+                        self.site_failures.discard(url)
+                        if current[url].role == "advisory":
+                            self._forget(f"advisory:{url}")
             self._last_specs = current
 
         results = self._fan_out(

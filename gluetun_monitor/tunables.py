@@ -177,6 +177,11 @@ def suggest_tunables(
     out = []
     for url, st in sites.items():
         spec = specs.get(url)
+        # An advisory site never gates a restart (#110), so "widen its timeout to
+        # avoid restarts" is meaningless advice — skip it rather than recommend a
+        # tunable with a false rationale for a site the operator opted out of.
+        if spec is not None and spec.role == "advisory":
+            continue
         timeout = spec.timeout if spec and spec.timeout is not None else global_timeout
         tries = spec.tries if spec and spec.tries is not None else global_tries
         s = _suggest_one(url, st, timeout=timeout, tries=tries, spec=spec)

@@ -230,3 +230,30 @@ def test_flaky_advisory_suppressed_once_site_is_role_advisory(tmp_path: Path) ->
     mon.alerts.begin_loop()
     mon._emit_advisory()
     assert f"advisory:{goodurl}" in mon.alerts._reported
+
+
+def test_role_switch_advisory_to_critical_resets_failure_grace(tmp_path: Path) -> None:
+    """#110 review: an advisory site accumulates failures without gating. Flipping it
+    to critical must NOT inherit that count and restart grace-lessly — the counter is
+    cleared on the role change so it gets a fresh FAIL_THRESHOLD grace."""
+    badurl = "https://blocked.example"
+    conf = tmp_path / "sites.conf"
+    conf.write_text(f"{GOOD}\n{badurl}|role=advisory\n")
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    fake.on_exec = _handler({badurl})
+    cfg = Config(config_file=str(conf), gluetun_container="gluetun",
+                 fail_threshold=2, dns_wait_timeout=2, advisory_min_restarts=1000)
+    mon = Monitor(fake, cfg, Logger(log_file=None, stream=io.StringIO()),
+                  rng=random.Random(0), sleep=lambda _s: None, stats=SiteStatsStore(None))
+
+    for _ in range(4):
+        mon.run_once()  # advisory: fails every loop, accumulates count, never restarts
+    assert fake.restarted == []
+    assert mon.site_failures.get(badurl) >= 3  # carried a high count while advisory
+
+    conf.write_text(f"{GOOD}\n{badurl}\n")  # switch it to critical (bare URL)
+    mon.run_once()  # counter reset on the switch -> this is only 1/2, NO restart yet
+    assert fake.restarted == []
+    mon.run_once()  # now 2/2 -> restart
+    assert "gluetun" in fake.restarted
