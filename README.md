@@ -386,8 +386,12 @@ https://flaky.example|timeout=20|tries=2
 - **Forgiving:** an unknown key or non-positive value is **warned about at startup
   and skipped** — the URL is still monitored on the defaults; a typo never drops a
   site.
-- File overrides are **re-read live** like the URLs themselves; the active
-  overrides are logged whenever the set loads (`Per-URL probe overrides: …`).
+- File overrides are **re-read live** like the URLs themselves, and the reload
+  detects a change to a site's **full config** — not just added/removed URLs but a
+  changed `role`/`timeout`/`tries` on an existing one. Any edit is logged with the
+  specific before→after (`Sites changed: https://x (role critical→advisory)`), and
+  the resolved config is re-logged (`Per-URL probe overrides: …`), so you always get
+  confirmation the edit took effect.
 
 > **Why only `timeout`/`tries`?** These are the only **per-request** knobs — they
 > bound *this URL's* probe, so a per-URL value is meaningful. The other timeouts

@@ -117,3 +117,31 @@ def test_counter_discard() -> None:
     c.discard("x")
     assert c.get("x") == 0  # forgotten
     c.discard("never-seen")  # no error
+
+
+# --- #110: change detection on a site's full config, not just its presence ---
+
+def test_role_change_on_same_url_is_logged(tmp_path: Path) -> None:
+    """A live edit that only changes a site's role (URL unchanged) is detected."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])
+    _loop(mon, conf, [f"{A}|role=advisory", B])
+    assert f"Sites changed: {A} (role critical→advisory) (now 2)" in stream.getvalue()
+
+
+def test_timeout_change_on_same_url_is_logged(tmp_path: Path) -> None:
+    """A per-URL timeout edit (URL unchanged) is likewise detected and logged."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])
+    _loop(mon, conf, [f"{A}|timeout=25", B])
+    out = stream.getvalue()
+    assert f"{A} (timeout " in out and "→25s)" in out
+
+
+def test_identical_reload_logs_no_change(tmp_path: Path) -> None:
+    """Re-reading the exact same config must NOT report a spurious change."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [f"{A}|role=advisory", B])
+    before = stream.getvalue().count("Sites changed")
+    _loop(mon, conf, [f"{A}|role=advisory", B])  # byte-identical
+    assert stream.getvalue().count("Sites changed") == before

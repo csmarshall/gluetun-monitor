@@ -151,7 +151,9 @@ class Monitor:
         self._unrecovered_sites: set[str] = set()
         self.site_failures = Counter()
         self.dependent_failures = Counter()
-        self._last_sites: set[str] | None = None
+        # Last-seen full specs (url -> SiteSpec), so a live edit is detected on ANY
+        # config change — not just add/remove, but a site's role/timeout/tries too.
+        self._last_specs: dict[str, SiteSpec] | None = None
         # url -> SiteSpec for the current loop, so probe call sites can resolve a
         # per-URL timeout/tries override (#60). Refreshed each loop in _run_once_body
         # alongside the (deduplicated) URL list; empty until the first load.
@@ -271,6 +273,24 @@ class Monitor:
         spec = self._specs.get(url)
         return spec.role if spec is not None else "critical"
 
+    def _describe_spec_change(self, old: SiteSpec, new: SiteSpec) -> str:
+        """Human summary of what changed between two specs for the same URL — role
+        and/or effective timeout/tries (globals folded in) — for the live-reload
+        "Sites changed" line, e.g. ``role critical→advisory, timeout 10s→25s``.
+        """
+        diffs: list[str] = []
+        if old.role != new.role:
+            diffs.append(f"role {old.role}→{new.role}")
+        ot = old.timeout if old.timeout is not None else self.config.timeout
+        nt = new.timeout if new.timeout is not None else self.config.timeout
+        if ot != nt:
+            diffs.append(f"timeout {ot}s→{nt}s")
+        on = old.tries if old.tries is not None else self.config.wget_tries
+        nn = new.tries if new.tries is not None else self.config.wget_tries
+        if on != nn:
+            diffs.append(f"tries {on}→{nn}")
+        return ", ".join(diffs)
+
     def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
         """Test the full URL set from inside gluetun. Return the sites that have
         breached FAIL_THRESHOLD (empty = healthy).
@@ -283,38 +303,49 @@ class Monitor:
             self.log.warn("No sites configured to test")
             return []
 
-        # Track the site *set* (not just the count) so a runtime sites.conf edit is
-        # logged with the actual names — including a same-count swap, which a
-        # count-only check would miss entirely. record=False is the post-restart
-        # re-verify (same set), so skip the diff there.
-        current = set(sites)
-        if record and self._last_sites is None:
-            self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
+        # Track the full *spec* per URL (not just its presence) so a runtime
+        # sites.conf edit is logged for ANY change: an added/removed site, a
+        # same-count swap, OR a changed option on an existing site (role, timeout,
+        # tries) — which a URL-set check would miss entirely. record=False is the
+        # post-restart re-verify (same set), so skip the diff there.
+        current = {url: (self._specs.get(url) or SiteSpec(url)) for url in sites}
+        if record and self._last_specs is None:
+            self.log.info(f"Loaded {len(current)} sites (sites.conf + SITES env)")
             self._log_site_overrides()
-            self._last_sites = current
-        elif record and current != self._last_sites:
-            added = sorted(current - self._last_sites) if self._last_sites else sorted(current)
-            removed = sorted(self._last_sites - current) if self._last_sites else []
+            self._last_specs = current
+        elif record and current != self._last_specs:
+            prev = self._last_specs
+            assert prev is not None  # the is-None branch above handles first load
+            added = sorted(set(current) - set(prev))
+            removed = sorted(set(prev) - set(current))
+            changed = sorted(u for u in (set(current) & set(prev)) if current[u] != prev[u])
             parts = []
             if added:
                 parts.append(f"added {', '.join(added)}")
             if removed:
                 parts.append(f"removed {', '.join(removed)}")
-            self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(sites)})")
+            for url in changed:
+                parts.append(f"{url} ({self._describe_spec_change(prev[url], current[url])})")
+            self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(current)})")
             self._log_site_overrides()
             self._notify(
                 "activity",
                 "sites.conf changed",
-                f"Test sites changed: {'; '.join(parts)} (now {len(sites)}).",
+                f"Test sites changed: {'; '.join(parts)} (now {len(current)}).",
                 key="sites-changed",
             )
             # A removed site keeps no live failure counter — a later re-add starts
             # clean rather than resuming near the threshold — and any active advisory
             # for it is retired with a "no longer monitored" notice (not a "resolved").
-            for site in removed:
-                self.site_failures.discard(site)
-                self._forget(f"advisory:{site}")
-            self._last_sites = current
+            for url in removed:
+                self.site_failures.discard(url)
+                self._forget(f"advisory:{url}")
+            # A site newly switched to advisory is excluded from the flaky-site
+            # advisory (#110), so retire any active one — it no longer gates.
+            for url in changed:
+                if current[url].role == "advisory" and prev[url].role != "advisory":
+                    self._forget(f"advisory:{url}")
+            self._last_specs = current
 
         results = self._fan_out(
             sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
