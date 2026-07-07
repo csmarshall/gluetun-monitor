@@ -153,3 +153,5 @@ def test_startup_debug_enumerates_each_site_resolved_config(tmp_path: Path) -> N
     out = stream.getvalue()
     assert f"site {GOOD} [role=critical timeout=10s tries=1]" in out   # all-default site
     assert f"site {BAD} [role=advisory timeout=25s tries=1]" in out    # overridden site
+    # The defaults summary spells out the global defaults, role included.
+    assert "WGET_TRIES=1, role=critical" in out

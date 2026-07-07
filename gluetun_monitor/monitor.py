@@ -36,6 +36,7 @@ from .recovery import RemediationOutcome, remediate_dependent, restart_gluetun
 from .recreate import is_parked_name, sweep_recreate_leftovers
 from .site_stats import SiteStatsStore, format_window
 from .sites import (
+    DEFAULT_ROLE,
     SiteSpec,
     hostname_of,
     ip_pool,
@@ -250,7 +251,10 @@ class Monitor:
                 knobs.append(f"role={spec.role}")
             if knobs:
                 overrides.append(f"{hostname_of(url)} {' '.join(knobs)}")
-        defaults = f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}"
+        defaults = (
+            f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}, "
+            f"role={DEFAULT_ROLE}"
+        )
         if overrides:
             self.log.info(
                 f"Per-URL probe overrides: {'; '.join(overrides)} (others use {defaults})"

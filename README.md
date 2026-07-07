@@ -429,6 +429,12 @@ teaches nothing. Deleting isn't a role; it's what you do to an advisory site you
 finished with. An unknown `role=` value is warned about at startup and falls back
 to `critical` (fail-closed — an unrecognized site still protects the tunnel).
 
+Unlike `timeout`/`tries` — which take their **global** defaults from `TIMEOUT`/`WGET_TRIES`
+and are overridable per URL — `role` is **per-site only**: there's no global
+default-role setting, because "everything advisory" would leave nothing gating the
+tunnel. The startup/reload defaults line spells out the effective globals in force,
+role included: `… all sites use TIMEOUT=10s, WGET_TRIES=1, role=critical`.
+
 #### Let the monitor suggest them — `--suggest-tunables`
 
 You don't have to guess. The monitor already records how every site behaves
