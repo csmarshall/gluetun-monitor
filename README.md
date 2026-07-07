@@ -483,7 +483,7 @@ This is also why it's correct across wget implementations: gluetun ships **GNU w
 **Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working — the site just doesn't like the request. Only actual network/DNS/TLS/timeout failures indicate a VPN problem.
 
 #### `FAIL_THRESHOLD`
-Number of **consecutive** failures for a site before triggering a restart. This prevents restarts from transient network blips.
+Number of **consecutive** failures for a **critical** site before triggering a restart. This prevents restarts from transient network blips. (An `advisory` site — see [Site roles](#site-roles--critical-default-vs-advisory) — is probed but never triggers a restart regardless of this threshold.)
 
 Example with `FAIL_THRESHOLD=2`:
 - Check 1: Site fails → Counter: 1 (no action)
