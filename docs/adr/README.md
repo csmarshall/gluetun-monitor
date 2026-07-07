@@ -44,3 +44,4 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0013](0013-release-and-versioning-automation.md) | Release & versioning automation — gate by authorship (ours = human, upstream = auto); release-please + `:edge` + base-digest drift check | Accepted |
 | [0014](0014-durable-dependent-memory.md) | Durable dependent memory: persisted gluetun id history + known dependents; adopt-or-warn orphan scan (dead parent in history = provably ours) | Accepted |
 | [0015](0015-per-site-role.md) | Per-site role (`\|role=critical\|advisory`, default critical) — advisory sites are probed but never gate a restart; explicit operator opt-out, not auto-quarantine | Accepted |
+| [0016](0016-wedge-escalation-and-backoff.md) | Escalate a wedged dependent — distinct alert + runbook, capped remediation backoff (#98); a bounded Tenet-9 carve-out for a provably-futile repeat | Accepted |

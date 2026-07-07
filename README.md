@@ -465,7 +465,9 @@ slow-api.example
 
 When a longer timeout *wouldn't* help — a site whose restarts rarely clear it and
 whose failures are DNS/connection (genuinely unreachable, not merely slow) — it
-says so and points you at reviewing/removing it instead. The suggestions are
+says so and points you at reviewing/removing it instead (or, if you want to keep
+watching its reachability without it restarting the tunnel, marking it
+[`role=advisory`](#site-roles--critical-default-vs-advisory)). The suggestions are
 **advisory only**: the monitor never edits your config. The flaky-site advisory in
 the logs and notifications carries the same suggestion inline when one applies.
 
