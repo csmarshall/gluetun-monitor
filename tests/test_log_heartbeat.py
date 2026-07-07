@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import random
+import re
 
 from gluetun_monitor.config import Config
 from gluetun_monitor.docker_client import ExecResult
@@ -53,15 +54,17 @@ def test_info_shows_heartbeat_not_per_item() -> None:
     assert "[gateway:gluetun] sites: 3/3 ok" in out
     assert "dependents: 2/2 ok" in out
     # ...but the per-item detail is NOT (that's DEBUG-only).
-    assert "reach ok: https://google.com" not in out
+    assert "reach ok:" not in out
     assert "link live:" not in out
 
 
 def test_debug_shows_heartbeat_and_per_item() -> None:
     out = _run_loop("DEBUG")
     assert "[gateway:gluetun] sites: 3/3 ok" in out        # heartbeat
-    assert "reach ok: https://google.com" in out           # per-site detail
-    assert "[dependent:qbittorrent] link live:" in out     # per-dependent detail
+    # per-site + per-dependent detail — the (n/total) counter is completion-order,
+    # so match any index rather than a fixed position.
+    assert re.search(r"\(\d/3\) reach ok: https://google\.com", out)
+    assert re.search(r"\[dependent:qbittorrent\] \(\d/2\) link live:", out)
 
 
 def test_heartbeat_reports_failing_site() -> None:

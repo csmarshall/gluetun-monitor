@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, reopened]
 
+# Deny by default; the one job that needs write grants itself exactly what it uses.
+permissions: {}
+
 jobs:
   assign:
     name: Assign csmarshall
@@ -16,7 +19,7 @@ jobs:
       issues: write
     steps:
       - name: Add csmarshall as assignee
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const assignee = 'csmarshall';
