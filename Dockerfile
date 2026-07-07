@@ -36,7 +36,9 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Default environment (matches the v1.x contract; v2 adds the dependent knobs).
-ENV CONFIG_FILE=/config/sites.conf \
+# PYTHONUNBUFFERED so a crash traceback isn't lost to block buffering (#91).
+ENV PYTHONUNBUFFERED=1 \
+    CONFIG_FILE=/config/sites.conf \
     LOG_FILE=/logs/gluetun-monitor.log \
     CHECK_INTERVAL=30 \
     TIMEOUT=10 \
@@ -48,6 +50,14 @@ ENV CONFIG_FILE=/config/sites.conf \
     MAX_PARALLEL_CHECKS=6 \
     AUTO_RECREATE=1 \
     LOG_LEVEL=INFO
+
+# Watch the watchdog (#91): the loop writes its log every cycle, so the monitor is
+# healthy iff LOG_FILE was touched within ~5x the default check interval. Covers a
+# restart cycle (which logs throughout). Assumes the default LOG_FILE is enabled;
+# drop this HEALTHCHECK if you disable file logging.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=45s --retries=3 \
+    CMD test -f "$LOG_FILE" && \
+        [ "$(( $(date +%s) - $(stat -c %Y "$LOG_FILE") ))" -lt 150 ] || exit 1
 
 # The entrypoint optionally drops to PUID:PGID, then runs the console script.
 ENTRYPOINT ["docker-entrypoint.sh"]

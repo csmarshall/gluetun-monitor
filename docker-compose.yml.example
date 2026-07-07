@@ -10,8 +10,12 @@ services:
     image: tecnativa/docker-socket-proxy@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     container_name: gluetun-monitor-socket-proxy
     restart: unless-stopped
-    # On hardened hosts with restricted seccomp profiles, you may need:
-    # privileged: true
+    # On hardened hosts, prefer a SCOPED relaxation over `privileged: true` (which
+    # grants all capabilities + disables seccomp). If the proxy trips a restrictive
+    # profile, loosen only what's needed, e.g.:
+    #   security_opt:
+    #     - seccomp=unconfined      # or a custom profile allowing the syscalls it needs
+    #     # - apparmor=unconfined   # only if an AppArmor profile is the blocker
     environment:
       - CONTAINERS=1  # Allow container list/inspect/logs
       - POST=1        # Allow container restart

@@ -1,0 +1,53 @@
+# Keep the build context lean and reproducible (#87). Without this, `docker build`
+# ships .git, the venv, caches, local ops files, and a local __pycache__ into the
+# image on manual builds (CI is clean only because checkout is fresh).
+
+# VCS
+.git
+.gitignore
+.github
+
+# Python venv + caches
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+.coverage.*
+htmlcov
+
+# Tests + docs (not needed at runtime)
+tests
+docs
+*.md
+!README.md
+
+# Local operator files (personal; never part of the image)
+.env
+config
+sites.conf
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.yml.*-backup
+*.bak
+logs
+*.log
+session-state.md
+
+# Local ops/diag scripts
+deploy-v2.sh
+enable-notifications.sh
+run-tests.sh
+rosa-reboot-precheck.sh
+build-smoketest.sh
+rebuild-and-validate.sh
+issue*.sh
+
+# Editor
+.idea
+.vscode
+.claude

@@ -7,8 +7,8 @@ out-of-band via `Apprise <https://github.com/caronc/apprise>`_ (100+ backends).
 Two design decisions live here (ADR-0011):
 
 * **One dial, keyed on actionability** — ``NOTIFY_LEVEL`` is a cumulative tier
-  floor, default ``action``: ``action`` (you must act) → ``recovery`` (self-healed
-  incidents) → ``activity`` (non-fault changes) → ``all`` (firehose).
+  floor, default ``attention``: ``attention`` (you must act) → ``recovery`` (self-
+  healed incidents) → ``activity`` (non-fault changes) → ``all`` (firehose).
 * **Rollup is the substrate** — the notifier collects a loop's events, filters by
   the tier floor, and emits **one** digest notification (colored by the worst tier
   present). A single event is sent as itself; the one-shot CLI paths are a batch of
@@ -44,7 +44,7 @@ _TIER_NOTIFY_TYPE = {"attention": "failure", "recovery": "success", "activity": 
 
 
 def tier_rank(name: str) -> int:
-    """Rank of a tier name (0 = action … 3 = all); unknown → 0 (the loud floor)."""
+    """Rank of a tier name (0 = attention … 3 = all); unknown → 0 (the loud floor)."""
     return _TIER_RANK.get(name.lower(), 0)
 
 

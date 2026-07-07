@@ -34,7 +34,7 @@ docker = pytest.importorskip("docker")
 
 pytestmark = pytest.mark.integration
 
-# Tiny, ubiquitous image: busybox provides sh/cat for the exec + volume checks.
+# Tiny, ubiquitous image: alpine provides sh/cat for the exec + volume checks.
 IMAGE = "alpine:3"
 SENTINEL = "gluetun-monitor-survives-recreate"
 
