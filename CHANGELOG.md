@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.1...v2.5.2) (2026-07-07)
+
+
+### Fixed
+
+* **nits:** [#91](https://github.com/csmarshall/gluetun-monitor/issues/91) remainder — drift digest validation, formatter/fsync/histogram hardening ([#128](https://github.com/csmarshall/gluetun-monitor/issues/128)) ([fcbe44b](https://github.com/csmarshall/gluetun-monitor/commit/fcbe44bd0ad337f10f4b54ee790e20bc63de15b6))
+
+
+### Performance
+
+* **dependents:** discover from the list payload, not an inspect per container ([#91](https://github.com/csmarshall/gluetun-monitor/issues/91)) ([#129](https://github.com/csmarshall/gluetun-monitor/issues/129)) ([cbf5eca](https://github.com/csmarshall/gluetun-monitor/commit/cbf5eca721fd36223b569d6c67d3b3a23be9a537))
+
 ## [2.5.1](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.0...v2.5.1) (2026-07-07)
 
 
