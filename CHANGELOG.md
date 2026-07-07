@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.3.0...v2.4.0) (2026-07-07)
+
+
+### Added
+
+* **notify:** opt-in advisory-site reachability alert (activity tier) ([#116](https://github.com/csmarshall/gluetun-monitor/issues/116)) ([2996f1b](https://github.com/csmarshall/gluetun-monitor/commit/2996f1bf7919f4dab164ed4e8c19ac0fd57454fa))
+
 ## [2.3.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.4...v2.3.0) (2026-07-07)
 
 
