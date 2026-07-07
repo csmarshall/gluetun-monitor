@@ -254,8 +254,9 @@ the in-container `wget`/`ping`), is **dropped with a startup warning** rather th
 probed. The probes also pass URLs/hosts after a `--` end-of-options separator, so
 a stray value can never be interpreted as a flag.
 
-An entry may also carry a `|key=value` suffix (e.g. `https://slow.example|timeout=25`)
-to override the probe timeout/retries for **that URL only** — see
+An entry may also carry a `|key=value` suffix (e.g. `https://slow.example|timeout=25`
+or `https://geo-blocked.example|role=advisory`) to override the probe timeout/retries
+or the site's **role** for **that URL only** — see
 [Per-URL tunables](#per-url-tunables). A bare URL behaves exactly as before.
 
 #### `DOCKER_HOST`
@@ -382,11 +383,16 @@ https://flaky.example|timeout=20|tries=2
 - **Keys:** `timeout` (seconds) and `tries` (attempts) — the per-URL equivalents of
   `TIMEOUT`/`WGET_TRIES`. A site with no override inherits the globals, so nothing
   changes for the rest.
-- **Forgiving:** an unknown key or non-positive value is **warned about at startup
-  and skipped** — the URL is still monitored on the defaults; a typo never drops a
-  site.
-- File overrides are **re-read live** like the URLs themselves; the active
-  overrides are logged whenever the set loads (`Per-URL probe overrides: …`).
+- **Forgiving:** an unknown key or non-positive value is **warned about and skipped**
+  — the URL is still monitored on the defaults; a typo never drops a site. The
+  warning fires **the same way at startup and on a live reload** (deduped on reload),
+  so a bad edit made while running is never applied silently.
+- File overrides are **re-read live** like the URLs themselves, and the reload
+  detects a change to a site's **full config** — not just added/removed URLs but a
+  changed `role`/`timeout`/`tries` on an existing one. Any edit is logged with the
+  specific before→after (`Sites changed: https://x (role critical→advisory)`), and
+  the resolved config is re-logged (`Per-URL probe overrides: …`), so you always get
+  confirmation the edit took effect.
 
 > **Why only `timeout`/`tries`?** These are the only **per-request** knobs — they
 > bound *this URL's* probe, so a per-URL value is meaningful. The other timeouts
@@ -395,6 +401,44 @@ https://flaky.example|timeout=20|tries=2
 > budgets** — they wait for the *gluetun container* to recover, which has nothing to
 > do with any single site, so there's nothing to scope to a URL. See
 > [Timeouts & retries](#timeouts--retries--one-model-everywhere) for the full split.
+
+#### Site roles — `critical` (default) vs `advisory`
+
+`timeout`/`tries` tune *how* a site is probed; `role` decides *what its failure
+means*. It's the same `|key=value` syntax:
+
+```bash
+https://www.google.com                     # critical (default)
+https://geo-blocked.example|role=advisory  # probed, but never restarts gluetun
+https://slow-and-flaky.example|role=advisory|timeout=25
+```
+
+- **`critical`** — the default (a bare URL). Its failure counts toward restarting
+  gluetun, exactly as before — so existing configs are unchanged.
+- **`advisory`** — the site is still probed and its reachability recorded in the
+  stats, but its failure **never** triggers a gluetun restart, and it's excluded
+  from the flaky-site advisory (you've already acknowledged it). Startup logs it
+  under `Per-URL probe overrides: … role=advisory`, and a failing advisory site
+  shows in the heartbeat as `failing: host (advisory)`.
+
+Use `advisory` for a site you want to **watch** but that can't be reached through
+the VPN regardless of tunnel health — a geo-blocked/anti-VPN endpoint (a torrent
+indexer, say). As a `critical` site it would restart gluetun every loop trying to
+roll to an exit that can reach it, churning every dependent, when the tunnel is
+fine. As `advisory` you keep the reachability signal without the pointless restarts.
+
+**advisory vs. deleting:** advisory *keeps probing* — the reachability data is the
+value, for a site whose status actually varies. If a site is permanently
+unreachable or you stop caring, just **delete the line** — probing it forever
+teaches nothing. Deleting isn't a role; it's what you do to an advisory site you've
+finished with. An unknown `role=` value is warned about at startup and falls back
+to `critical` (fail-closed — an unrecognized site still protects the tunnel).
+
+Unlike `timeout`/`tries` — which take their **global** defaults from `TIMEOUT`/`WGET_TRIES`
+and are overridable per URL — `role` is **per-site only**: there's no global
+default-role setting, because "everything advisory" would leave nothing gating the
+tunnel. The startup/reload defaults line spells out the effective globals in force,
+role included: `… all sites use TIMEOUT=10s, WGET_TRIES=1, role=critical`.
 
 #### Let the monitor suggest them — `--suggest-tunables`
 
@@ -421,7 +465,9 @@ slow-api.example
 
 When a longer timeout *wouldn't* help — a site whose restarts rarely clear it and
 whose failures are DNS/connection (genuinely unreachable, not merely slow) — it
-says so and points you at reviewing/removing it instead. The suggestions are
+says so and points you at reviewing/removing it instead (or, if you want to keep
+watching its reachability without it restarting the tunnel, marking it
+[`role=advisory`](#site-roles--critical-default-vs-advisory)). The suggestions are
 **advisory only**: the monitor never edits your config. The flaky-site advisory in
 the logs and notifications carries the same suggestion inline when one applies.
 
@@ -439,7 +485,7 @@ This is also why it's correct across wget implementations: gluetun ships **GNU w
 **Key insight:** If a site returns HTTP 403 Forbidden or 503 Service Unavailable, the VPN is working — the site just doesn't like the request. Only actual network/DNS/TLS/timeout failures indicate a VPN problem.
 
 #### `FAIL_THRESHOLD`
-Number of **consecutive** failures for a site before triggering a restart. This prevents restarts from transient network blips.
+Number of **consecutive** failures for a **critical** site before triggering a restart. This prevents restarts from transient network blips. (An `advisory` site — see [Site roles](#site-roles--critical-default-vs-advisory) — is probed but never triggers a restart regardless of this threshold.)
 
 Example with `FAIL_THRESHOLD=2`:
 - Check 1: Site fails → Counter: 1 (no action)

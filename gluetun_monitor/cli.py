@@ -14,7 +14,13 @@ from .logging_setup import Logger, install_bash_format_on_root
 from .monitor import Monitor
 from .notify import Notifier, NotifyEvent, build_notifier
 from .site_stats import SiteStatsStore
-from .sites import hostname_of, load_sites_report, load_specs, worst_case_probe_seconds
+from .sites import (
+    hostname_of,
+    load_sites_report,
+    load_specs,
+    warn_rejects,
+    worst_case_probe_seconds,
+)
 from .tunables import suggest_tunables
 
 
@@ -37,8 +43,7 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
         # silently created) or unreadable — fail loud and cleanly, not a traceback.
         logger.error(f"Cannot read sites config {config.config_file}: {exc}")
         return False
-    for entry, reason in rejected:
-        logger.warn(f"Ignoring unsafe site entry {entry!r}: {reason}")
+    warn_rejects(logger.warn, rejected)
     if not sites:
         logger.error(
             "No testable sites configured: provide URLs via the sites file "

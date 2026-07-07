@@ -117,3 +117,82 @@ def test_counter_discard() -> None:
     c.discard("x")
     assert c.get("x") == 0  # forgotten
     c.discard("never-seen")  # no error
+
+
+# --- #110: change detection on a site's full config, not just its presence ---
+
+def test_role_change_on_same_url_is_logged(tmp_path: Path) -> None:
+    """A live edit that only changes a site's role (URL unchanged) is detected."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])
+    _loop(mon, conf, [f"{A}|role=advisory", B])
+    assert f"Sites changed: {A} (role critical→advisory) (now 2)" in stream.getvalue()
+
+
+def test_timeout_change_on_same_url_is_logged(tmp_path: Path) -> None:
+    """A per-URL timeout edit (URL unchanged) is likewise detected and logged."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])
+    _loop(mon, conf, [f"{A}|timeout=25", B])
+    out = stream.getvalue()
+    assert f"{A} (timeout " in out and "→25s)" in out
+
+
+def test_identical_reload_logs_no_change(tmp_path: Path) -> None:
+    """Re-reading the exact same config must NOT report a spurious change."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [f"{A}|role=advisory", B])
+    before = stream.getvalue().count("Sites changed")
+    _loop(mon, conf, [f"{A}|role=advisory", B])  # byte-identical
+    assert stream.getvalue().count("Sites changed") == before
+
+
+# --- uniform parsing: bad entries introduced by a LIVE edit warn like startup ---
+
+def test_live_reload_warns_on_newly_unsafe_entry(tmp_path: Path) -> None:
+    """A live edit that adds an unsafe entry warns at reload (not just at startup)."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])                      # clean first load — no warning
+    assert "Ignoring unsafe site entry" not in stream.getvalue()
+    _loop(mon, conf, [A, B, "--evil-flag"])       # unsafe entry added live
+    assert "Ignoring unsafe site entry '--evil-flag'" in stream.getvalue()
+
+
+def test_live_reload_warns_on_bad_option_typo(tmp_path: Path) -> None:
+    """The dangerous silent case: a role typo keeps the site (as critical) and
+    changes no URL, so only the reload warning reveals the edit didn't take."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])
+    _loop(mon, conf, [f"{A}|role=advisroy", B])   # typo -> defaults to critical
+    out = stream.getvalue()
+    assert "unknown role" in out and "advisroy" in out
+
+
+def test_live_reload_reject_warning_is_deduped(tmp_path: Path) -> None:
+    """A bad line that appears after a clean load warns ONCE, not every loop."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B])                       # clean first load (seeds dedup set)
+    _loop(mon, conf, [A, B, "--evil-flag"])        # appears -> warned once
+    assert stream.getvalue().count("--evil-flag") == 1
+    _loop(mon, conf, [A, B, "--evil-flag"])        # persists -> no re-warn
+    _loop(mon, conf, [A, B, "--evil-flag"])
+    assert stream.getvalue().count("--evil-flag") == 1
+
+
+def test_bad_entry_present_at_first_load_is_not_double_warned(tmp_path: Path) -> None:
+    """A bad line already there on the first loop is NOT warned by the monitor —
+    the startup preflight already did; the monitor just seeds its dedup set."""
+    mon, stream, _, conf = _monitor(tmp_path)
+    _loop(mon, conf, [A, B, "--evil-flag"])        # present from the first load
+    assert "--evil-flag" not in stream.getvalue()  # suppressed (preflight's job)
+
+
+def test_effective_noop_option_edit_logs_no_change(tmp_path: Path) -> None:
+    """Making an implicit default explicit (|timeout=10 when TIMEOUT=10) changes the
+    raw spec but not the effective config — it must NOT log a spurious change (#110
+    review): no 'Sites changed: url ()' and no activity notification."""
+    mon, stream, _, conf = _monitor(tmp_path)  # Config default timeout=10
+    _loop(mon, conf, [A, B])
+    before = stream.getvalue().count("Sites changed")
+    _loop(mon, conf, [f"{A}|timeout=10", B])  # explicit 10 == global 10 -> no-op
+    assert stream.getvalue().count("Sites changed") == before

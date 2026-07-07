@@ -1,6 +1,6 @@
 # ADR-0008: Persistent per-site stats + a flaky-site advisory
 
-- **Status:** Accepted
+- **Status:** Accepted (extended by ADR-0015)
 - **Date:** 2026-06-02
 - **Relates to:** ADR-0003 (gluetun restart), ADR-0006 (per-loop flow); ROADMAP (notification layer)
 

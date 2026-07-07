@@ -36,10 +36,12 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0005](0005-recreate-mechanism.md) | Recreate mechanism — Docker-API reconstruct, default-on + capability-gated (`AUTO_RECREATE=0` to disable), non-destructive (validated) | Accepted |
 | [0006](0006-per-dependent-viability-testing.md) | Per-dependent connectivity + DNS viability testing (gluetun root + one shuffled name per dependent per loop) | Accepted |
 | [0007](0007-reimplement-in-python.md) | Reimplement the monitor in Python (v2.0.0) — docker-py seam, characterization + differential no-regressions gate | Accepted |
-| [0008](0008-persistent-site-stats-and-advisory.md) | Persistent per-site stats + a flaky-site advisory (keep restart-first; record + advise, don't auto-quarantine) | Accepted |
+| [0008](0008-persistent-site-stats-and-advisory.md) | Persistent per-site stats + a flaky-site advisory (keep restart-first; record + advise, don't auto-quarantine) | Accepted (extended by 0015) |
 | [0009](0009-all-time-latency-histogram.md) | All-time latency percentiles via a bounded DDSketch-style histogram (lifetime view alongside the recent ring) | Accepted |
 | [0010](0010-notification-layer.md) | Opt-in external notification layer via Apprise (drop-in when unset; best-effort; real-library CI test gates auto-merge) | Accepted |
 | [0011](0011-notification-tiers-and-rollup.md) | Notification tiers (`NOTIFY_LEVEL` actionability dial) + per-loop rollup digest | Accepted |
 | [0012](0012-alert-lifecycle.md) | Edge-triggered alert lifecycle (announce once, repeat in loops, resolve vs silent-remove) + persisted state | Accepted |
 | [0013](0013-release-and-versioning-automation.md) | Release & versioning automation — gate by authorship (ours = human, upstream = auto); release-please + `:edge` + base-digest drift check | Accepted |
 | [0014](0014-durable-dependent-memory.md) | Durable dependent memory: persisted gluetun id history + known dependents; adopt-or-warn orphan scan (dead parent in history = provably ours) | Accepted |
+| [0015](0015-per-site-role.md) | Per-site role (`\|role=critical\|advisory`, default critical) — advisory sites are probed but never gate a restart; explicit operator opt-out, not auto-quarantine | Accepted |
+| [0016](0016-wedge-escalation-and-backoff.md) | Escalate a wedged dependent — distinct alert + runbook, capped remediation backoff (#98); a bounded Tenet-9 carve-out for a provably-futile repeat | Accepted |

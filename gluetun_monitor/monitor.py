@@ -36,12 +36,14 @@ from .recovery import RemediationOutcome, remediate_dependent, restart_gluetun
 from .recreate import is_parked_name, sweep_recreate_leftovers
 from .site_stats import SiteStatsStore, format_window
 from .sites import (
+    DEFAULT_ROLE,
     SiteSpec,
     hostname_of,
     ip_pool,
     is_ip_literal,
-    load_specs,
+    load_specs_report,
     resolvable_pool,
+    warn_rejects,
     worst_case_probe_seconds,
 )
 from .state import Counter, InterfaceStatus, RemediationAction
@@ -150,7 +152,12 @@ class Monitor:
         self._unrecovered_sites: set[str] = set()
         self.site_failures = Counter()
         self.dependent_failures = Counter()
-        self._last_sites: set[str] | None = None
+        # Last-seen full specs (url -> SiteSpec), so a live edit is detected on ANY
+        # config change — not just add/remove, but a site's role/timeout/tries too.
+        self._last_specs: dict[str, SiteSpec] | None = None
+        # Last-seen rejected (entry, reason) pairs, so a bad entry introduced by a
+        # live edit is warned once — not re-warned every loop it persists.
+        self._last_rejects: set[tuple[str, str]] = set()
         # url -> SiteSpec for the current loop, so probe call sites can resolve a
         # per-URL timeout/tries override (#60). Refreshed each loop in _run_once_body
         # alongside the (deduplicated) URL list; empty until the first load.
@@ -225,22 +232,78 @@ class Monitor:
         """Surface per-URL probe overrides so the operator sees what's in effect
         (#60) — INFO when any exist (discoverability, like the notify summary), a
         DEBUG confirmation of the global defaults otherwise.
+
+        Also emits one DEBUG line per site with its FULLY-RESOLVED config (role +
+        effective timeout/tries, defaults folded in), so the complete picture is
+        greppable at startup and on every live reload — including sites running on
+        pure defaults, which the INFO overrides summary intentionally omits.
         """
+        for url in sorted(self._specs):
+            spec = self._specs[url]
+            eff_t = spec.timeout if spec.timeout is not None else self.config.timeout
+            eff_n = spec.tries if spec.tries is not None else self.config.wget_tries
+            self.log.debug(
+                f"site {url} [role={spec.role} timeout={eff_t}s tries={eff_n}]"
+            )
         overrides: list[str] = []
         for url in sorted(self._specs):
             spec = self._specs[url]
             knobs = [f"{k}={v}{u}" for k, v, u in (
                 ("timeout", spec.timeout, "s"), ("tries", spec.tries, "")
             ) if v is not None]
+            # Surface a non-default role too (#110) so advisory sites are visible
+            # at startup — they silently don't gate restarts, worth stating plainly.
+            if spec.role != "critical":
+                knobs.append(f"role={spec.role}")
             if knobs:
                 overrides.append(f"{hostname_of(url)} {' '.join(knobs)}")
-        defaults = f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}"
+        defaults = (
+            f"TIMEOUT={self.config.timeout}s, WGET_TRIES={self.config.wget_tries}, "
+            f"role={DEFAULT_ROLE}"
+        )
         if overrides:
             self.log.info(
                 f"Per-URL probe overrides: {'; '.join(overrides)} (others use {defaults})"
             )
         else:
             self.log.debug(f"No per-URL probe overrides; all sites use {defaults}")
+
+    def _role_of(self, url: str) -> str:
+        """The configured role for ``url`` (#110): ``critical`` (default, gates a
+        restart on failure) or ``advisory`` (probed + recorded, never gates). A URL
+        with no loaded spec — shouldn't happen mid-loop — defaults to critical, the
+        safe (fail-closed) choice: unknown sites still protect the tunnel.
+        """
+        spec = self._specs.get(url)
+        return spec.role if spec is not None else "critical"
+
+    def _warn_new_rejects(self, rejected: list[tuple[str, str]]) -> None:
+        """Warn about bad sites.conf entries introduced by a live edit — the same
+        way startup does (:func:`warn_rejects`), but only NEW ones. The file is
+        re-read every loop, so a persistent bad line is announced once when it
+        appears, not every loop it lingers.
+        """
+        current = set(rejected)
+        warn_rejects(self.log.warn, sorted(current - self._last_rejects))
+        self._last_rejects = current
+
+    def _describe_spec_change(self, old: SiteSpec, new: SiteSpec) -> str:
+        """Human summary of what changed between two specs for the same URL — role
+        and/or effective timeout/tries (globals folded in) — for the live-reload
+        "Sites changed" line, e.g. ``role critical→advisory, timeout 10s→25s``.
+        """
+        diffs: list[str] = []
+        if old.role != new.role:
+            diffs.append(f"role {old.role}→{new.role}")
+        ot = old.timeout if old.timeout is not None else self.config.timeout
+        nt = new.timeout if new.timeout is not None else self.config.timeout
+        if ot != nt:
+            diffs.append(f"timeout {ot}s→{nt}s")
+        on = old.tries if old.tries is not None else self.config.wget_tries
+        nn = new.tries if new.tries is not None else self.config.wget_tries
+        if on != nn:
+            diffs.append(f"tries {on}→{nn}")
+        return ", ".join(diffs)
 
     def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
         """Test the full URL set from inside gluetun. Return the sites that have
@@ -254,38 +317,63 @@ class Monitor:
             self.log.warn("No sites configured to test")
             return []
 
-        # Track the site *set* (not just the count) so a runtime sites.conf edit is
-        # logged with the actual names — including a same-count swap, which a
-        # count-only check would miss entirely. record=False is the post-restart
-        # re-verify (same set), so skip the diff there.
-        current = set(sites)
-        if record and self._last_sites is None:
-            self.log.info(f"Loaded {len(sites)} sites (sites.conf + SITES env)")
+        # Track the full *spec* per URL (not just its presence) so a runtime
+        # sites.conf edit is logged for ANY change: an added/removed site, a
+        # same-count swap, OR a changed option on an existing site (role, timeout,
+        # tries) — which a URL-set check would miss entirely. record=False is the
+        # post-restart re-verify (same set), so skip the diff there.
+        current = {url: (self._specs.get(url) or SiteSpec(url)) for url in sites}
+        if record and self._last_specs is None:
+            self.log.info(f"Loaded {len(current)} sites (sites.conf + SITES env)")
             self._log_site_overrides()
-            self._last_sites = current
-        elif record and current != self._last_sites:
-            added = sorted(current - self._last_sites) if self._last_sites else sorted(current)
-            removed = sorted(self._last_sites - current) if self._last_sites else []
-            parts = []
-            if added:
-                parts.append(f"added {', '.join(added)}")
-            if removed:
-                parts.append(f"removed {', '.join(removed)}")
-            self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(sites)})")
-            self._log_site_overrides()
-            self._notify(
-                "activity",
-                "sites.conf changed",
-                f"Test sites changed: {'; '.join(parts)} (now {len(sites)}).",
-                key="sites-changed",
-            )
-            # A removed site keeps no live failure counter — a later re-add starts
-            # clean rather than resuming near the threshold — and any active advisory
-            # for it is retired with a "no longer monitored" notice (not a "resolved").
-            for site in removed:
-                self.site_failures.discard(site)
-                self._forget(f"advisory:{site}")
-            self._last_sites = current
+            self._last_specs = current
+        elif record and current != self._last_specs:
+            prev = self._last_specs
+            assert prev is not None  # the is-None branch above handles first load
+            added = sorted(set(current) - set(prev))
+            removed = sorted(set(prev) - set(current))
+            # Only report sites whose EFFECTIVE config changed (globals folded in). A
+            # raw spec diff with no effective change — e.g. adding |timeout=10 when
+            # TIMEOUT is already 10 — is a no-op and must not log a spurious
+            # "Sites changed: url ()" or fire an activity notification.
+            changed = [
+                (u, desc)
+                for u in sorted(set(current) & set(prev))
+                if current[u] != prev[u]
+                and (desc := self._describe_spec_change(prev[u], current[u]))
+            ]
+            if added or removed or changed:
+                parts = []
+                if added:
+                    parts.append(f"added {', '.join(added)}")
+                if removed:
+                    parts.append(f"removed {', '.join(removed)}")
+                parts.extend(f"{url} ({desc})" for url, desc in changed)
+                self.log.info(f"Sites changed: {'; '.join(parts)} (now {len(current)})")
+                self._log_site_overrides()
+                self._notify(
+                    "activity",
+                    "sites.conf changed",
+                    f"Test sites changed: {'; '.join(parts)} (now {len(current)}).",
+                    key="sites-changed",
+                )
+                # A removed site keeps no live failure counter — a later re-add starts
+                # clean rather than resuming near the threshold — and any active advisory
+                # for it is retired with a "no longer monitored" notice (not a "resolved").
+                for url in removed:
+                    self.site_failures.discard(url)
+                    self._forget(f"advisory:{url}")
+                # On ANY role change, discard the live failure counter so the new role
+                # starts clean (#110): an advisory site accumulates fails without
+                # gating, so flipping it to critical must NOT inherit that count and
+                # restart grace-lessly; and a site newly switched to advisory has any
+                # active flaky-site alert retired since it no longer gates.
+                for url, _desc in changed:
+                    if current[url].role != prev[url].role:
+                        self.site_failures.discard(url)
+                        if current[url].role == "advisory":
+                            self._forget(f"advisory:{url}")
+            self._last_specs = current
 
         results = self._fan_out(
             sites, lambda url: probe_site(self.client, self.config.gluetun_container, url,
@@ -309,6 +397,15 @@ class Monitor:
                 continue
             count = self.site_failures.fail(result.url)
             threshold = self.config.fail_threshold
+            if self._role_of(result.url) == "advisory":
+                # #110: an advisory site is probed and recorded (reachability), but
+                # its failure NEVER gates a restart — a site blocked through every
+                # exit can't be rolled to health, so it must not roll the tunnel.
+                self.log.debug(
+                    f"[{gw}] reach fail: {result.url} ({result.reason}) "
+                    f"[{count} · advisory — not gating]"
+                )
+                continue
             if count >= threshold:
                 failed.append(result.url)
                 self.log.warn(
@@ -328,7 +425,12 @@ class Monitor:
         # post-restart re-verify, which has its own "verified" line).
         if record:
             ok_results = [r for r in results if r.ok]
-            failing = [hostname_of(r.url) for r in results if not r.ok]
+            # Mark advisory failures so the heartbeat makes clear they are NOT the
+            # reason for any restart (#110) — "failing: x (advisory)".
+            failing = [
+                hostname_of(r.url) + (" (advisory)" if self._role_of(r.url) == "advisory" else "")
+                for r in results if not r.ok
+            ]
             if failing:
                 self.log.info(
                     f"[{gw}] sites: {len(ok_results)}/{len(results)} ok — "
@@ -553,8 +655,15 @@ class Monitor:
         if not dependents:
             return
 
-        resolvable = resolvable_pool(sites)
-        ips = ip_pool(sites)
+        # Dependents are judged only against CRITICAL sites (#110). An advisory site
+        # is not a reachability signal we act on, so a dependent must never be marked
+        # unhealthy for failing to reach one — nor should a dead advisory site
+        # pollute the sampled viability pool. (Advisory sites are still probed at the
+        # gateway for their reachability stats; they just don't gate remediation,
+        # gluetun OR dependent.)
+        gating = [s for s in sites if self._role_of(s) != "advisory"]
+        resolvable = resolvable_pool(gating)
+        ips = ip_pool(gating)
         if not resolvable and ips:
             self.log.warn(
                 "No resolvable (hostname) test URLs — dependent DNS cannot be validated; "
@@ -834,8 +943,15 @@ class Monitor:
         # watchdog's checks down with it: fall back to the last good set and
         # keep monitoring — a stale site list beats a silent halt (#73).
         try:
-            specs = load_specs(self.config.config_file, self.config.sites_env)
+            specs, rejected = load_specs_report(self.config.config_file, self.config.sites_env)
             self._specs = {s.url: s for s in specs}
+            # Surface bad entries on a live reload the same way startup does. On the
+            # FIRST load the CLI preflight already warned them, so just seed the
+            # dedup set; afterwards, warn only newly-appeared rejects.
+            if self._last_specs is None:
+                self._last_rejects = set(rejected)
+            else:
+                self._warn_new_rejects(rejected)
         except Exception as exc:
             self.log.error(
                 f"Failed to reload sites config ({self.config.config_file}): {exc} "
@@ -865,7 +981,10 @@ class Monitor:
             # is still down. That mechanical dip used to auto-resolve an active
             # gluetun-unrecovered alert — a false "recovered". Hold it until the
             # sites that triggered it have OBSERVABLY cleared this loop.
-            failing_now = {url for url in sites if self.site_failures.get(url) > 0}
+            failing_now = {
+                url for url in sites
+                if self.site_failures.get(url) > 0 and self._role_of(url) != "advisory"
+            }
             self._reconcile_unrecovered(failing_now)
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
@@ -996,6 +1115,15 @@ class Monitor:
             self.config.advisory_dominance,
         )
         if adv is None:
+            self._advised_site = None
+            return
+        # If the dominant site has since been switched to role=advisory (#110), the
+        # operator already acted on this exact advice — its prior restarts linger in
+        # the dominance window (up to ADVISORY_WINDOW), but re-nagging for a day about
+        # a site they explicitly opted out of violates advisory's "no attention noise"
+        # intent. Retire any active flaky-site alert and stay silent.
+        if self._role_of(adv.site) == "advisory":
+            self._forget(f"advisory:{adv.site}")
             self._advised_site = None
             return
         # Make the advisory actionable: if the stats support a specific per-URL knob

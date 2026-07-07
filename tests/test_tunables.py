@@ -103,3 +103,17 @@ def test_suggestions_ranked_by_restarts() -> None:
     )
     out = _suggest({"https://small": small, "https://big": big})
     assert [s.url for s in out] == ["https://big", "https://small"]
+
+
+def test_advisory_site_gets_no_suggestion() -> None:
+    """#110 review: an advisory site never restarts, so 'widen its timeout to avoid
+    restarts' is false advice — skip it. Same stat still suggests when critical."""
+    from gluetun_monitor.sites import SiteSpec
+
+    url = "https://slow"
+    st = _stat(total_polls=100, total_failures=5, failure_reasons={"timeout": 5},
+               restarts_triggered=10, restarts_cleared=4, recent_latencies=[1500, 1800, 13000])
+    assert suggest_tunables({url: st}, global_timeout=10, global_tries=1,
+                            specs={url: SiteSpec(url, role="critical")})           # critical -> suggests
+    assert suggest_tunables({url: st}, global_timeout=10, global_tries=1,
+                            specs={url: SiteSpec(url, role="advisory")}) == []      # advisory -> skipped
