@@ -111,13 +111,13 @@ services:
       # Log file path inside the /logs mount (also always logged to stdout)
       # - LOG_FILE=/logs/gluetun-monitor.log
     volumes:
-      # Sites configuration file (re-read every loop).
-      # NOTE: with this single-FILE mount, only in-place edits reload live; an
-      # editor that saves via rename (vim default, many IDEs) needs a
-      # `docker compose up -d --force-recreate`. For guaranteed live-reload with
-      # any editor, mount the directory instead:  - ./config:/config:ro  (put
-      # sites.conf in ./config/).
-      - ./sites.conf:/config/sites.conf:ro
+      # Sites config DIRECTORY (put your sites.conf in ./config/). Mount the
+      # directory, NOT the single file: a single-file bind mount pins the file's
+      # inode at container start, so an editor that saves via rename (vim default,
+      # sed -i, many IDEs) writes a NEW inode and your edit is invisible until you
+      # recreate — silently defeating the live reload. A directory mount resolves
+      # sites.conf fresh on every read, so any editor's save is picked up live.
+      - ./config:/config:ro
       # Persistent logs + stats (the monitor rotates the file inside this dir).
       # With PUID/PGID set above, the entrypoint chowns this mount for you — no
       # manual step. (Without PUID/PGID the container runs as root and writes it as
@@ -164,5 +164,5 @@ networks:
 #       - HEALTHY_WAIT_TIMEOUT=120
 #     volumes:
 #       - /var/run/docker.sock:/var/run/docker.sock:ro
-#       - ./sites.conf:/config/sites.conf:ro
+#       - ./config:/config:ro   # directory mount (put sites.conf in ./config/) — see note above
 #       - ./logs:/logs

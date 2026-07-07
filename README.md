@@ -120,8 +120,12 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```bash
 # If cloning the repo:
 cp docker-compose.yml.example docker-compose.yml
-cp sites.conf.example sites.conf
+mkdir -p config && cp sites.conf.example config/sites.conf
 ```
+
+`sites.conf` lives in a `./config/` directory that the compose file mounts as a
+**directory** (`./config:/config:ro`), not as a single file — see
+[Editing sites.conf live](#editing-sitesconf-live) for why this matters.
 
 ### 3. Configure
 
@@ -234,19 +238,11 @@ Test URLs come from two **unioned** sources (de-duplicated):
 Provide either, or both. At least one URL total is required or the monitor won't
 start (see above).
 
-> **Live-editing caveat (single-file bind mount).** "Re-read every loop" reloads
-> reliably only for **in-place** edits (e.g. `nano`, or `sed`/redirection that
-> truncate the same file). Editors/tools that save via *write-temp-then-rename*
-> (vim's default, many IDEs, `sed -i` on GNU) replace the file's **inode**, and a
-> single-file bind mount (`./sites.conf:/config/sites.conf`) stays pinned to the
-> original inode — so the container keeps reading the **old** file until you
-> `docker compose up -d --force-recreate gluetun-monitor`. For *guaranteed*
-> live-reload with any editor, **mount the directory instead of the file**:
-> ```yaml
-> volumes:
->   - ./config:/config:ro   # put sites.conf in ./config/sites.conf
-> ```
-> Directory mounts don't have the inode problem.
+> **"Re-read every loop" needs a directory mount.** The compose file mounts
+> `./config:/config:ro` (a directory) rather than the single `sites.conf` file so
+> that a live edit reloads with **any** editor. A single-file bind mount pins the
+> file's inode and misses atomic-save edits — see
+> [Editing `sites.conf` live](#editing-sitesconf-live) for the full explanation.
 
 Entries are sanity-checked: a URL with no host, or one that looks like a
 command-line flag (leading `-`, which could otherwise be parsed as an option by
@@ -393,6 +389,22 @@ https://flaky.example|timeout=20|tries=2
   specific before→after (`Sites changed: https://x (role critical→advisory)`), and
   the resolved config is re-logged (`Per-URL probe overrides: …`), so you always get
   confirmation the edit took effect.
+
+#### Editing `sites.conf` live
+
+The compose file mounts a **directory** (`./config:/config:ro`) rather than the
+single `sites.conf` file **on purpose**, and this is important for live reload:
+
+> A single-file bind mount pins the file's **inode** at container start. Most
+> editors (`vim` by default, `sed -i`, many IDEs) save by writing a temp file and
+> renaming it over the original — which creates a **new inode**. With a single-file
+> mount the container keeps reading the *old* inode, so your edit is invisible until
+> you recreate the container — the live reload silently does nothing. A **directory**
+> mount resolves `sites.conf` fresh on every read, so any editor's save is picked up
+> live.
+
+If you must use a single-file mount, edit **in place** (append, or truncate-and-
+write) — or run `docker compose up -d --force-recreate` after an atomic-save edit.
 
 > **Why only `timeout`/`tries`?** These are the only **per-request** knobs — they
 > bound *this URL's* probe, so a per-URL value is meaningful. The other timeouts
@@ -854,7 +866,7 @@ services:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - GLUETUN_CONTAINER=gluetun  # Name of your Gluetun container
     volumes:
-      - ./sites.conf:/config/sites.conf:ro
+      - ./config:/config:ro   # directory mount (put sites.conf in ./config/) — see Quick Start
       - ./logs:/logs
     networks:
       - docker-proxy
@@ -908,7 +920,7 @@ services:
       - DNS_WAIT_TIMEOUT=30            # seconds to wait for gluetun DNS after restart
       - LOG_LEVEL=INFO                 # DEBUG for per-site/per-dependent detail
     volumes:
-      - ./sites.conf:/config/sites.conf:ro
+      - ./config:/config:ro   # directory mount (put sites.conf in ./config/) — see Quick Start
       - ./logs:/logs
     networks:
       - docker-proxy
@@ -933,7 +945,7 @@ services:
       - GLUETUN_CONTAINER=gluetun
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./sites.conf:/config/sites.conf:ro
+      - ./config:/config:ro   # directory mount (put sites.conf in ./config/) — see Quick Start
       - ./logs:/logs
 ```
 
