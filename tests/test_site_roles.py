@@ -195,3 +195,38 @@ def test_advisory_site_excluded_from_dependent_viability_pool(tmp_path: Path) ->
     assert any(advhost in t for t in gw_targets)          # gateway still probes it (stats)
     assert all(advhost not in t for t in dep_targets)     # dependents never do
     assert any(goodhost in t for t in dep_targets)        # but they do probe the critical site
+
+
+def test_flaky_advisory_suppressed_once_site_is_role_advisory(tmp_path: Path) -> None:
+    """#110 (review finding): the flaky-site advisory must NOT keep paging about a
+    site the operator already switched to role=advisory — even though its prior
+    restarts still sit in the dominance window. A dominant CRITICAL site still
+    reports (positive control)."""
+    from types import SimpleNamespace
+
+    from gluetun_monitor.sites import load_specs
+
+    advurl, goodurl = "https://blocked.example", "https://good.example"
+    conf = tmp_path / "sites.conf"
+    conf.write_text(f"{goodurl}\n{advurl}|role=advisory\n")
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    fake.on_exec = _handler(set())
+    mon = Monitor(fake, Config(config_file=str(conf), gluetun_container="gluetun"),
+                  Logger(log_file=None, stream=io.StringIO()), rng=random.Random(0),
+                  sleep=lambda _s: None, stats=SiteStatsStore(None))
+    mon._specs = {s.url: s for s in load_specs(str(conf), None)}
+
+    # Advisory-role site dominates the window (prior critical-era churn) -> suppressed.
+    mon.stats.advisory = lambda *a, **k: SimpleNamespace(  # type: ignore[method-assign]
+        site=advurl, site_restarts=9, total_restarts=10, window_seconds=3600)
+    mon.alerts.begin_loop()
+    mon._emit_advisory()
+    assert f"advisory:{advurl}" not in mon.alerts._reported
+
+    # Positive control: a dominant CRITICAL site still fires the advisory.
+    mon.stats.advisory = lambda *a, **k: SimpleNamespace(  # type: ignore[method-assign]
+        site=goodurl, site_restarts=9, total_restarts=10, window_seconds=3600)
+    mon.alerts.begin_loop()
+    mon._emit_advisory()
+    assert f"advisory:{goodurl}" in mon.alerts._reported

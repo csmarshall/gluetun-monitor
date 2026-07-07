@@ -1103,6 +1103,15 @@ class Monitor:
         if adv is None:
             self._advised_site = None
             return
+        # If the dominant site has since been switched to role=advisory (#110), the
+        # operator already acted on this exact advice — its prior restarts linger in
+        # the dominance window (up to ADVISORY_WINDOW), but re-nagging for a day about
+        # a site they explicitly opted out of violates advisory's "no attention noise"
+        # intent. Retire any active flaky-site alert and stay silent.
+        if self._role_of(adv.site) == "advisory":
+            self._forget(f"advisory:{adv.site}")
+            self._advised_site = None
+            return
         # Make the advisory actionable: if the stats support a specific per-URL knob
         # (e.g. the site is slow-but-alive → a wider timeout), name it (#60) instead
         # of only "consider removing it".
