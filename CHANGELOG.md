@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.0...v2.5.1) (2026-07-07)
+
+
+### Fixed
+
+* four correctness bugs from the backlog ([#83](https://github.com/csmarshall/gluetun-monitor/issues/83), [#84](https://github.com/csmarshall/gluetun-monitor/issues/84), [#85](https://github.com/csmarshall/gluetun-monitor/issues/85), [#88](https://github.com/csmarshall/gluetun-monitor/issues/88)) ([#118](https://github.com/csmarshall/gluetun-monitor/issues/118)) ([452749f](https://github.com/csmarshall/gluetun-monitor/commit/452749fb388bbc595603bfa95476ffdf5dd66a6b))
+* **security:** sanitize reflected strings — control chars in logs, creds in URLs ([#86](https://github.com/csmarshall/gluetun-monitor/issues/86)) ([#120](https://github.com/csmarshall/gluetun-monitor/issues/120)) ([8f70952](https://github.com/csmarshall/gluetun-monitor/commit/8f709522f7e1f0b8df8e30c779ae56c4e89da2ea))
+
 ## [2.5.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.4.0...v2.5.0) (2026-07-07)
 
 
@@ -134,6 +142,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * release-please foundation — accumulating Release PR (ADR-0013, [#26](https://github.com/csmarshall/gluetun-monitor/issues/26)) ([#48](https://github.com/csmarshall/gluetun-monitor/issues/48)) ([3c72f6f](https://github.com/csmarshall/gluetun-monitor/commit/3c72f6fba70a341fde79174ab99f213a16965119))
 * rolling :edge channel + SLSA provenance/SBOM on images (ADR-0013, [#26](https://github.com/csmarshall/gluetun-monitor/issues/26)) ([#46](https://github.com/csmarshall/gluetun-monitor/issues/46)) ([58252e8](https://github.com/csmarshall/gluetun-monitor/commit/58252e83ebbb1647212e06ae16862f9f28401f58))
 * wire release-please into the pipeline — Release-PR authorship auto-merge + release.yml reconcile (ADR-0013) ([#50](https://github.com/csmarshall/gluetun-monitor/issues/50)) ([17d958b](https://github.com/csmarshall/gluetun-monitor/commit/17d958b157aa879f4461bee1490e85c89f52e89d))
+
+## [Unreleased]
+
+### Added
+- Rolling **`:edge`** image tag — rebuilt on every push to `main` (bleeding edge, not
+  guaranteed stable; see `docs/VERSIONING.md`), plus an addressable `:edge-<sha>` per
+  build. Decoupled from releases: `:latest`/`:MAJOR` still move only on a cut release.
+- Published images now carry **SLSA provenance + an SBOM** attestation — a supply-chain
+  trail (and the source the planned base-image drift check will read). (ADR-0013)
+
+### CI / tooling
+- The image now installs runtime deps from a fully-pinned, **hashed `requirements.lock`**
+  (pip-compile) instead of resolving them at build time — a deterministic,
+  integrity-checked dependency tree and a stable Python layer for the planned drift
+  check. A CI guard fails if the lock's direct pins fall out of sync with
+  `pyproject.toml`, so a dep bump can never silently miss the image. (ADR-0013)
 
 ## [2.1.0] - 2026-06-05
 
