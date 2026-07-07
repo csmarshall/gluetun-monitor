@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.3...v2.2.4) (2026-07-07)
+
+
+### Fixed
+
+* **monitor:** escalate wedged dependents — distinct alert with runbook, capped retry backoff ([#98](https://github.com/csmarshall/gluetun-monitor/issues/98)) ([#104](https://github.com/csmarshall/gluetun-monitor/issues/104)) ([adb9b03](https://github.com/csmarshall/gluetun-monitor/commit/adb9b0359b294969a0859b025acbef45ff4676f3))
+* **monitor:** hold gluetun-unrecovered until observed recovery ([#106](https://github.com/csmarshall/gluetun-monitor/issues/106)) ([#109](https://github.com/csmarshall/gluetun-monitor/issues/109)) ([f85c79f](https://github.com/csmarshall/gluetun-monitor/commit/f85c79fd5e7a0157b26b5c28b960930792752f4e))
+
+
+### Dependencies
+
+* bump apprise from 1.11.0 to 1.12.0 ([#105](https://github.com/csmarshall/gluetun-monitor/issues/105)) ([21475bb](https://github.com/csmarshall/gluetun-monitor/commit/21475bb9a32c199334a0ae3a9aa2a9e0acb8ce91))
+
 ## [2.2.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.2...v2.2.3) (2026-07-02)
 
 
