@@ -4,9 +4,9 @@
 services:
   docker-socket-proxy:
     # Pinned by digest (supply-chain: an immutable reference can't be re-tagged
-    # under you). This digest was `:latest` on 2026-07-06. To refresh:
+    # under you). Kept current automatically by .github/workflows/socket-proxy-drift.yml,
+    # which opens a refresh PR when upstream re-publishes `:latest`. Manual refresh:
     #   docker buildx imagetools inspect tecnativa/docker-socket-proxy:latest
-    # and replace the sha256 below with the reported digest.
     image: tecnativa/docker-socket-proxy@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     container_name: gluetun-monitor-socket-proxy
     restart: unless-stopped

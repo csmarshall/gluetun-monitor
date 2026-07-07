@@ -179,10 +179,9 @@ jobs:
           docker network create test-docker-proxy
 
           # Start socket proxy with required permissions.
-          # Digest-pinned (was :latest on 2026-07-06). Neither this test fixture nor
-          # the example ships in our image, so it's not Dependabot- or drift-tracked;
-          # refresh manually with:
-          #   docker buildx imagetools inspect tecnativa/docker-socket-proxy:latest
+          # Digest-pinned; kept current by .github/workflows/socket-proxy-drift.yml
+          # (opens a refresh PR on upstream re-publish — this image doesn't ship in
+          # ours, so it's tracked via PR, not a release like the python base).
           docker run -d --name test-socket-proxy \
             -v /var/run/docker.sock:/var/run/docker.sock:ro \
             -e CONTAINERS=1 -e POST=1 -e EXEC=1 \
