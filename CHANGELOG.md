@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.4...v2.3.0) (2026-07-07)
+
+
+### Added
+
+* **sites:** per-site |role= — advisory sites that never gate a restart ([#110](https://github.com/csmarshall/gluetun-monitor/issues/110)) ([#111](https://github.com/csmarshall/gluetun-monitor/issues/111)) ([d66ae79](https://github.com/csmarshall/gluetun-monitor/commit/d66ae797888cb6210c4bf35273df8aa7c067641f))
+
+
+### Fixed
+
+* watchdog robustness hardening from adversarial review (2 HIGH + 3 MED) ([#112](https://github.com/csmarshall/gluetun-monitor/issues/112)) ([8971fa8](https://github.com/csmarshall/gluetun-monitor/commit/8971fa8fec9503891cc315117d20e2c99814b327))
+
 ## [2.2.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.2.3...v2.2.4) (2026-07-07)
 
 
