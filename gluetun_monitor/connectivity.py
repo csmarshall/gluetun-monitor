@@ -73,6 +73,15 @@ def _parse_http_code(output: str) -> str:
     return matches[-1] if matches else "N/A"
 
 
+def _strip_controls(value: str) -> str:
+    """Drop non-printable chars (C0/C1 controls, ANSI escapes, RTL/bidi overrides)
+    from externally-controlled text before it enters a log record — a dependent's
+    wget output could otherwise inject escape sequences that spoof log lines (#86).
+    Printable Unicode (e.g. ``Zürich``) is kept. Mirrors ``endpoint._clean``.
+    """
+    return "".join(ch for ch in value if ch.isprintable())
+
+
 def _extract_error(output: str, exit_code: int) -> str:
     """The real failure reason: wget's own last diagnostic line if we can find it,
     otherwise the decoded exit code. Avoids the useless bare 'Generic error'.
@@ -80,9 +89,11 @@ def _extract_error(output: str, exit_code: int) -> str:
     for line in reversed([ln.strip() for ln in output.splitlines() if ln.strip()]):
         low = line.lower()
         if any(hint in low for hint in _ERROR_HINTS):
-            # Trim a leading "wget: " for readability.
-            return line[len("wget:"):].strip() if low.startswith("wget:") else line
-    return decode_wget_exit_code(exit_code)
+            # Trim a leading "wget: " for readability; sanitize the dependent-
+            # controlled remainder before it reaches a log line (#86).
+            reason = line[len("wget:"):].strip() if low.startswith("wget:") else line
+            return _strip_controls(reason)
+    return decode_wget_exit_code(exit_code)  # a static internal string — safe
 
 
 @dataclass(frozen=True, slots=True)

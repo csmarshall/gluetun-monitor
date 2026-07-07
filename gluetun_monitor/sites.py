@@ -208,6 +208,12 @@ def unsafe_site_reason(site: str) -> str | None:
         return "looks like a command-line flag (leading '-')"
     if any(ch.isspace() for ch in site):
         return "contains whitespace (inline comment or malformed entry?)"
+    # Reject embedded credentials (userinfo): a connectivity probe needs no auth,
+    # and the full URL — password included — would be logged verbatim and reflected
+    # into notifications (#86). Rejecting keeps it out of the monitored set entirely.
+    parsed = urlsplit(site if "://" in site else f"http://{site}")
+    if parsed.username or parsed.password:
+        return "contains embedded credentials (user:pass@…) — remove them"
     if not hostname_of(site):
         return "no host component"
     return None

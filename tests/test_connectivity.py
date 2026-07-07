@@ -142,3 +142,14 @@ def test_site_exec_exception_is_a_failure() -> None:
     result = probe_site(fake, "gluetun", "https://example.com", 10)
     assert result.ok is False
     assert "exec failed" in result.reason
+
+
+def test_extract_error_strips_control_and_bidi_chars() -> None:
+    """Dependent-controlled wget output must not carry ANSI escapes / BEL / RTL
+    overrides into a log line (#86)."""
+    from gluetun_monitor.connectivity import _extract_error
+
+    out = "wget: bad address\x1b[31m\x07 evil‮ override\n"
+    r = _extract_error(out, 4)
+    assert "\x1b" not in r and "\x07" not in r and "‮" not in r  # controls/bidi gone
+    assert "bad address" in r                                          # real reason kept
