@@ -117,6 +117,9 @@ class AppriseNotifier:
         self._timeout = timeout_seconds
         self._log = logger
         self._apprise = self._build(urls, apprise_factory)
+        # At most ONE send in flight: a backend that ignores its own socket timeout
+        # would otherwise leak one abandoned daemon thread per loop, unbounded (#85).
+        self._inflight: threading.Thread | None = None
 
     def _build(self, urls: tuple[str, ...], factory: Callable[[tuple[str, ...]], Any] | None) -> Any:
         if factory is not None:
@@ -203,12 +206,21 @@ class AppriseNotifier:
                 self._log.debug(f"notify error (swallowed): {exc}")
                 result.append(False)
 
+        # If the previous send is still hung, don't spawn another — that's the
+        # unbounded thread leak (#85). Drop this one (the alert lifecycle re-reports
+        # an ongoing problem anyway, so nothing is permanently lost).
+        if self._inflight is not None and self._inflight.is_alive():
+            self._log.debug("notify: a previous send is still in-flight; dropping this one")
+            return False
+
         worker = threading.Thread(target=run, daemon=True)
+        self._inflight = worker
         worker.start()
         worker.join(self._timeout)
         if worker.is_alive():
             self._log.debug(f"notify exceeded {self._timeout}s; not blocking the loop")
             return False
+        self._inflight = None
         return result[0] if result else False
 
 

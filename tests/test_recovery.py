@@ -178,3 +178,16 @@ def test_remediate_try_restart_escalates_to_recreate() -> None:
     ok = remediate_dependent(fake, "dep", GLUETUN_ID, Config(), _logger(), sleep=lambda _s: None)
     assert ok.ok is True
     assert len(fake.created) == 1  # escalated to recreate
+
+
+def test_wait_for_healthy_no_healthcheck_settles_not_timeout() -> None:
+    """A container with NO healthcheck reports 'unknown' forever — degrade to a fixed
+    settle instead of burning the full timeout + firing a false 'cannot recover'
+    alert every restart (#84)."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="unknown")  # no healthcheck
+    slept: list[float] = []
+    ok = wait_for_healthy(fake, "gluetun", 120, _logger(),
+                          sleep=lambda s: slept.append(s), settle=5)
+    assert ok is True
+    assert slept == [5]  # one settle, not 120s / 5 = 24 polls

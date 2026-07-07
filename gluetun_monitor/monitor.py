@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -1097,6 +1098,7 @@ class Monitor:
             self._unrecovered_sites = set(reverify_breached)  # #106: hold until these clear
             self.site_failures.reset_all()
             self.alerts.mark_incomplete()  # dependents left untouched = unevaluated (#74)
+            self._save_stats()  # persist restart-outcome attribution before the early return (#88)
             return
 
         self.log.info("Connectivity verified after restart")
@@ -1341,7 +1343,11 @@ class Monitor:
             try:
                 self.run_once()
             except Exception as exc:  # never let one bad loop kill the monitor (ROC)
-                self.log.error(f"Unhandled error in monitor loop: {exc}")
+                # Include the traceback: a one-off loop crash in a long-running daemon
+                # is otherwise nearly undiagnosable (#88).
+                self.log.error(
+                    f"Unhandled error in monitor loop: {exc}\n{traceback.format_exc()}"
+                )
             self.log.check(f"End - Sleeping {self.config.check_interval}s")
             self._sleep(self.config.check_interval)
 

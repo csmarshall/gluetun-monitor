@@ -158,3 +158,25 @@ def test_config_rejects_bad_notify_level(monkeypatch: Any) -> None:
     monkeypatch.setenv("NOTIFY_LEVEL", "loud")
     cfg = Config.from_env()
     assert any("NOTIFY_LEVEL" in e for e in cfg.errors)
+
+
+def test_hung_backend_does_not_leak_a_thread_per_dispatch() -> None:
+    """A backend that ignores its own timeout must not accumulate one abandoned
+    daemon thread per loop (#85): at most one send is in flight at a time."""
+    import threading
+
+    release = threading.Event()
+
+    class Hang:
+        def notify(self, *, title: str, body: str, notify_type: str) -> bool:
+            release.wait(5)  # never returns until the test releases it
+            return True
+
+    n = _notifier(Hang(), timeout_seconds=0)  # join(0) returns, worker stays alive
+    before = threading.active_count()
+    for _ in range(5):
+        n.notify_batch([_ev("attention")])
+    try:
+        assert threading.active_count() - before <= 1  # one in-flight worker, not five
+    finally:
+        release.set()

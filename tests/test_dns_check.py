@@ -121,3 +121,27 @@ def test_exec_exception_treated_as_absent_then_unvalidated() -> None:
 
     fake = _client(boom)
     assert validate_dns(fake, "dep", "https://x", "x", 5).status is DnsStatus.UNVALIDATED
+
+
+def test_wget_pre_resolution_failure_cascades_not_false_ok() -> None:
+    """A wget failure BEFORE resolution (unrecognized option on old busybox, or a
+    bad scheme) says nothing about the resolver, so it must NOT be assumed OK (#83).
+    With no getent/ping present, that's UNVALIDATED — never a false OK."""
+    for bad in ("wget: unrecognized option '--tries=1'\n",
+                "wget: not an http or ftp url: htp://x\n"):
+        def handler(n, c, _bad=bad):
+            if c and c[0] == "wget":
+                return ExecResult(1, _bad)
+            return ExecResult(127, "executable file not found")  # getent/ping absent
+        r = validate_dns(_client(handler), "dep", "https://x", "x", 5)
+        assert r.status is DnsStatus.UNVALIDATED, bad
+
+
+def test_wget_exec_absent_hint_cascades() -> None:
+    """A wget that isn't runnable (exit 1 but 'executable file not found') must
+    cascade, not land in the false-OK branch (#83)."""
+    def handler(n, c):
+        if c and c[0] == "wget":
+            return ExecResult(1, "exec: wget: executable file not found in $PATH\n")
+        return ExecResult(127, "not found")
+    assert validate_dns(_client(handler), "dep", "https://x", "x", 5).status is DnsStatus.UNVALIDATED
