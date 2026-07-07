@@ -167,3 +167,39 @@ def test_probe_dependent_survives_a_transient_inspect_error(tmp_path: Path) -> N
     probe = mon._probe_dependent("distroless", GLUETUN_ID, [], [])  # must NOT raise
     assert probe.status is InterfaceStatus.UNKNOWN
     assert probe.running is True  # conservative: not remediated as "not running"
+
+
+def test_loop_error_is_logged_with_traceback(tmp_path: Path) -> None:
+    """A one-off loop crash logs the TRACEBACK, not just str(exc) (#88)."""
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    mon, _notifier, stream = _monitor(fake, _conf(tmp_path))
+
+    def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    class _Stop(Exception):
+        pass
+
+    mon.run_once = boom  # type: ignore[method-assign]
+    mon._sleep = lambda _s: (_ for _ in ()).throw(_Stop())  # break after one iteration
+    with pytest.raises(_Stop):
+        mon.run()
+    out = stream.getvalue()
+    assert "kaboom" in out and "Traceback (most recent call last)" in out
+
+
+def test_reverify_failed_path_persists_restart_outcome(tmp_path: Path) -> None:
+    """The reverify-failed early return must save stats so restart-outcome
+    attribution isn't lost if the process dies before the next loop (#88)."""
+    statsfile = str(tmp_path / "stats.json")
+    fake = FakeDockerClient()
+    fake.add_container("gluetun", id=GLUETUN_ID, health="healthy")
+    fake.on_exec = lambda n, c: ExecResult(0, "") if (c and c[0] == "nslookup") else ExecResult(4, "")
+    cfg = Config(config_file=_conf(tmp_path), gluetun_container="gluetun",
+                 fail_threshold=1, dns_wait_timeout=2)
+    mon = Monitor(fake, cfg, Logger(log_file=None, stream=io.StringIO()),
+                  rng=random.Random(0), sleep=lambda _s: None, stats=SiteStatsStore(statsfile))
+    mon.run_once()  # site fails -> restart -> reverify still fails -> early return
+    reloaded = SiteStatsStore(statsfile)
+    assert reloaded.sites["https://a.example"].restarts_triggered >= 1

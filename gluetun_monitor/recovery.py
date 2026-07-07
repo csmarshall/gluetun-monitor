@@ -60,6 +60,7 @@ def wait_for_healthy(
     logger: Logger,
     *,
     sleep: Sleep = time.sleep,
+    settle: int = 5,
 ) -> bool:
     """Poll until ``container`` reports healthy, or ``max_wait`` seconds elapse."""
     logger.info(f"Waiting for {container} to become healthy (max {max_wait}s)...")
@@ -68,6 +69,14 @@ def wait_for_healthy(
         health = get_health(client, container)
         if health == "healthy":
             logger.info(f"{container} is healthy after {waited}s")
+            return True
+        if health == "unknown":
+            # No healthcheck defined — 'healthy' will never arrive, so polling would
+            # just burn the full timeout and then fire a false "cannot recover" alert
+            # every restart (#84). Give it a fixed settle delay and treat the restart
+            # as done; the DNS-stability check that follows is the real readiness gate.
+            logger.info(f"{container} has no healthcheck; settling {settle}s after restart")
+            sleep(settle)
             return True
         sleep(5)
         waited += 5

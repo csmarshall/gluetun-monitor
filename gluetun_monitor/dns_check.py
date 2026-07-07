@@ -30,6 +30,13 @@ from .docker_client import DockerClient, ExecResult
 _ABSENT_EXIT_CODES = frozenset({-1, 126, 127})
 _ABSENT_HINTS = ("executable file not found", "not found in $path", "no such file",
                  "applet not found")
+# wget failures that happen BEFORE resolution is attempted, so they say nothing
+# about the resolver — an unrecognized option (old busybox without --tries), a bad
+# scheme, or a URL parse error. These must NOT be assumed OK (#83); cascade instead.
+_WGET_PRE_RESOLUTION_HINTS = ("unrecognized option", "invalid option", "unknown option",
+                              "unsupported scheme", "unsupported protocol",
+                              "not an http", "not a valid url", "invalid url",
+                              "cannot parse", "bad url")
 
 
 class DnsStatus(Enum):
@@ -85,15 +92,22 @@ def validate_dns(
     # ``reason`` carries only the *detail*; the caller supplies the verb + verdict
     # ("reach ok/fail"), so we don't repeat "resolved"/"DNS FAILED" here.
     wget = probe_site(client, container, url, timeout, tries)
-    if wget.exit_code not in _ABSENT_EXIT_CODES:
+    wget_absent = wget.exit_code in _ABSENT_EXIT_CODES or any(
+        hint in wget.reason.lower() for hint in _ABSENT_HINTS
+    )
+    if not wget_absent:
         if wget.dns_failed:
             return DnsResult(DnsStatus.BROKEN, "wget", wget.reason)
         if wget.http_code != "N/A":
             # Full round-trip: resolved DNS + TCP-connected + got an HTTP response.
             return DnsResult(DnsStatus.OK, "wget", f"HTTP {wget.http_code}")
-        # DNS resolved but no HTTP response (connect refused / timeout / TLS).
-        # Still viable (DNS is the only per-container fault), but say so honestly.
-        return DnsResult(DnsStatus.OK, "wget", f"no HTTP: {wget.reason}")
+        # No HTTP response. A genuine POST-resolution failure (connection refused /
+        # timeout / TLS) means DNS worked and the dependent is fine → OK. But a
+        # PRE-resolution failure (unrecognized option, bad scheme, URL parse error)
+        # tells us nothing about the resolver, so don't assume OK (#83) — fall through
+        # to a tool that actually tests resolution (getent/ping).
+        if not any(h in wget.reason.lower() for h in _WGET_PRE_RESOLUTION_HINTS):
+            return DnsResult(DnsStatus.OK, "wget", f"no HTTP: {wget.reason}")
 
     # Tool 2 — getent hosts (nsswitch-faithful; glibc images). 0 = resolved,
     # 2 = name not found. DNS-only (no connection attempt).
