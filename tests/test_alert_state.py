@@ -162,3 +162,14 @@ def test_corrupt_sidecar_starts_clean(tmp_path: Path) -> None:
     s = AlertState(str(path), logger=_log(), repeat_interval=0)
     s.begin_loop()
     assert s.active_count() == 0  # degraded to empty, no crash
+
+
+def test_non_object_sidecar_starts_clean(tmp_path: Path) -> None:
+    """Well-formed JSON that isn't an object (null/[]/5/"str") must not crash the
+    monitor at startup — .get()/.items() would raise AttributeError (review finding)."""
+    path = tmp_path / "notify-state.json"
+    for blob in ("null", "[]", "5", '"hi"'):
+        path.write_text(blob)
+        s = AlertState(str(path), logger=_log(), repeat_interval=0)
+        s.begin_loop()
+        assert s.active_count() == 0  # degraded to empty, no crash

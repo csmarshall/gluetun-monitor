@@ -388,7 +388,18 @@ class Monitor:
             # target (TRY_RESTART) is left alone: we can't prove a strand there and
             # must not churn a healthy container (Tenet 3). The id comparison is
             # stable (no flap), so unlike the interface path it needs no re-check.
-            info = self.client.inspect(dep)
+            try:
+                info = self.client.inspect(dep)
+            except Exception as exc:
+                # A transient Docker error (socket blip, APIError) on this ONE
+                # dependent must not abort the whole fan-out and skip every other
+                # dependent's remediation this loop. Skip it conservatively: report
+                # it un-evaluated (running so it isn't remediated as "not running";
+                # viability None so its alert is held, not resolved) and retry next
+                # loop rather than churn a container we couldn't inspect (Tenet 3).
+                self.log.debug(f"[dependent:{dep}] inspect failed ({exc}); skipped this loop")
+                return DependentProbe(dep, InterfaceStatus.UNKNOWN, True, None,
+                                      "inspect unavailable (transient)", interfaces=ifs)
             running = bool(info and info.running)
             if (
                 info is not None
@@ -570,6 +581,9 @@ class Monitor:
         # (which interfaces / can it route out), THEN the L7 viability result —
         # so the logs show the path was validated before the DNS/connect test.
         to_remediate: list[tuple[str, str]] = []
+        # Dependents the loop could NOT evaluate this cycle (link/DNS couldn't tell):
+        # an active alert for them must be HELD, not resolved, and their wedge kept.
+        unevaluated: set[str] = set()
         for probe in probes:
             dep = probe.name
             tag = f"dependent:{dep}"  # role + name, mirrors "[gateway:<name>]"
@@ -582,6 +596,8 @@ class Monitor:
                 self.log.debug(f"[{tag}] {probe.reason} (running={probe.running})")
                 if not probe.running:
                     to_remediate.append((dep, "not running (link check unavailable)"))
+                else:
+                    unevaluated.add(dep)  # running but interfaces unreadable — not judged
                 continue
             if probe.viability_ok is None:
                 if probe.dns_unvalidated:
@@ -594,6 +610,7 @@ class Monitor:
                         self.log.debug(f"[{tag}] reach ?: {probe.reason}")
                 else:
                     self.log.debug(f"[{tag}] reach skip: {probe.reason}")
+                unevaluated.add(dep)  # viability couldn't be determined — not judged
                 continue  # not tested -> no counter change
             # A validated result (ok or broken): re-arm the unvalidated warning.
             self._warned_dns_unvalidated.discard(dep)
@@ -621,11 +638,18 @@ class Monitor:
         else:
             self.log.info(f"dependents: {healthy}/{len(probes)} ok")
 
+        # A dependent the loop couldn't evaluate wasn't proven healthy — hold any
+        # active alert so it doesn't false-resolve mid-incident (e.g. all sites went
+        # advisory → empty pool, or the container lost its DNS tool), and keep its
+        # wedge track. Only a dependent seen genuinely healthy drops its bookkeeping.
+        for dep in unevaluated:
+            self.alerts.hold(f"dependent-unhealthy:{dep}")
+            self.alerts.hold(f"dependent-wedged:{dep}")
         # A dependent that came back healthy WITHOUT our help (e.g. the operator
         # cleared the wedge and it recovered) drops its failure bookkeeping; its
         # wedged alert stops being reported, so the lifecycle resolves it.
         failing = {dep for dep, _ in to_remediate}
-        for dep in [d for d in self._wedges if d not in failing]:
+        for dep in [d for d in self._wedges if d not in failing and d not in unevaluated]:
             del self._wedges[dep]
 
         for dep, reason in to_remediate:

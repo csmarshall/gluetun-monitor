@@ -226,8 +226,14 @@ def sweep_recreate_leftovers(client: DockerClient, logger: Logger) -> None:
     create), the parked container IS the workload — rename it back. If the real
     name exists (replacement was created), the parked one is condemned — remove
     it (volumes preserved; they belong to the replacement now).
+
+    Scans ALL containers, not just running ones: a dependent stranded by a gluetun
+    recreate is usually driven *exited* by its restart policy, so the parked twin
+    from an interrupted recreate of it is Exited too — a running-only scan would
+    miss it and leave the dependent silently down. The restore/condemn decision
+    keys off name existence, not run state, so including exited twins is safe.
     """
-    for cid in client.list_running_ids():
+    for cid in client.list_all_ids():
         info = client.inspect(cid)
         if info is None or not info.name.endswith(_OLD_SUFFIX):
             continue
