@@ -29,9 +29,15 @@ jobs:
       - name: Bump the base-image pin if upstream moved
         env:
           REPO: library/python
-          TAG: "3.14-slim"
         run: |
           set -euo pipefail
+          # Derive the base tag from the Dockerfile (single source of truth), so a
+          # version bump (python:3.14-slim → 3.15-slim) needs no edit here — this keeps
+          # tracking whatever base the image actually declares.
+          TAG="$(grep -oP 'FROM python:\K[0-9.]+-slim' Dockerfile | head -1)"
+          if [ -z "${TAG}" ]; then
+            echo "::error::could not read the base tag from the Dockerfile FROM line"; exit 1
+          fi
           token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO}:pull" | jq -r .token)
           current=$(curl -sI \
             -H "Authorization: Bearer ${token}" \
@@ -39,7 +45,7 @@ jobs:
             -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
             "https://registry-1.docker.io/v2/${REPO}/manifests/${TAG}" \
             | grep -i '^docker-content-digest:' | awk '{print $2}' | tr -d '\r')
-          pinned=$(grep -oP 'FROM python:3\.14-slim@\K\S+' Dockerfile)
+          pinned=$(grep -oP "FROM python:${TAG}@\K\S+" Dockerfile)
           echo "pinned:  ${pinned}"
           echo "current: ${current:-<none>}"
           if [ -z "${current}" ]; then
@@ -56,5 +62,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
-          git commit -m "fix(deps): rebuild on updated python:3.14-slim base (${current})"
+          git commit -m "fix(deps): rebuild on updated python:${TAG} base (${current})"
           git push

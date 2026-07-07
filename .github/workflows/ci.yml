@@ -11,16 +11,44 @@ permissions:
   contents: read
 
 jobs:
+  runtime-python:
+    name: Resolve runtime Python from the Dockerfile
+    runs-on: ubuntu-latest
+    outputs:
+      runtime: ${{ steps.read.outputs.runtime }}
+      versions: ${{ steps.read.outputs.versions }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - id: read
+        # SINGLE SOURCE OF TRUTH for the Python version: the base image
+        # (FROM python:X.Y-slim in the Dockerfile). Every setup-python job below
+        # derives from this, so a base bump (3.14 → 3.15 → …) is a one-line Dockerfile
+        # change with no other edits — nothing can test/resolve against a version the
+        # image doesn't ship.
+        #
+        # `runtime` = that one version (lint/type/test coverage floor, lock-audit, and
+        # the real-daemon integration all use it). `versions` = the test matrix,
+        # normally just [runtime]. During a base bump, widen `versions` HERE to
+        # validate the candidate alongside the current (e.g. ["3.14","3.15"]) before
+        # switching the Dockerfile FROM, then drop the old.
+        run: |
+          runtime="$(grep -oP 'FROM python:\K[0-9]+\.[0-9]+' Dockerfile | head -1)"
+          if [ -z "${runtime}" ]; then
+            echo "::error::could not read 'FROM python:X.Y' from the Dockerfile"; exit 1
+          fi
+          echo "runtime=${runtime}" >> "$GITHUB_OUTPUT"
+          echo "versions=[\"${runtime}\"]" >> "$GITHUB_OUTPUT"
+
   python:
     name: Python (lint, types, tests)
+    needs: runtime-python
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # 3.14-only: the product is a single python:3.14-slim image, so that's the only
-      # runtime worth testing. (A future base bump temporarily adds the candidate
-      # here — e.g. 3.14 + 3.15 — validates, switches the base, then drops the old.)
+      # Matrix comes from the Dockerfile via runtime-python (single source of truth) —
+      # to test a candidate during a base bump, widen `versions` there, not here.
       matrix:
-        python-version: ["3.14"]
+        python-version: ${{ fromJSON(needs.runtime-python.outputs.versions) }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -29,7 +57,7 @@ jobs:
         # bump in pyproject that didn't regenerate the lock would silently NOT reach
         # the image (and silently break the docker-py/apprise auto-merge promotion).
         # Fail closed: assert the lock's direct pins equal pyproject's. (The deeper
-        # "lock is faithful to 3.14" check is the lock-audit job below.) Regenerate
+        # "lock is faithful to the runtime" check is the lock-audit job below.) Regenerate
         # in the runtime interpreter, NOT a host python — see scripts/regen-lock.sh.
         run: |
           for pkg in docker apprise; do
@@ -80,23 +108,17 @@ jobs:
 
   lock-audit:
     name: requirements.lock faithful to the runtime Python
+    needs: runtime-python
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Read the runtime Python version from the Dockerfile
-        # Single source of truth: the base image (FROM python:X.Y-slim) decides the
-        # runtime, so the lock must be resolved under X.Y. Deriving it here means a
-        # base bump (3.14 → 3.15 → …) is a one-line Dockerfile change and this audit
-        # follows automatically — it can never validate the lock against a different
-        # interpreter than the image actually ships (which would silently defeat #82).
-        id: pyver
-        run: echo "version=$(grep -oP 'FROM python:\K[0-9]+\.[0-9]+' Dockerfile | head -1)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Python ${{ steps.pyver.outputs.version }}
+      - name: Set up Python ${{ needs.runtime-python.outputs.runtime }}
+        # Resolved from the Dockerfile by runtime-python, so this can never validate
+        # the lock against a different interpreter than the image ships (#82).
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ steps.pyver.outputs.version }}
+          python-version: ${{ needs.runtime-python.outputs.runtime }}
 
       - name: Assert the committed lock == a fresh pip-compile under that version
         # #82: exercises requirements.lock (nothing did before) and pins it to the
@@ -113,18 +135,19 @@ jobs:
             echo "::error::requirements.lock is stale for the runtime Python. Regenerate with ./scripts/regen-lock.sh"
             exit 1
           fi
-          echo "requirements.lock matches pyproject.toml resolved under Python ${{ steps.pyver.outputs.version }}"
+          echo "requirements.lock matches pyproject.toml resolved under Python ${{ needs.runtime-python.outputs.runtime }}"
 
   pytest-integration:
     name: Integration (real daemon, pytest)
+    needs: runtime-python
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Set up Python
+      - name: Set up Python ${{ needs.runtime-python.outputs.runtime }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.14"
+          python-version: ${{ needs.runtime-python.outputs.runtime }}
 
       - name: Install package + pinned dev tooling
         run: pip install -e . -r requirements-dev.txt

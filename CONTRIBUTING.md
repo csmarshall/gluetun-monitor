@@ -19,7 +19,7 @@ retained only as a differential test oracle (see below).
    ```
 4. Make your change with tests, run the gate (below), open a PR.
 
-Python **3.14** is the target (`requires-python`/`target-version`).
+The runtime Python is whatever the **Dockerfile**'s `FROM python:X.Y-slim` declares (currently **3.14**) — the single source of truth that CI derives its test matrix, lock audit, and integration job from. `pyproject.toml` (`requires-python` / ruff `target-version`) sets the supported floor.
 
 ## The gate — run this before every PR
 
