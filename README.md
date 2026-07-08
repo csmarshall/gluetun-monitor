@@ -774,7 +774,7 @@ line looks. Each level adds its own row to everything above it (ADR-0011):
 
 | `NOTIFY_LEVEL` | You get | Events |
 |---|---|---|
-| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **flaky-site advisory**, **dependent-flapping advisory** |
+| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **cannot probe the gateway**, **flaky-site advisory**, **dependent-flapping advisory** |
 | `recovery` | + self-healed incidents | gluetun recovered, dependent remediated |
 | `activity` | + non-fault changes | `sites.conf` reloaded, **advisory site unreachable / recovered** |
 | `all` | + the firehose | per-loop checks, restart play-by-play |
@@ -1176,6 +1176,10 @@ The recommended deployment uses a [Docker socket proxy](https://github.com/Tecna
 | `CONTAINERS=1` | Listing, inspecting, and reading logs of containers; creating the replacement when recreating a stranded dependent |
 | `POST=1` | Restarting, removing, and starting containers (the recreate path rides on the same `POST` flag — no new permission) |
 | `EXEC=1` | Running connectivity/interface probes inside Gluetun and the dependents |
+
+All three are required. `POST=1` in particular is unavoidable: tecnativa's `POST` is a *binary* switch for the container API — with `POST=0`, the `EXEC` and `ALLOW_RESTARTS` carve-outs are inert, so neither probing nor restarting works (verified; see [#29](https://github.com/csmarshall/gluetun-monitor/issues/29)).
+
+**If the monitor cannot probe, it does nothing.** Should `EXEC` be missing, the proxy become unreachable, or Gluetun stop shipping a usable `wget`, the site probes cannot *run* — which says nothing about the tunnel. Rather than mistake that for a connectivity failure and restart Gluetun (a restart cannot restore an EXEC permission), the monitor raises a distinct `attention` alert — *"cannot probe `<gluetun>`"* — holds its existing alerts, touches nothing, and never claims recovery it could not verify ([#137](https://github.com/csmarshall/gluetun-monitor/issues/137)).
 
 The proxy and gluetun-monitor communicate over an isolated Docker network (`docker-proxy`). Only the proxy container has access to the Docker socket.
 

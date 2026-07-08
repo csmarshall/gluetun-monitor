@@ -59,6 +59,23 @@ Sleep = Callable[[float], None]
 
 
 @dataclass(frozen=True, slots=True)
+class GatewayCheck:
+    """Outcome of one pass over gluetun's site set.
+
+    ``breached`` are the critical sites that hit FAIL_THRESHOLD and therefore justify a
+    restart. ``unprobeable`` means **no probe even ran** (no EXEC on the socket proxy,
+    the proxy is down, the container is gone, no ``wget`` inside it) — so the loop
+    learned nothing about the tunnel. The two are deliberately distinct: an empty
+    ``breached`` with ``unprobeable=True`` must never be read as "healthy" or as
+    "recovered", or the watchdog either restarts the tunnel over its own missing tool or
+    reports a fake-green (#137; Tenets 1 and 7).
+    """
+
+    breached: list[str]
+    unprobeable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DependentProbe:
     """Read-only outcome of probing one dependent (no state mutation)."""
 
@@ -307,7 +324,7 @@ class Monitor:
             diffs.append(f"tries {on}→{nn}")
         return ", ".join(diffs)
 
-    def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> list[str]:
+    def check_gluetun_sites(self, sites: list[str], *, record: bool = True) -> GatewayCheck:
         """Test the full URL set from inside gluetun. Return the sites that have
         breached FAIL_THRESHOLD (empty = healthy).
 
@@ -317,7 +334,7 @@ class Monitor:
         """
         if not sites:
             self.log.warn("No sites configured to test")
-            return []
+            return GatewayCheck(breached=[], unprobeable=False)
 
         # Track the full *spec* per URL (not just its presence) so a runtime
         # sites.conf edit is logged for ANY change: an added/removed site, a
@@ -391,6 +408,7 @@ class Monitor:
         total = len(sites)
         results: list[SiteResult] = []
         failed: list[str] = []
+        unprobeable: list[str] = []  # probes that never ran (#137) — evaluated nothing
         for done, result in enumerate(
             self._fan_out(
                 sites, lambda url: probe_site(self.client, self.config.gluetun_container,
@@ -399,6 +417,17 @@ class Monitor:
             start=1,
         ):
             results.append(result)
+            if result.exec_failed:
+                # The probe never RAN (no EXEC on the proxy, proxy down, container gone,
+                # no wget in the gateway). That says nothing about the tunnel — it's a
+                # fault on our side of the exec. Don't record a poll, don't touch the
+                # failure counter, never let it gate a restart (#137, Tenets 1 and 7).
+                unprobeable.append(result.url)
+                self.log.warn(
+                    f"[{gw}] ({done}/{total}) reach ?: {result.url} — probe could not run "
+                    f"({result.reason}); not counted as a failure"
+                )
+                continue
             if record:
                 self.stats.record_poll(result.url, result.ok, result.duration_ms, result.reason)
             if result.ok:
@@ -446,6 +475,19 @@ class Monitor:
                     f"[{count}/{threshold}]"
                 )
 
+        # EVERY probe failed to run: this loop evaluated nothing about the tunnel. Never
+        # restart on a signal we cannot attribute to it (Tenet 1) — a restart cannot
+        # restore an EXEC permission or a missing wget, so it would only churn the
+        # tunnel and every dependent behind it, forever (#137).
+        if results and len(unprobeable) == len(results):
+            self.log.error(
+                f"[{gw}] cannot probe: all {len(results)} probes failed to run "
+                f"({results[0].reason}) — NOT restarting. Check the socket proxy's EXEC "
+                f"permission and reachability, and that {self.config.gluetun_container} "
+                f"still has a usable wget."
+            )
+            return GatewayCheck(breached=[], unprobeable=True)
+
         if failed:
             self.log.error(f"[{gw}] restart triggered by: {' '.join(failed)}")
 
@@ -453,25 +495,29 @@ class Monitor:
         # without the per-site DEBUG detail. Only on the primary poll (not the
         # post-restart re-verify, which has its own "verified" line).
         if record:
-            ok_results = [r for r in results if r.ok]
+            # Sites whose probe never ran are neither ok nor failing — they are simply
+            # unevaluated, so they must not skew the heartbeat's N/M (#137).
+            evaluated = [r for r in results if not r.exec_failed]
+            ok_results = [r for r in evaluated if r.ok]
+            unprobed = f" — {len(unprobeable)} unprobeable" if unprobeable else ""
             # Mark advisory failures so the heartbeat makes clear they are NOT the
             # reason for any restart (#110) — "failing: x (advisory)".
             failing = [
                 hostname_of(r.url) + (" (advisory)" if self._role_of(r.url) == "advisory" else "")
-                for r in results if not r.ok
+                for r in evaluated if not r.ok
             ]
             if failing:
                 self.log.info(
-                    f"[{gw}] sites: {len(ok_results)}/{len(results)} ok — "
-                    f"failing: {', '.join(failing)}"
+                    f"[{gw}] sites: {len(ok_results)}/{len(evaluated)} ok — "
+                    f"failing: {', '.join(failing)}{unprobed}"
                 )
             else:
-                slowest = max(results, key=lambda r: r.duration_ms)
+                slowest = max(evaluated, key=lambda r: r.duration_ms)
                 self.log.info(
-                    f"[{gw}] sites: {len(ok_results)}/{len(results)} ok "
+                    f"[{gw}] sites: {len(ok_results)}/{len(evaluated)} ok{unprobed} "
                     f"(slowest {slowest.duration_ms}ms: {hostname_of(slowest.url)})"
                 )
-        return failed
+        return GatewayCheck(breached=failed, unprobeable=False)
 
     # ----- dependent phase (nodes 6-19) -----
 
@@ -1038,7 +1084,26 @@ class Monitor:
         worst = worst_case_probe_seconds(specs, self.config.timeout, self.config.wget_tries)
         self.client.ensure_timeout(max(worst * 2, 60))
 
-        breached = self.check_gluetun_sites(sites)
+        check = self.check_gluetun_sites(sites)
+        if check.unprobeable:
+            # Every probe failed to RUN: this loop learned nothing about the tunnel.
+            # Raise a distinct, actionable alert and HOLD every other active alert —
+            # silence here is absence of evidence, not recovery (#74). Restart nothing:
+            # a restart cannot restore an EXEC permission or a missing wget, so acting
+            # would churn the tunnel and every dependent behind it, forever (#137).
+            self._problem(
+                "gluetun-unprobeable",
+                "attention",
+                f"cannot probe {self.config.gluetun_container}",
+                f"Every site probe failed to run, so the tunnel's health is unknown and "
+                f"nothing was restarted. Check the socket proxy's EXEC permission and its "
+                f"reachability, and that {self.config.gluetun_container} still has a "
+                f"usable wget.",
+            )
+            self.alerts.mark_incomplete()
+            self._save_stats()
+            return
+        breached = check.breached
         if not breached:
             # Keep the flaky-site advisory current on HEALTHY loops too (#75):
             # the lifecycle resolves any alert not re-reported each loop, so
@@ -1103,7 +1168,29 @@ class Monitor:
             return
 
         # Re-verify without recording (so the loop counts one poll per site, not two).
-        reverify_breached = self.check_gluetun_sites(sites, record=False)
+        reverify = self.check_gluetun_sites(sites, record=False)
+        if reverify.unprobeable:
+            # We restarted, but now nothing can be probed — we do NOT know whether it
+            # recovered. An empty breach list here is absence of evidence, not proof of
+            # health: claiming "recovered" would be exactly the fake-green Tenet 7
+            # forbids (#137). Hold the triggering sites and say so.
+            self.log.error(
+                f"[{self.config.gluetun_container}] restarted, but no probe could run — "
+                f"recovery is UNVERIFIED; not claiming it recovered"
+            )
+            self._problem(
+                "gluetun-unprobeable",
+                "attention",
+                f"cannot probe {self.config.gluetun_container}",
+                f"{self.config.gluetun_container} was restarted but no site probe could "
+                f"run, so recovery is unverified. Check the socket proxy's EXEC permission "
+                f"and its reachability, and that the container still has a usable wget.",
+            )
+            self._unrecovered_sites = set(breached)  # #106: hold; we can't prove they cleared
+            self.alerts.mark_incomplete()  # dependents were never evaluated (#74)
+            self._save_stats()
+            return
+        reverify_breached = reverify.breached
         # Restart effectiveness: did each site that triggered this restart recover?
         still = set(reverify_breached)
         for site in breached:
