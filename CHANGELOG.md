@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.2...v2.6.0) (2026-07-08)
+
+
+### Added
+
+* **notify:** dependent-flapping advisory — escalate a chronically-remediated dependent ([#45](https://github.com/csmarshall/gluetun-monitor/issues/45)) ([#136](https://github.com/csmarshall/gluetun-monitor/issues/136)) ([4ea6260](https://github.com/csmarshall/gluetun-monitor/commit/4ea62607853b81949c9fed1cacfd2239f734bced))
+
+
+### CI / tooling
+
+* **deps:** resolve requirements.lock under the runtime Python + audit it ([#82](https://github.com/csmarshall/gluetun-monitor/issues/82)) ([#131](https://github.com/csmarshall/gluetun-monitor/issues/131)) ([4f98ad9](https://github.com/csmarshall/gluetun-monitor/commit/4f98ad9f584b4388f215ba05555e662a9b78dd5b))
+* single-source the Python version from the Dockerfile ([#82](https://github.com/csmarshall/gluetun-monitor/issues/82) follow-up) ([#134](https://github.com/csmarshall/gluetun-monitor/issues/134)) ([058d422](https://github.com/csmarshall/gluetun-monitor/commit/058d422d260323525bd0c39fa363513d3845e5a1))
+
 ## [2.5.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.1...v2.5.2) (2026-07-07)
 
 
