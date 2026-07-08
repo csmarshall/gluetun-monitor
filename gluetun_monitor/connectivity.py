@@ -105,6 +105,12 @@ class SiteResult:
     signal used by dependent viability (the only per-container fault — see module
     docstring). They are distinct on purpose: a connect-refused/timeout makes
     ``ok`` False but ``dns_failed`` False (the dependent's DNS still worked).
+
+    ``exec_failed`` is a third, categorically different thing: the probe **never ran**
+    (no EXEC permission on the socket proxy, the proxy is down, the container is gone,
+    or it ships no ``wget``). That says nothing about the tunnel — it's a fault on *our*
+    side of the exec — so it must never be counted as a connectivity failure. Doing so
+    would restart the tunnel over a tool we couldn't invoke (#137, Tenets 1 and 7).
     """
 
     url: str
@@ -114,6 +120,7 @@ class SiteResult:
     reason: str
     exit_code: int
     dns_failed: bool = False
+    exec_failed: bool = False
 
 
 def probe_site(
@@ -142,7 +149,10 @@ def probe_site(
         exit_code, output = result.exit_code, result.output
     except Exception as exc:  # exec itself failed (container gone, daemon error)
         duration_ms = int((time.monotonic() - start) * 1000)
-        return SiteResult(url, False, duration_ms, "N/A", f"exec failed: {exc}", -1)
+        # The probe never ran — we learned NOTHING about the tunnel. Flag it so the
+        # caller treats it as unevaluated, not as a site failure (#137).
+        return SiteResult(url, False, duration_ms, "N/A", f"exec failed: {exc}", -1,
+                          exec_failed=True)
 
     duration_ms = int((time.monotonic() - start) * 1000)
     http_code = _parse_http_code(output)
