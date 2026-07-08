@@ -147,6 +147,7 @@ class Monitor:
         # Persistent per-site stats (ADR-0008). Injectable for tests.
         self.stats = stats if stats is not None else SiteStatsStore(config.stats_file)
         self._advised_site: str | None = None  # dedup the flaky-site advisory
+        self._advised_deps: set[str] = set()  # dedup the dependent-flapping advisory (#45)
         # Sites that triggered an active gluetun-unrecovered alert (#106). Held so
         # the alert resolves only on OBSERVED recovery, not on the mechanical
         # post-restart counter reset that makes the next loop look sub-threshold.
@@ -822,7 +823,7 @@ class Monitor:
                 )
                 continue
             self.log.warn(f"Remediating dependent {dep}: {reason}")
-            self.stats.record_dependent_remediation()
+            self.stats.record_dependent_remediation(dep)
             outcome = remediate_dependent(
                 self.client, dep, gluetun_id, self.config, self.log, sleep=self._sleep
             )
@@ -837,6 +838,12 @@ class Monitor:
                 )
             else:
                 self._record_remediation_failure(dep, reason, outcome)
+
+        # Surface a dependent-flapping advisory (#45) for any dependent that keeps
+        # needing remediation. Evaluated every completed loop (like _emit_advisory) so
+        # the lifecycle edge-triggers the alert once and resolves it when the
+        # dependent settles back under the threshold.
+        self._emit_dependent_advisories()
 
     def _record_remediation_failure(
         self, dep: str, reason: str, outcome: RemediationOutcome
@@ -1213,6 +1220,44 @@ class Monitor:
             f"{format_window(adv.window_seconds)} — it may be flaky; consider "
             f"reviewing or removing it from sites.conf.{hint}"
         )
+
+    def _emit_dependent_advisories(self) -> None:
+        """Surface a dependent-flapping advisory for each dependent that keeps needing
+        remediation (#45) — the dependent analogue of :meth:`_emit_advisory`.
+
+        Reported every completed dependent phase so the lifecycle sees an ongoing
+        flapper continuously (edge-trigger once, resolve when it settles). A dependent
+        that drops back under the window threshold isn't re-reported, so the alert
+        resolves on its own. Log + stats fire once per episode per dependent
+        (``_advised_deps``); the failing-site *detail* is intentionally left to the
+        per-loop DEBUG logs (not pre-chewed into the alert).
+        """
+        flapping = self.stats.dependent_advisories(
+            self.config.dependent_advisory_window,
+            self.config.dependent_advisory_min_remediations,
+        )
+        current = {adv.dependent for adv in flapping}
+        for adv in flapping:
+            window = format_window(adv.window_seconds)
+            self._problem(
+                f"dependent-flapping:{adv.dependent}",
+                "attention",
+                f"flapping dependent: {adv.dependent}",
+                f"{adv.dependent} was remediated {adv.remediations} times in the last "
+                f"{window} — it keeps failing and being healed but won't stay healthy; "
+                f"investigate (check the container's own logs / config).",
+            )
+            if adv.dependent not in self._advised_deps:
+                self._advised_deps.add(adv.dependent)
+                self.stats.record_advisory()
+                self.log.warn(
+                    f"FLAPPING DEPENDENT: {adv.dependent} remediated {adv.remediations} "
+                    f"times in the last {window} — it won't stay healthy; investigate."
+                )
+        # Forget the episode-dedup for dependents that stopped flapping, so a later
+        # re-flap logs fresh (the notification alert itself resolves via the lifecycle
+        # once the dependent is no longer reported above).
+        self._advised_deps &= current
 
     def _advisory_hint(self, site: str) -> str:
         """A one-sentence per-URL tunable suggestion for ``site`` if the stats

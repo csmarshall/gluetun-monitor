@@ -160,6 +160,12 @@ class Config:
     advisory_window: int = 86400
     advisory_min_restarts: int = 5
     advisory_dominance: float = 0.5
+    # #45: dependent-flapping advisory — a dependent remediated >= N times in the
+    # window keeps failing and being healed but won't stay healthy. Count-based
+    # (no dominance — each dependent is independent). On by default like the site
+    # advisory (it only emits an alert, never acts).
+    dependent_advisory_window: int = 86400
+    dependent_advisory_min_remediations: int = 5
 
     # --- Opt-in notification layer (issue #22, ADR-0010) ---
     # Comma-separated Apprise URLs (ntfy/Discord/Telegram/email/webhook/…).
@@ -269,6 +275,10 @@ class Config:
             advisory_min_restarts=_env_int("ADVISORY_MIN_RESTARTS", 5, errors, minimum=1),
             advisory_dominance=_env_float("ADVISORY_DOMINANCE", 0.5, errors,
                                           minimum=0.0, maximum=1.0),
+            dependent_advisory_window=_env_int("DEPENDENT_ADVISORY_WINDOW", 86400,
+                                               errors, minimum=1),
+            dependent_advisory_min_remediations=_env_int(
+                "DEPENDENT_ADVISORY_MIN_REMEDIATIONS", 5, errors, minimum=1),
             apprise_urls=tuple(
                 u.strip() for u in os.environ.get("APPRISE_URLS", "").split(",") if u.strip()
             ),
