@@ -30,7 +30,9 @@ build-smoketest.sh
 rebuild-and-validate.sh
 deploy-v2.sh
 enable-notifications.sh
+run-tests.sh
 rosa-reboot-precheck.sh
+pull-image.sh
 
 # Python
 __pycache__/
