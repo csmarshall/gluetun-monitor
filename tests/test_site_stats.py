@@ -307,7 +307,7 @@ def test_monitor_level_counters() -> None:
         s.record_loop()
     s.record_gluetun_restart()
     s.record_gluetun_restart()
-    s.record_dependent_remediation()
+    s.record_dependent_remediation("dep")
     s.record_advisory()
     assert s.monitor.total_loops == 3
     assert s.monitor.total_gluetun_restarts == 2
@@ -365,3 +365,40 @@ def test_advisory_empty_window_is_none_even_if_min_restarts_zero() -> None:
     (review finding — the public method now guards `not recent`)."""
     store = SiteStatsStore(None)
     assert store.advisory(3600, 0, 0.5) is None
+
+
+# ----- #45 dependent-flapping advisory -----
+
+
+def test_dependent_advisories_counts_per_dependent() -> None:
+    """Count-based (no dominance): each dependent flagged independently once it hits
+    the threshold; a dependent below it isn't."""
+    clock = _Clock(1000.0)
+    s = SiteStatsStore(None, clock=clock)
+    for _ in range(3):
+        s.record_dependent_remediation("flappy")
+    for _ in range(2):
+        s.record_dependent_remediation("occasional")
+    advs = {a.dependent: a.remediations for a in s.dependent_advisories(100, 3)}
+    assert advs == {"flappy": 3}  # occasional (2) is below the min
+
+
+def test_dependent_advisories_respects_window() -> None:
+    clock = _Clock(1000.0)
+    s = SiteStatsStore(None, clock=clock)
+    for _ in range(5):
+        s.record_dependent_remediation("dep")
+    assert len(s.dependent_advisories(100, 5)) == 1
+    clock.t += 200  # all five remediations now fall outside the 100s window
+    assert s.dependent_advisories(100, 5) == []
+
+
+def test_recent_remediations_survive_persistence(tmp_path: Path) -> None:
+    clock = _Clock(1000.0)
+    p = tmp_path / "stats.json"
+    s = SiteStatsStore(str(p), clock=clock)
+    for _ in range(4):
+        s.record_dependent_remediation("dep")
+    assert s.save()
+    reloaded = SiteStatsStore(str(p), clock=clock)
+    assert len(reloaded.dependent_advisories(100, 4)) == 1  # counter survived a restart

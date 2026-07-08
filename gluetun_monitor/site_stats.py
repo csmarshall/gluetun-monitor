@@ -144,6 +144,15 @@ class Advisory:
     window_seconds: int
 
 
+@dataclass
+class DependentAdvisory:
+    """A chronically-flapping dependent worth surfacing to the operator (#45)."""
+
+    dependent: str
+    remediations: int
+    window_seconds: int
+
+
 class SiteStatsStore:
     """In-memory site stats with best-effort JSON persistence + advisory logic."""
 
@@ -161,6 +170,9 @@ class SiteStatsStore:
         self._latency_max = latency_ring_max
         self.sites: dict[str, SiteStat] = {}
         self.recent_restarts: list[dict[str, object]] = []  # {"ts": float, "site": str}
+        # #45: timestamped remediation events for the dependent-flapping advisory —
+        # the dependent analogue of recent_restarts.
+        self.recent_remediations: list[dict[str, object]] = []  # {"ts": float, "dependent": str}
         self.monitor = MonitorStats()
         self._load()
         # Stamp this process's start; first_started persists from the first ever run.
@@ -228,11 +240,18 @@ class SiteStatsStore:
         """
         self.monitor.total_gluetun_restarts += 1
 
-    def record_dependent_remediation(self) -> None:
-        """One dependent remediation initiated — restart/recreate (monitor-wide
-        count; counted when the action is taken, not gated on it succeeding).
+    def record_dependent_remediation(self, dependent: str) -> None:
+        """One dependent remediation initiated — restart/recreate. Bumps the
+        monitor-wide count AND records a timestamped event for ``dependent`` so the
+        dependent-flapping advisory can spot a chronic re-offender (#45, mirroring
+        :meth:`record_restart`). Counted when the action is taken, not gated on it
+        succeeding.
         """
+        now = self._clock()
         self.monitor.total_dependent_remediations += 1
+        self.recent_remediations.append({"ts": now, "dependent": dependent})
+        if self._recent_max and len(self.recent_remediations) > self._recent_max:
+            del self.recent_remediations[: -self._recent_max]
 
     def record_advisory(self) -> None:
         """One flaky-site advisory raised (monitor-wide count)."""
@@ -282,6 +301,28 @@ class SiteStatsStore:
             return Advisory(site, top, len(recent), window_seconds)
         return None
 
+    def dependent_advisories(
+        self, window_seconds: int, min_remediations: int
+    ) -> list[DependentAdvisory]:
+        """Dependents remediated >= ``min_remediations`` times within ``window_seconds``.
+
+        The dependent analogue of :meth:`advisory` (#45), but **count-based, not
+        dominance-based**: each dependent is remediated independently — there's no
+        shared resource (like the single gluetun) they contend for — so "kept needing
+        healing N times" is the whole signal, no dominance fraction. Returns one entry
+        per flapping dependent (several can flap at once).
+        """
+        cutoff = self._clock() - window_seconds
+        counts = Counter(
+            str(r["dependent"]) for r in self.recent_remediations
+            if isinstance(r.get("ts"), int | float) and float(r["ts"]) >= cutoff  # type: ignore[arg-type]
+        )
+        return [
+            DependentAdvisory(dep, n, window_seconds)
+            for dep, n in counts.items()
+            if n >= min_remediations
+        ]
+
     # ----- persistence (best-effort) -----
 
     def _load(self) -> None:
@@ -314,6 +355,11 @@ class SiteStatsStore:
             recent = data.get("recent_restarts", [])
             self.recent_restarts = [
                 r for r in recent if isinstance(r, dict) and "ts" in r and "site" in r
+            ]
+            recent_rem = data.get("recent_remediations", [])
+            self.recent_remediations = [
+                r for r in recent_rem
+                if isinstance(r, dict) and "ts" in r and "dependent" in r
             ]
             m = data.get("monitor") or {}
             # `version` and `last_started` are intentionally NOT reloaded: version
@@ -374,6 +420,7 @@ class SiteStatsStore:
             "monitor": monitor_out,
             "sites": sites_out,
             "recent_restarts": self.recent_restarts,
+            "recent_remediations": self.recent_remediations,
         }
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)

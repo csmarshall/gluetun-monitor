@@ -201,6 +201,8 @@ docker compose up -d
 | `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
 | `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
+| `DEPENDENT_ADVISORY_WINDOW` | `86400` | Window (seconds) for the dependent-flapping advisory |
+| `DEPENDENT_ADVISORY_MIN_REMEDIATIONS` | `5` | Remediations of one dependent in the window before it's flagged as flapping |
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
@@ -697,6 +699,22 @@ That's the signal to prune that site from `sites.conf` (re-read each loop — se
 Tune with `ADVISORY_WINDOW`, `ADVISORY_MIN_RESTARTS`, and
 `ADVISORY_DOMINANCE`. See [ADR-0008](docs/adr/0008-persistent-site-stats-and-advisory.md).
 
+The **dependent-flapping advisory** is the same idea aimed at a *dependent* rather
+than a site: a container that keeps needing remediation but won't stay healthy
+self-heals every loop (a quiet `recovery` event) and would otherwise never reach a
+human. When one is remediated `DEPENDENT_ADVISORY_MIN_REMEDIATIONS` times within
+`DEPENDENT_ADVISORY_WINDOW`, it escalates to an `attention` alert:
+
+```
+[WARN] FLAPPING DEPENDENT: qbittorrent remediated 6 times in the last 24h
+— it won't stay healthy; investigate
+```
+
+It's **count-based, not dominance-based** (each dependent is independent — there's
+no shared gluetun to contend for), and the per-loop DEBUG logs already show *which*
+sites/DNS failed each time, so the alert just points you at the right container to
+investigate.
+
 > **By design, the monitor does not auto-suppress a flaky site** — it keeps
 > applying the cheap restart fix and escalates to you. (A future automatic
 > back-off is possible; it would be opt-in.)
@@ -756,7 +774,7 @@ line looks. Each level adds its own row to everything above it (ADR-0011):
 
 | `NOTIFY_LEVEL` | You get | Events |
 |---|---|---|
-| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **flaky-site advisory** |
+| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **flaky-site advisory**, **dependent-flapping advisory** |
 | `recovery` | + self-healed incidents | gluetun recovered, dependent remediated |
 | `activity` | + non-fault changes | `sites.conf` reloaded, **advisory site unreachable / recovered** |
 | `all` | + the firehose | per-loop checks, restart play-by-play |

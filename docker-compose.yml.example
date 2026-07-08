@@ -104,6 +104,11 @@ services:
       # - ADVISORY_WINDOW=86400      # seconds (24h)
       # - ADVISORY_MIN_RESTARTS=5
       # - ADVISORY_DOMINANCE=0.5     # one site causing >=50% of recent restarts -> flag it
+      # Dependent-flapping advisory: warns (attention) when a dependent keeps needing
+      # remediation but won't stay healthy — the dependent analogue of the flaky-site
+      # advisory. On by default; count-based (no dominance).
+      # - DEPENDENT_ADVISORY_WINDOW=86400          # seconds (24h)
+      # - DEPENDENT_ADVISORY_MIN_REMEDIATIONS=5    # >=N remediations of one dependent in the window -> flag it
       # --- Notifications (opt-in; unset = log-only, no outbound traffic) ---
       # Comma-separated Apprise URLs to push significant events (restart, recovery
       # failure, dependent remediation, flaky-site advisory, refusal to start).
