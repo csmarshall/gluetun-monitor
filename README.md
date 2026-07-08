@@ -72,6 +72,8 @@ The full per-loop state machine (22 nodes) is in
 [ADR-0006](docs/adr/0006-per-dependent-viability-testing.md); the
 restart-vs-recreate decision is [ADR-0004](docs/adr/0004-dependent-aware-health.md).
 
+The monitor is deliberately **incurious** — it never learns what you route through the tunnel or what your containers are for, only that they have a shape it can measure ([ADR-0017](docs/adr/0017-incurious-monitor.md)). A dependent is *defined* as any container sharing Gluetun's network namespace; nothing else about it matters. What each capability your container ships unlocks — and what a `FROM scratch` container still gets — is written down in **[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)**. Nothing there is a requirement to be met; it's an interface, and the monitor tells you which layer it's operating at rather than pretending.
+
 ## Upgrading from v1 (v1 is end-of-life)
 
 **v1 (the original bash implementation, image tag `:1`) is end-of-life.** v2 is
