@@ -7,7 +7,7 @@
 
 ## Context
 
-The monitor has always behaved this way; it had simply never said so. A dependent is discovered by *who shares gluetun's network namespace*, never by image or name (Tenet 6). A test site is a reachability oracle — a server answered, therefore egress works — and explicitly *not* something whose health we care about (Tenet 3). The `|role=critical|advisory` distinction added in ADR-0015 is structural ("does this site gate a restart?") rather than semantic ("what kind of site is this?"). Nowhere in the codebase is there a branch that behaves differently because a container happens to be a torrent client, an indexer, or a media server.
+The monitor has always behaved this way; it had simply never said so. A dependent is discovered by *who shares gluetun's network namespace*, never by image or name (Tenet 6). A test site is a reachability oracle — a server answered, therefore egress works — and explicitly *not* something whose health we care about (Tenet 3). The `|role=critical|advisory` distinction added in ADR-0015 is structural ("does this site gate a restart?") rather than semantic ("what kind of site is this?"). Containers are simply dependents that require network connectivity through gluetun; nowhere in the codebase is there a branch that behaves differently based on what one of them is.
 
 Leaving that boundary unstated cost us three things.
 
@@ -41,7 +41,7 @@ Nor does it forswear coupling to gluetun. We are named after it and we grep its 
 
 ## Consequences
 
-A class of features is now foreclosed, and can be closed on sight rather than re-litigated: adoption analytics of any kind (#36); content- or traffic-aware probing; per-service health logic ("restart a media server differently"); VPN-provider-specific integrations. Each would require the monitor to know what something *is*, which it has decided not to.
+A class of features is now foreclosed, and can be closed on sight rather than re-litigated: adoption analytics of any kind (#36); content- or traffic-aware probing; per-service health logic (treating one dependent differently from another based on what it is); VPN-provider-specific integrations. Each would require the monitor to know what something *is*, which it has decided not to.
 
 The degradation ladder stops being an apology and becomes a feature. Because the monitor asks so little, it can state exactly what a `FROM scratch` container gets, and mean it. The honest `UNKNOWN` and `UNVALIDATED` verdicts are not gaps in coverage; they are the contract working.
 

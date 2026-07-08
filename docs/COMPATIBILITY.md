@@ -105,7 +105,7 @@ Published for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`. Containers are a
 Because it is incurious, there are whole categories of requirement it does not have and will not grow ([ADR-0017](adr/0017-incurious-monitor.md)):
 
 - It never inspects your traffic, nor knows what you use the tunnel for.
-- It has no per-service knowledge. There is no code path that behaves differently because a container is a torrent client, an indexer, or a media server — and there never will be.
+- It has no per-service knowledge. Containers are simply dependents that require network connectivity through gluetun; no code path behaves differently based on what any of them is — and none ever will.
 - It has no VPN-provider-specific logic.
 - It does not phone home. There is no telemetry, opt-in or otherwise, and no code to audit for it.
 
