@@ -11,9 +11,10 @@ a factor gamma = (1+a)/(1-a), and each bucket is represented by a single value.
 That makes every reported percentile **within `a` (relative) of the true value** —
 the DDSketch property (Dunning/Ertl). For latencies spanning ~1 ms to ~100 s at
 a = 5%, that's only a few dozen populated buckets per site (a sparse
-``{bucket: count}`` dict), it survives restarts, and it's **mergeable** (bucket
-counts simply add). Exact ``count``/``sum``/``min``/``max`` are tracked alongside,
-so only the percentiles are approximate.
+``{bucket: count}`` dict) and it survives restarts. Exact ``count``/``sum``/``min``/
+``max`` are tracked alongside, so only the percentiles are approximate — note that
+``min``/``max`` are therefore exact order statistics held *outside* the buckets, which
+is why no bucket-level transform (decay, merge) can affect them (#25).
 """
 
 from __future__ import annotations
@@ -93,22 +94,6 @@ class LatencyHistogram:
             "p90": self.quantile(0.90),
             "p99": self.quantile(0.99),
         }
-
-    def merge(self, other: LatencyHistogram) -> None:
-        """Fold ``other`` into this one (the mergeable property — counts add).
-
-        Retained deliberately (no production caller yet): merging is the defining
-        operation of this DDSketch-style sketch, and the recency-weighted all-time
-        view (#25) folds per-period histograms through it.
-        """
-        if other.count == 0:
-            return
-        for key, cnt in other.buckets.items():
-            self.buckets[key] = self.buckets.get(key, 0) + cnt
-        self.min_ms = other.min_ms if self.count == 0 else min(self.min_ms, other.min_ms)
-        self.max_ms = max(self.max_ms, other.max_ms)
-        self.count += other.count
-        self.sum_ms += other.sum_ms
 
     def to_dict(self) -> dict[str, object]:
         """JSON-friendly form (bucket keys as strings, since JSON object keys are)."""

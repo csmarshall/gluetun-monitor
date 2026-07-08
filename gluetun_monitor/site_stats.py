@@ -217,6 +217,13 @@ class SiteStatsStore:
             cat = categorize_failure(reason)
             st.failure_reasons[cat] = st.failure_reasons.get(cat, 0) + 1
 
+    def now(self) -> float:
+        """The store's current time. Public so callers that need to reason about the
+        age of a persisted timestamp (e.g. the tunable-suggestion recency gate, #25)
+        share this store's clock — including the fake one injected by tests.
+        """
+        return self._clock()
+
     def record_restart(self, site: str) -> None:
         """Record that ``site`` triggered a gluetun restart (attribution)."""
         now = self._clock()

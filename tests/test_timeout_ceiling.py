@@ -120,8 +120,14 @@ def test_loop_raises_the_ceiling_on_sites_reload(tmp_path: Path) -> None:
 # ----- tunables judge each site against its EFFECTIVE knobs -----
 
 
+# #25: suggestions are gated on recent evidence, so a fixture's site must look
+# like it failed recently. Overridable per-test via _stat(last_failure=...).
+_NOW = 1000.0
+
+
 def _stat(**kw: object) -> SiteStat:
     st = SiteStat(first_seen=0.0)
+    st.last_failure = _NOW  # fresh by default (#25 recency gate)
     for key, value in kw.items():
         setattr(st, key, value)
     return st
@@ -144,7 +150,7 @@ def test_no_resuggestion_at_or_below_the_existing_override() -> None:
     st = _slow_stat(13000)  # would suggest 20 against the 10s global
     specs = {"https://slow": SiteSpec("https://slow", timeout=30)}
     assert suggest_tunables(
-        {"https://slow": st}, global_timeout=10, global_tries=1, specs=specs
+        {"https://slow": st}, global_timeout=10, global_tries=1, now=_NOW, specs=specs
     ) == []
 
 
@@ -154,7 +160,7 @@ def test_overridden_site_still_gets_a_wider_suggestion_when_warranted() -> None:
     st = _slow_stat(40000)  # suggest round_up_5(40+5) = 45 > effective 30
     specs = {"https://slow": SiteSpec("https://slow", timeout=30, tries=2)}
     (s,) = suggest_tunables(
-        {"https://slow": st}, global_timeout=10, global_tries=1, specs=specs
+        {"https://slow": st}, global_timeout=10, global_tries=1, now=_NOW, specs=specs
     )
     assert s.config_line == "https://slow|timeout=45|tries=2"
 
@@ -162,7 +168,7 @@ def test_overridden_site_still_gets_a_wider_suggestion_when_warranted() -> None:
 def test_timeout_suggestions_are_capped_at_the_parse_maximum() -> None:
     """Never emit a paste-ready line parse_entry would reject."""
     st = _slow_stat(400_000)  # would suggest 405s uncapped
-    (s,) = suggest_tunables({"https://glacial": st}, global_timeout=10, global_tries=1)
+    (s,) = suggest_tunables({"https://glacial": st}, global_timeout=10, global_tries=1, now=_NOW)
     assert s.config_line == f"https://glacial|timeout={MAX_URL_TIMEOUT}"
 
 
@@ -176,7 +182,7 @@ def test_tries_override_suppresses_the_retry_suggestion() -> None:
     )
     specs = {"https://blippy": SiteSpec("https://blippy", tries=2)}
     assert suggest_tunables(
-        {"https://blippy": st}, global_timeout=10, global_tries=1, specs=specs
+        {"https://blippy": st}, global_timeout=10, global_tries=1, now=_NOW, specs=specs
     ) == []
 
 
@@ -188,6 +194,6 @@ def test_tries_suggestion_preserves_an_existing_timeout_override() -> None:
     )
     specs = {"https://blippy": SiteSpec("https://blippy", timeout=25)}
     (s,) = suggest_tunables(
-        {"https://blippy": st}, global_timeout=10, global_tries=1, specs=specs
+        {"https://blippy": st}, global_timeout=10, global_tries=1, now=_NOW, specs=specs
     )
     assert s.config_line == "https://blippy|timeout=25|tries=2"

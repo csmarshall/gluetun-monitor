@@ -206,6 +206,11 @@ def _run_suggest_tunables(config: Config, logger: Logger) -> int:
     suggestions = suggest_tunables(
         store.sites, global_timeout=config.timeout, global_tries=config.wget_tries,
         specs=specs,  # judge each site against its EFFECTIVE knobs (#77)
+        # This is the path that surfaced stale advice: unlike the advisory hint, it is
+        # invoked on demand against the whole sidecar, so a site healthy for a month
+        # would still be "diagnosed" from its immortal lifetime counters (#25).
+        now=store.now(),
+        stale_after_seconds=config.advisory_window,
     )
     print("gluetun-monitor — per-URL tunable suggestions")
     print(

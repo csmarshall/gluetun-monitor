@@ -33,6 +33,12 @@ _SLOW_LATENCY_FRACTION = 0.7
 # a one-off blip (a single slow read on an otherwise-fast site isn't worth pinning
 # a higher per-URL timeout that would only delay detecting a real outage).
 _MIN_TIMEOUT_FAILURES = 3
+# Suggestions are computed from LIFETIME counters (a site's failure_reasons,
+# restarts_triggered and restart_effectiveness never reset), which is what makes them
+# well-evidenced — and what would otherwise make them immortal: a site that misbehaved
+# once, months ago, would qualify forever. Gate on recent evidence instead: no failure
+# inside this window means nothing to tune, whatever the lifetime totals say (#25).
+_DEFAULT_STALE_AFTER_SECONDS = 86400  # 24h; callers pass ADVISORY_WINDOW
 # Headroom (seconds) added above the slowest observed *successful* response when
 # suggesting a new timeout — enough that the occasional slow read still lands.
 _TIMEOUT_HEADROOM_S = 5
@@ -162,7 +168,9 @@ def suggest_tunables(
     *,
     global_timeout: int,
     global_tries: int,
+    now: float,
     specs: dict[str, SiteSpec] | None = None,
+    stale_after_seconds: int = _DEFAULT_STALE_AFTER_SECONDS,
 ) -> list[Suggestion]:
     """Per-URL tunable suggestions across all sites, ranked by restarts triggered.
 
@@ -172,10 +180,22 @@ def suggest_tunables(
     (or missing a URL) means the site inherits the globals, as before.
     Returns only sites worth acting on (healthy sites yield nothing), most-impactful
     first so the operator fixes the biggest restart driver before the long tail.
+
+    ``now`` is required rather than read from the clock so this stays a pure function
+    (and so a caller can never silently skip the recency gate below). A site whose last
+    failure predates ``stale_after_seconds`` is not worth tuning however damning its
+    lifetime counters are — it is healthy *now*, and advice about a month-old episode
+    is noise (#25).
     """
     specs = specs or {}
     out = []
     for url, st in sites.items():
+        # Recency gate (#25). The gates in _suggest_one all read lifetime-monotone
+        # counters, so without this a site that timed out once, long ago, would draw a
+        # "widen the timeout" suggestion forever. `last_failure is None` means it has
+        # never failed — nothing to tune, and its failure counters are empty anyway.
+        if st.last_failure is None or (now - st.last_failure) > stale_after_seconds:
+            continue
         spec = specs.get(url)
         # An advisory site never gates a restart (#110), so "widen its timeout to
         # avoid restarts" is meaningless advice — skip it rather than recommend a
