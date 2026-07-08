@@ -1181,6 +1181,8 @@ All three are required. `POST=1` in particular is unavoidable: tecnativa's `POST
 
 **If the monitor cannot probe, it does nothing.** Should `EXEC` be missing, the proxy become unreachable, or Gluetun stop shipping a usable `wget`, the site probes cannot *run* — which says nothing about the tunnel. Rather than mistake that for a connectivity failure and restart Gluetun (a restart cannot restore an EXEC permission), the monitor raises a distinct `attention` alert — *"cannot probe `<gluetun>`"* — holds its existing alerts, touches nothing, and never claims recovery it could not verify ([#137](https://github.com/csmarshall/gluetun-monitor/issues/137)).
 
+On `wget` specifically: Gluetun installs GNU `wget` deliberately (it's an explicit `apk add` in its Dockerfile), but that is an *implementation detail* rather than a documented guarantee — whether its presence is part of Gluetun's supported surface is [an open question upstream](https://github.com/passteque/gluetun/discussions/3387). The monitor is built not to care: probes are classified on the **HTTP response**, not on `wget`'s exit code, so GNU and BusyBox `wget` behave identically — and if it ever disappears entirely, the paragraph above applies. We report; we do not restart.
+
 The proxy and gluetun-monitor communicate over an isolated Docker network (`docker-proxy`). Only the proxy container has access to the Docker socket.
 
 ## Security Considerations
