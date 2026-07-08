@@ -1358,6 +1358,12 @@ class Monitor:
             {site: st}, global_timeout=self.config.timeout,
             global_tries=self.config.wget_tries,
             specs=self._specs,  # judge against the site's EFFECTIVE knobs (#77)
+            # Recency gate (#25). A no-op on this path by construction — the hint only
+            # rides an ACTIVE flaky-site advisory, so the site is failing now — but
+            # passing it keeps the one window (ADVISORY_WINDOW) authoritative for both
+            # "is this site currently a problem?" and "is advice about it still current?"
+            now=self.stats.now(),
+            stale_after_seconds=self.config.advisory_window,
         )
         if sugg and sugg[0].config_line:
             return (f" The stats suggest `{sugg[0].config_line}` — run "

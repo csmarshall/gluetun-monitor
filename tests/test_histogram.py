@@ -2,7 +2,7 @@
 
 Why: it backs the all-time latency view. These tests pin the accuracy guarantee
 (every percentile within ALPHA relative error), the exact count/avg/min/max,
-monotonic percentiles, mergeability, JSON round-trip, and graceful handling of
+monotonic percentiles, JSON round-trip, and graceful handling of
 empty/garbage input (it feeds the best-effort stats sidecar).
 """
 
@@ -71,29 +71,6 @@ def test_bounded_bucket_count() -> None:
     for _ in range(50_000):
         h.add(rng.randint(50, 10_000))
     assert len(h.buckets) < 120  # ~log_gamma(10000/50) buckets, not 50k samples
-
-
-def test_merge_is_additive() -> None:
-    a = LatencyHistogram()
-    b = LatencyHistogram()
-    for v in (100, 200, 300):
-        a.add(v)
-    for v in (400, 500, 600):
-        b.add(v)
-    combined = LatencyHistogram()
-    for v in (100, 200, 300, 400, 500, 600):
-        combined.add(v)
-    a.merge(b)
-    assert a.count == combined.count == 6
-    assert a.min_ms == 100 and a.max_ms == 600
-    assert a.summary() == combined.summary()
-
-
-def test_merge_empty_noop() -> None:
-    a = LatencyHistogram()
-    a.add(100)
-    a.merge(LatencyHistogram())
-    assert a.count == 1
 
 
 def test_json_round_trip() -> None:

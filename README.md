@@ -200,7 +200,7 @@ docker compose up -d
 | `STATS_FILE` | `/logs/site-stats.json` | Where persistent per-site stats are written (best-effort, atomic; survives restarts). See [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory) |
 | `STATS_RETENTION_DAYS` | `90` | Drop a site's stats if it hasn't been tested (e.g. removed from `sites.conf`) for this many days; `0` keeps them forever |
 | `MONITOR_STATE_FILE` | `/logs/monitor-state.json` | Durable dependent memory: gluetun's container-id history + known dependent names, so dependents stranded by a gluetun recreate stay visible (and healable) across monitor restarts. Best-effort, atomic |
-| `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory |
+| `ADVISORY_WINDOW` | `86400` | Window (seconds) for the flaky-site advisory — and the recency window for `--suggest-tunables` (a site with no failure inside it yields no advice) |
 | `ADVISORY_MIN_RESTARTS` | `5` | Minimum gluetun restarts in the window before an advisory can fire |
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
 | `DEPENDENT_ADVISORY_WINDOW` | `86400` | Window (seconds) for the dependent-flapping advisory |
@@ -476,7 +476,9 @@ role included: `… all sites use TIMEOUT=10s, WGET_TRIES=1, role=critical`.
 You don't have to guess. The monitor already records how every site behaves
 (latency percentiles, failure categories, restart effectiveness — see
 [Site stats & flaky-site advisory](#site-stats--flaky-site-advisory))
-and can read that history back as concrete recommendations:
+and can read that history back as concrete recommendations.
+
+Those stats are *lifetime* counters, which is what makes the advice well-evidenced — and what would otherwise make it immortal. So suggestions are gated on **recent evidence**: a site with no failure inside `ADVISORY_WINDOW` (24h) yields nothing, however damning its lifetime totals. Advice about an episode from last month is noise, not diagnosis.
 
 ```bash
 docker exec gluetun-monitor gluetun-monitor --suggest-tunables
