@@ -6,4 +6,4 @@ mechanism), ADR-0006 (per-dependent viability testing), ADR-0007 (this Python
 rewrite).
 """
 
-__version__ = "2.6.0"  # x-release-please-version
+__version__ = "2.6.1"  # x-release-please-version

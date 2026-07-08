@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.0...v2.6.1) (2026-07-08)
+
+
+### Fixed
+
+* **monitor:** never restart the tunnel over a probe that could not run ([#137](https://github.com/csmarshall/gluetun-monitor/issues/137)) ([#138](https://github.com/csmarshall/gluetun-monitor/issues/138)) ([c795631](https://github.com/csmarshall/gluetun-monitor/commit/c7956311e8f4e11f07fb4db09ebd56ff13823c9b))
+
 ## [2.6.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.5.2...v2.6.0) (2026-07-08)
 
 
