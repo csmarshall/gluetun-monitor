@@ -88,3 +88,15 @@ edge/repeat/resolve logic is here, which keeps both pieces simple and testable.
   and a dependent the loop couldn't evaluate holds its alert via `AlertState.hold`
   instead of resolving it (#112). Both apply the incomplete-loop principle
   (silence ≠ recovery) at per-subject granularity.
+- **#147 — an un-evaluatable subject needs an alert of its own.** Holding a
+  dependent's alert (above) keeps the lifecycle from *lying* about it, but a
+  dependent that was never unhealthy in the first place has no alert to hold: it
+  accrues no failure count, so it can never trip `dependent-unhealthy`, and it
+  falls silent by construction. `dependent-unprobeable` closes that gap — an
+  `attention` alert raised once a dependent stays unprobeable past a threshold
+  (sized to absorb a remediation restart, which briefly makes one unprobeable by
+  the monitor's own hand). It needs no explicit resolve: it stops being reported
+  the loop the dependent answers again, and the edge-triggered lifecycle above
+  does the rest. Mirrors `gluetun-unprobeable` (#137) on the dependent side; the
+  reasoning about *what* is unprobeable, and why a crash-looper is reported
+  rather than restarted, is in ADR-0004's amendments.

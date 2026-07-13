@@ -33,7 +33,15 @@ class ContainerInfo:
     name: str
     network_mode: str
     running: bool
+    """The daemon considers this container ALIVE — which includes the gaps between a
+    crash-looping container's restarts. It is *not* a claim of health: a container that
+    has died 8,000 times still reports ``Running=true`` while ``Status="restarting"``.
+    Ask ``restarting`` before reading this as "fine" (#147)."""
     health: str
+    restarting: bool = False
+    """``State.Status == "restarting"`` — the container is crash-looping. Docker keeps
+    ``Running`` true throughout, so this is the ONLY field that distinguishes a healthy
+    container from one dying on a loop. Both constructors carry it, so the two agree."""
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -48,6 +56,7 @@ class ContainerInfo:
             network_mode=str(host_config.get("NetworkMode", "")),
             running=bool(state.get("Running", False)),
             health=str(health_obj.get("Status", "unknown")) if health_obj else "unknown",
+            restarting=str(state.get("Status", "")).lower() == "restarting",
             raw=raw,
         )
 
@@ -61,15 +70,24 @@ class ContainerInfo:
         an inspect per container. ``health`` is left ``"unknown"`` and ``raw`` is the
         list entry (NOT a full inspect), so any caller needing ``Config``/``Mounts``
         must still ``inspect()``.
+
+        ``/containers/json`` returns crash-looping containers (``State="restarting"``)
+        alongside healthy ones, so ``running`` counts them as alive — matching what
+        inspect's ``State.Running`` bool reports for the same container. The two
+        constructors must agree, or a container's aliveness would flip depending on
+        which call the monitor happened to learn about it from (#147). The crash-loop
+        itself is carried, in both, by ``restarting``.
         """
         names = entry.get("Names") or []
         host_config = entry.get("HostConfig", {}) or {}
+        state = str(entry.get("State", "")).lower()
         return cls(
             id=entry.get("Id", ""),
             name=str(names[0]).lstrip("/") if names else "",
             network_mode=str(host_config.get("NetworkMode", "")),
-            running=str(entry.get("State", "")).lower() == "running",
+            running=state in ("running", "restarting"),
             health="unknown",
+            restarting=state == "restarting",
             raw=entry,
         )
 

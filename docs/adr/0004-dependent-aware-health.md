@@ -133,3 +133,46 @@ must therefore be evaluated **per dependent**, not as a single global flag.
   dependent that fails it is routed back into this ADR's recovery branch.
 - Supersedes the implicit assumption — present in the original design — that a
   healthy gluetun implies a healthy stack.
+
+## Amendments
+
+### #147 — a crash-looping dependent is *unknown*, and a strand outranks it
+
+Docker reports a container that is crash-looping as `State.Running: true`, with
+`State.Status: "restarting"`. `Running` means "the daemon considers this alive",
+which includes the gaps between a dying container's respawns; it is not a claim
+of health. A dependent that had died 8,548 times therefore read as running, and
+because every `docker exec` into it failed, the interface check returned UNKNOWN
+and the loop left it *unevaluated* — correctly, per #137: never act on a signal
+you cannot attribute. But the tally then counted it as healthy, and nothing ever
+escalated it. The stack reported `dependents: 4/4 ok` for ten days over a
+container that had not worked once.
+
+Three rules follow, and they interact:
+
+1. **`ContainerInfo.running` keeps Docker's meaning; the crash-loop is carried by
+   an explicit `restarting` field.** Both constructors (`from_inspect`, which
+   reads the `Running` bool, and `from_list_entry`, which reads the state string)
+   populate it, so a container's aliveness cannot flip depending on which API
+   call discovered it — they previously disagreed in exactly this case.
+   Narrowing `running` to exclude `restarting` looks obviously correct and is a
+   trap: `running` gates the recreate verdict above, and **a stranded dependent
+   crash-loops too** — its restart policy keeps starting it onto a dead netns, so
+   `Status` is `restarting` for precisely the containers this ADR exists to
+   rescue. Redefining it would have routed them away from the strand branch.
+
+2. **The strand verdict wins.** The `NetworkMode`-vs-current-id comparison runs
+   *before* the crash-loop check, because a strand is the actionable diagnosis
+   and healing it is the point. Only a container dying for reasons of its own
+   falls through to "crash-looping".
+
+3. **A crash-looper is reported, never remediated.** Restarting a container that
+   is already restarting fixes nothing, and bounces the netns its siblings share
+   — the watchdog becoming the outage (Tenets 1 and 7). It is left unevaluated:
+   excluded from the healthy count, never hidden from the total
+   (`dependents: 3/4 ok (1 unprobeable)` — shrinking that to `3/3` would be a
+   fake-green by omission), and escalated by a `dependent-unprobeable` alert once
+   it stays unprobeable beyond a threshold sized to absorb a remediation restart.
+   Without that alert an unprobeable dependent is silent by construction: it
+   accrues no failure count, so it can never trip `dependent-unhealthy`.
+   Lifecycle per ADR-0012 — it resolves itself once the container is probeable.

@@ -778,7 +778,7 @@ line looks. Each level adds its own row to everything above it (ADR-0011):
 
 | `NOTIFY_LEVEL` | You get | Events |
 |---|---|---|
-| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **cannot probe the gateway**, **flaky-site advisory**, **dependent-flapping advisory** |
+| **`attention`** *(default)* | only when **you** must act/decide | recovery/remediation failed, refused to start, **cannot probe the gateway**, **cannot probe a dependent**, **flaky-site advisory**, **dependent-flapping advisory** |
 | `recovery` | + self-healed incidents | gluetun recovered, dependent remediated |
 | `activity` | + non-fault changes | `sites.conf` reloaded, **advisory site unreachable / recovered** |
 | `all` | + the firehose | per-loop checks, restart play-by-play |
@@ -1184,6 +1184,8 @@ The recommended deployment uses a [Docker socket proxy](https://github.com/Tecna
 All three are required. `POST=1` in particular is unavoidable: tecnativa's `POST` is a *binary* switch for the container API — with `POST=0`, the `EXEC` and `ALLOW_RESTARTS` carve-outs are inert, so neither probing nor restarting works (verified; see [#29](https://github.com/csmarshall/gluetun-monitor/issues/29)).
 
 **If the monitor cannot probe, it does nothing.** Should `EXEC` be missing, the proxy become unreachable, or Gluetun stop shipping a usable `wget`, the site probes cannot *run* — which says nothing about the tunnel. Rather than mistake that for a connectivity failure and restart Gluetun (a restart cannot restore an EXEC permission), the monitor raises a distinct `attention` alert — *"cannot probe `<gluetun>`"* — holds its existing alerts, touches nothing, and never claims recovery it could not verify ([#137](https://github.com/csmarshall/gluetun-monitor/issues/137)).
+
+**The same holds for a dependent it cannot see into** — and "cannot see into" includes a container that is *crash-looping*, because Docker reports one as `Running: true` throughout (`Running` means the daemon considers it alive, not that it works). Such a dependent is never counted as healthy and never remediated: restarting a container that is already restarting fixes nothing, and would bounce the network namespace its siblings share. It is reported instead — excluded from the healthy count but never hidden from the total (`dependents: 3/4 ok (1 unprobeable)`), and escalated to a *"cannot probe `<dependent>`"* `attention` alert if it stays unprobeable, which resolves itself the moment the container answers again ([#147](https://github.com/csmarshall/gluetun-monitor/issues/147)). A dependent *stranded* by a Gluetun recreate also crash-loops — its restart policy keeps starting it onto a dead namespace — so the strand check runs first and still heals it; only a container dying of its own accord is left alone.
 
 On `wget` specifically: Gluetun installs GNU `wget` deliberately (it's an explicit `apk add` in its Dockerfile), but that is an *implementation detail* rather than a documented guarantee — whether its presence is part of Gluetun's supported surface is [an open question upstream](https://github.com/passteque/gluetun/discussions/3387). The monitor is built not to care: probes are classified on the **HTTP response**, not on `wget`'s exit code, so GNU and BusyBox `wget` behave identically — and if it ever disappears entirely, the paragraph above applies. We report; we do not restart.
 
