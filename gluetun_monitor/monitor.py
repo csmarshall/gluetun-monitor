@@ -471,19 +471,22 @@ class Monitor:
                         f"restarted.",
                     )
                 self.log.debug(
-                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} "
+                    f"({result.reason}, {result.duration_ms}ms) "
                     f"[{count} · advisory — not gating]"
                 )
                 continue
             if count >= threshold:
                 failed.append(result.url)
                 self.log.warn(
-                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} "
+                    f"({result.reason}, {result.duration_ms}ms) "
                     f"[{count}/{threshold} → restart]"
                 )
             else:
                 self.log.debug(
-                    f"[{gw}] ({done}/{total}) reach fail: {result.url} ({result.reason}) "
+                    f"[{gw}] ({done}/{total}) reach fail: {result.url} "
+                    f"({result.reason}, {result.duration_ms}ms) "
                     f"[{count}/{threshold}]"
                 )
 
