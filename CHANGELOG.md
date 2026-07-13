@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.2...v2.6.3) (2026-07-13)
+
+
+### Dependencies
+
+* bump docker from 7.1.0 to 7.2.0 ([#145](https://github.com/csmarshall/gluetun-monitor/issues/145)) ([4eccba1](https://github.com/csmarshall/gluetun-monitor/commit/4eccba1319c4e83d6f53527680187a582c24890e))
+* bump mypy from 2.1.0 to 2.3.0 ([#143](https://github.com/csmarshall/gluetun-monitor/issues/143)) ([e8d9ace](https://github.com/csmarshall/gluetun-monitor/commit/e8d9ace5adc8f870ffd5dc2d48db1357e7fe2210))
+* bump ruff from 0.15.20 to 0.15.21 ([#144](https://github.com/csmarshall/gluetun-monitor/issues/144)) ([d37f2ea](https://github.com/csmarshall/gluetun-monitor/commit/d37f2eab617693c358bfa9ed9a555eb9c06072a7))
+
+
+### CI / tooling
+
+* **release:** add workflow_dispatch to release-please ([13206a6](https://github.com/csmarshall/gluetun-monitor/commit/13206a69e616ed3aab78e08649f8efadfcbacafe))
+
 ## [2.6.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.1...v2.6.2) (2026-07-08)
 
 
