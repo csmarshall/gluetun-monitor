@@ -12,6 +12,11 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Manual nudge: a dependabot auto-merge pushes main via GITHUB_TOKEN, and GitHub's
+  # recursion rule means that push does NOT trigger this workflow — so a dependency
+  # bump that changes the image (docker/apprise) lands on main unreleased. Run this by
+  # hand (`gh workflow run release-please.yml`) to pick it up.
+  workflow_dispatch: {}
 
 permissions:
   contents: write
