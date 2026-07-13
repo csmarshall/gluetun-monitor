@@ -152,6 +152,28 @@ def test_persistent_unprobeable_dependent_escalates_once(tmp_path: Path) -> None
     assert "dependent-unprobeable:sonarr" not in keys, "the healthy one stays quiet"
 
 
+def test_unprobeable_alert_repeats_like_any_other(tmp_path: Path) -> None:
+    """A container stuck for ten days must keep nagging, not announce once and go quiet.
+
+    It gets this for free — the alert is raised through the same `_problem()` entry point
+    as everything else, so the ADR-0012 machinery (edge-trigger → remind every
+    NOTIFY_REPEAT_INTERVAL loops while active → resolve) applies with no special-casing.
+    Pinned because "stuck" is exactly the state where a fire-once alert would be useless.
+    """
+    notifier = FakeNotifier()
+    mon, _ = _monitor(tmp_path, notifier, io.StringIO())
+    mon.alerts._repeat = 3  # NOTIFY_REPEAT_INTERVAL
+
+    for _ in range(_UNPROBEABLE_ALERT_LOOPS + 9):
+        mon.run_once()
+
+    events = [e for e in notifier.events if e.key == "dependent-unprobeable:flaresolverr"]
+    assert len(events) > 1, "an ongoing problem must nag, not fire once and fall silent"
+    assert not events[0].title.startswith("still active"), "the first one is the edge"
+    assert all(e.title.startswith("still active") for e in events[1:]), "the rest are reminders"
+    assert all(e.tier == "attention" for e in events)
+
+
 def test_a_brief_unprobeable_blip_does_not_alert(tmp_path: Path) -> None:
     """A remediation restart leaves a dependent unprobeable for a loop or two. That is
     the monitor's own doing, not an incident — the threshold exists to absorb it."""
