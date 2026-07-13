@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.3...v2.6.4) (2026-07-13)
+
+
+### Fixed
+
+* never count an unprobeable dependent as healthy ([#147](https://github.com/csmarshall/gluetun-monitor/issues/147)) ([#148](https://github.com/csmarshall/gluetun-monitor/issues/148)) ([4609091](https://github.com/csmarshall/gluetun-monitor/commit/46090915e777bc6be294392154db5622eba53f29))
+
 ## [2.6.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.2...v2.6.3) (2026-07-13)
 
 
