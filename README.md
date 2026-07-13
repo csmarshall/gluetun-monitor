@@ -55,18 +55,25 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:2
 ```mermaid
 flowchart TD
   L(["each loop"]) --> G["test sites through gluetun (the root signal)"]
-  G --> GT{"tunnel down?"}
-  GT -- "yes" --> GR["restart gluetun, wait healthy + DNS, re-verify"]
-  GT -- "no" --> D["check each dependent:<br/>interface + its own DNS/connectivity"]
-  GR --> D
-  D --> DT{"stranded or unreachable?"}
-  DT -- "no" --> OK["healthy"]
-  DT -- "yes" --> R["heal it — docker restart, or recreate<br/>(volumes preserved) if gluetun's id moved"]
+  G --> GT{"a critical site failing<br/>FAIL_THRESHOLD loops in a row?"}
+  GT -- "yes" --> GR["restart gluetun,<br/>wait healthy + DNS"]
+  GT -- "no (or still counting)" --> D["check each dependent:<br/>interface + its own DNS/connectivity"]
+  GR --> RV{"re-verify: are the sites back?"}
+  RV -- "no / couldn't probe" --> STOP["alert, hold, and STOP —<br/>dependents left untouched,<br/>counters reset: it must re-earn<br/>the next restart"]
+  RV -- "yes" --> D
+  D --> DT{"can we tell?"}
+  DT -- "stranded or unreachable" --> R["heal it — docker restart, or recreate<br/>(volumes preserved) if gluetun's id moved"]
+  DT -- "no — crash-looping<br/>or no shell" --> U["report it: not counted healthy,<br/>never remediated"]
+  DT -- "healthy" --> OK["healthy"]
   R --> V["verify: running + non-loopback interface"]
-  OK --> SLEEP["sleep CHECK_INTERVAL"]
+  STOP --> SLEEP["sleep CHECK_INTERVAL"]
   V --> SLEEP
+  U --> SLEEP
+  OK --> SLEEP
   SLEEP --> L
 ```
+
+**Nothing is restarted on one bad probe.** A critical site must fail `FAIL_THRESHOLD` *consecutive* loops before it counts as a breach, and an advisory site never gates a restart at all. If a restart doesn't fix it, the monitor does not keep hammering: it raises an alert, leaves the dependents alone (it can't tell a stranded dependent from one that simply has no route yet), and clears its counters — so the next restart has to be earned from scratch.
 
 The full per-loop state machine (22 nodes) is in
 [ADR-0006](docs/adr/0006-per-dependent-viability-testing.md); the
