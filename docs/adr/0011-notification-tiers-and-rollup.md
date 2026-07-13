@@ -100,7 +100,7 @@ later, with no contract change.
 **The pipeline** — why grouping is intrinsic (the rollup substrate):
 
 ```mermaid
-flowchart LR
+flowchart TD
     EV[problems + point events this loop] --> LC{lifecycle: new / repeat / resolve?}
     LC -->|suppressed| X[dropped]
     LC -->|emit| TF{tier within NOTIFY_LEVEL?}
