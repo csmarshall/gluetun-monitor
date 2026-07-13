@@ -57,6 +57,13 @@ if TYPE_CHECKING:
 
 Sleep = Callable[[float], None]
 
+# Consecutive loops a dependent may stay unprobeable before the monitor says so out loud
+# (#147). Not a tunable: it is a floor on "long enough that this is not just a restart".
+# A remediation restart leaves a dependent unprobeable for a loop or two, which is the
+# monitor's own doing and not worth paging about; anything past that is a container we
+# genuinely cannot see, and silence there is how one crash-looped for ten days unnoticed.
+_UNPROBEABLE_ALERT_LOOPS = 5
+
 
 @dataclass(frozen=True, slots=True)
 class GatewayCheck:
@@ -85,6 +92,7 @@ class DependentProbe:
     viability_ok: bool | None  # None = not tested (no pool / not live / unvalidatable)
     reason: str
     dns_unvalidated: bool = False  # True = no usable DNS tool in the container
+    restarting: bool = False  # True = crash-looping: alive per Docker, healthy per nobody
     interfaces: str = "?"  # the dependent's net interfaces, for DEBUG visibility
 
 
@@ -171,6 +179,10 @@ class Monitor:
         self._unrecovered_sites: set[str] = set()
         self.site_failures = Counter()
         self.dependent_failures = Counter()
+        # Consecutive loops each dependent has been UNPROBEABLE (#147) — tracked apart from
+        # dependent_failures because "I couldn't tell" is not "it failed": this counter never
+        # drives remediation, only the dependent-unprobeable alert.
+        self.dependent_unprobeable = Counter()
         # Last-seen full specs (url -> SiteSpec), so a live edit is detected on ANY
         # config change — not just add/remove, but a site's role/timeout/tries too.
         self._last_specs: dict[str, SiteSpec] | None = None
@@ -588,6 +600,18 @@ class Monitor:
                     "inspect: netns id moved (gluetun recreated), container not exec'able",
                     interfaces=ifs,
                 )
+            # Crash-looping (#147). Checked AFTER the strand verdict above, because a
+            # stranded dependent also crash-loops (its restart policy keeps starting it
+            # onto a dead netns) and healing that strand is the whole point — the strand
+            # is the actionable diagnosis, so it wins. What's left here is a container
+            # dying for reasons of its own. Docker reports it Running the whole time, so
+            # without this it looks alive and probes silently fail forever. We can't fix
+            # it (restarting a container that is *already* restarting is pure churn —
+            # Tenets 1 and 7), so we say so instead of acting: unevaluated, and loud.
+            if info is not None and info.restarting:
+                return DependentProbe(dep, InterfaceStatus.UNKNOWN, True, None,
+                                      "container is restarting (crash-looping)",
+                                      interfaces=ifs, restarting=True)
             return DependentProbe(dep, status, running, None, "link check unavailable",
                                   interfaces=ifs)
 
@@ -737,7 +761,9 @@ class Monitor:
         for gone in self._managed_dependents - set(dependents):
             self._forget(f"dependent-unhealthy:{gone}")
             self._forget(f"dependent-wedged:{gone}")
+            self._forget(f"dependent-unprobeable:{gone}")
             self._wedges.pop(gone, None)
+            self.dependent_unprobeable.reset(gone)
         self._managed_dependents = set(dependents)
         if not dependents:
             return
@@ -785,7 +811,11 @@ class Monitor:
                 continue
             if probe.status is InterfaceStatus.UNKNOWN:
                 self.log.debug(f"[{tag}] {probe.reason} (running={probe.running})")
-                if not probe.running:
+                if probe.restarting:
+                    # Crash-looping: restarting it again fixes nothing and churns the
+                    # netns its siblings share. Not judged, not touched — escalated below.
+                    unevaluated.add(dep)
+                elif not probe.running:
                     to_remediate.append((dep, "not running (link check unavailable)"))
                 else:
                     unevaluated.add(dep)  # running but interfaces unreadable — not judged
@@ -820,14 +850,45 @@ class Monitor:
                 self.log.debug(f"[{tag}] reach fail: {probe.reason} [{count}/{threshold}]")
 
         # INFO heartbeat for the dependent phase (mirrors the gateway summary).
-        healthy = len(probes) - len(to_remediate)
+        # A dependent we could not evaluate is neither ok nor failing — it is UNKNOWN, and
+        # counting it as healthy reported a container that had crash-looped thousands of
+        # times as "4/4 ok" (#147). Exclude it from the healthy count, but NEVER from the
+        # denominator: shrinking N/M to hide it would just be a fake-green by omission.
+        # "I couldn't tell" gets said out loud (Tenet 7).
+        healthy = len(probes) - len(to_remediate) - len(unevaluated)
+        unprobed = f" ({len(unevaluated)} unprobeable)" if unevaluated else ""
         if to_remediate:
             self.log.info(
-                f"dependents: {healthy}/{len(probes)} ok — "
+                f"dependents: {healthy}/{len(probes)} ok{unprobed} — "
                 f"remediating: {', '.join(dep for dep, _ in to_remediate)}"
             )
         else:
-            self.log.info(f"dependents: {healthy}/{len(probes)} ok")
+            self.log.info(f"dependents: {healthy}/{len(probes)} ok{unprobed}")
+
+        # A dependent that STAYS unprobeable escalates (#147). Left alone it is neither
+        # healthy nor failing: it accrues no failure count (correctly — #137: never act on
+        # a signal we cannot attribute), so it never trips dependent-unhealthy, and it would
+        # sit in limbo silently forever. On the host that prompted this, a crash-looping
+        # dependent was unprobeable for TEN DAYS and nothing ever said so. Mirrors the
+        # gateway's `gluetun-unprobeable`. Thresholded because a remediation restart makes a
+        # dependent briefly unprobeable — that is the monitor's own doing, not an incident.
+        for dep in unevaluated:
+            streak = self.dependent_unprobeable.fail(dep)
+            if streak >= _UNPROBEABLE_ALERT_LOOPS:
+                self._problem(
+                    f"dependent-unprobeable:{dep}",
+                    "attention",
+                    f"cannot probe dependent: {dep}",
+                    f"{dep} has been unprobeable for {streak} consecutive loops — its health "
+                    f"is UNKNOWN, and it is NOT being remediated (acting on a signal we can't "
+                    f"attribute would risk restarting a healthy container). Check whether it "
+                    f"is crash-looping, is stuck, or lacks the tools to probe with.",
+                )
+        # Probeable again: drop the streak. The alert stops being reported, so the
+        # lifecycle resolves it (ADR-0012) — no explicit resolve call needed.
+        for probe in probes:
+            if probe.name not in unevaluated:
+                self.dependent_unprobeable.reset(probe.name)
 
         # A dependent the loop couldn't evaluate wasn't proven healthy — hold any
         # active alert so it doesn't false-resolve mid-incident (e.g. all sites went

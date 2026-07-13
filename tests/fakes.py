@@ -46,12 +46,23 @@ def make_inspect(
     network_mode: str = "",
     running: bool = True,
     health: str | None = "healthy",
+    status: str | None = None,
     mounts: list[dict[str, Any]] | None = None,
     config: dict[str, Any] | None = None,
     host_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a docker-inspect-shaped dict."""
-    state: dict[str, Any] = {"Running": running}
+    """Build a docker-inspect-shaped dict.
+
+    Real Docker ALWAYS sets ``State.Status``, and reports ``Running=true`` while
+    ``Status == "restarting"`` — the crash-loop case that produced the #147 fake-green.
+    So the fake carries both: ``status`` defaults to the value implied by ``running``,
+    and a test can pass ``status="restarting"`` (with ``running=True``) to reproduce a
+    crash-looping container faithfully.
+    """
+    state: dict[str, Any] = {
+        "Running": running,
+        "Status": status if status is not None else ("running" if running else "exited"),
+    }
     if health is not None:
         state["Health"] = {"Status": health}
     full_host_config = {"NetworkMode": network_mode}
