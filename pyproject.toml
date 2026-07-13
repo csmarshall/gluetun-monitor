@@ -17,7 +17,7 @@ dependencies = [
     # deps are exercised for real in CI (docker by the real-daemon job #24, apprise
     # by the localhost-sink test #22), so patch/minor auto-merge on green; majors
     # still get a human.
-    "docker==7.1.0",
+    "docker==7.2.0",
     "apprise==1.12.0",
 ]
 
