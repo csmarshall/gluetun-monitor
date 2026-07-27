@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.4...v2.6.5) (2026-07-27)
+
+
+### Fixed
+
+* **deps:** rebuild on updated python:3.14-slim base (sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6) ([8b96e19](https://github.com/csmarshall/gluetun-monitor/commit/8b96e191a898d4051a2957fdaa017e4e007281e9))
+* log how long a failing probe took ([#150](https://github.com/csmarshall/gluetun-monitor/issues/150)) ([0103fdf](https://github.com/csmarshall/gluetun-monitor/commit/0103fdf52fe4389a907fdc618a54c29af2e622ed))
+
+
+### Dependencies
+
+* bump ruff from 0.15.21 to 0.15.22 ([#154](https://github.com/csmarshall/gluetun-monitor/issues/154)) ([a6425dd](https://github.com/csmarshall/gluetun-monitor/commit/a6425ddb272777fdb762b9fa212c62bb1d6fdc8f))
+
+
+### CI / tooling
+
+* bump actions/checkout from 7.0.0 to 7.0.1 ([#152](https://github.com/csmarshall/gluetun-monitor/issues/152)) ([142329d](https://github.com/csmarshall/gluetun-monitor/commit/142329d7dd4115e985804b54fc12348ba333a6b6))
+* bump actions/setup-python from 6.3.0 to 7.0.0 ([#153](https://github.com/csmarshall/gluetun-monitor/issues/153)) ([a9c90d7](https://github.com/csmarshall/gluetun-monitor/commit/a9c90d79bcf4097ce349e6833565ee8044fa1095))
+
 ## [2.6.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.3...v2.6.4) (2026-07-13)
 
 
