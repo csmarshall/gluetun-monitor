@@ -8,7 +8,7 @@ Implemented as an opt-in [Apprise](https://github.com/caronc/apprise) layer:
 (gluetun restart, recovery failure, dependent remediation, the flaky-site advisory,
 refusal to start) are pushed to any of 100+ backends, filtered by `NOTIFY_MIN_LEVEL`
 and throttled per event. Best-effort (Tenet 7) and `--notify-test` to verify a URL.
-See ADR-0010 and the README "Notifications" section.
+See ADR-0010 and [NOTIFICATIONS.md](NOTIFICATIONS.md).
 
 Possible follow-ups: a machine-readable health surface (HTTP endpoint / container
 `HEALTHCHECK`) distinct from the outbound notifications; more event types behind

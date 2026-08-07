@@ -80,7 +80,7 @@ The **only** gluetun-specific code in the project is `endpoint.py`, which greps 
 
 ## Docker API surface
 
-The monitor needs three capabilities, and no more. With the recommended [socket proxy](../README.md#docker-socket-proxy):
+The monitor needs three capabilities, and no more. With the recommended [socket proxy](ARCHITECTURE.md#docker-socket-proxy):
 
 | Setting | Required for |
 |---|---|
