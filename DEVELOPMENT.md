@@ -100,8 +100,9 @@ docker compose up -d --force-recreate gluetun   # new id -> recover via recreate
 
 - `mypy --strict` and `ruff` must stay green; keep public functions typed +
   docstring'd.
-- New env vars: add to `Config`, document in `README.md`, and (if it changes the
-  contract) extend the characterization suite.
+- New env vars: add to `Config`, document in [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
+  (the variable table **and** a Variable Details entry if it needs one), and (if it
+  changes the contract) extend the characterization suite.
 - Docker behavior is added to the `DockerClient` Protocol **and** the
   `FakeDockerClient`, never reached for directly — that keeps everything testable.
 - Significant/hard-to-reverse decisions get an ADR; tunable heuristics go in
