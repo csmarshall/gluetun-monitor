@@ -355,9 +355,11 @@ Example with `FAIL_THRESHOLD=2`:
 - After restart: Counter reset to 0
 
 ### `HEALTHY_WAIT_TIMEOUT`
-Maximum seconds to wait for Gluetun to report "healthy" status after a restart. Gluetun must have a healthcheck configured for this to work.
+Maximum seconds to wait for Gluetun to report "healthy" status after a restart. This is the **only** place the monitor reads Gluetun's container health — it never restarts Gluetun *because* it is unhealthy.
 
-If Gluetun doesn't become healthy within this timeout, the monitor logs an error but continues operating.
+If Gluetun doesn't become healthy within this timeout, the monitor logs an error but continues operating. If Gluetun has no healthcheck at all, the monitor detects that and settles briefly instead of burning the whole timeout.
+
+**Keep Gluetun's own healthcheck.** Replacing it with a hand-rolled probe both fake-greens this gate and makes it slower — see [Gluetun's healthcheck — don't override it](ARCHITECTURE.md#gluetuns-healthcheck--dont-override-it).
 
 ## Dependent Container Discovery
 

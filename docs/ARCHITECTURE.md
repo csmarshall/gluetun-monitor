@@ -128,6 +128,43 @@ This approach means no configuration is needed - containers are discovered dynam
 
 For more details on the Docker Engine API, see the [official documentation](https://docs.docker.com/engine/api/).
 
+## Gluetun's healthcheck — don't override it
+
+Gluetun ships its own Docker `HEALTHCHECK` (`/gluetun-entrypoint healthcheck`, a 5-second interval). It is easy to assume that a watchdog wants something more thorough there and to replace it with a hand-rolled probe — a `wget --spider` against some public site is the common choice. **Leave it alone.** The override is strictly worse, and it does not do what people expect.
+
+```mermaid
+flowchart TD
+  HS["gluetun's internal health server<br/>(HEALTH_TARGET_ADDRESSES / HEALTH_ICMP_TARGET_IPS)"]
+  HS --> V{"tunnel reachable?"}
+  V -- "no" --> RV["gluetun restarts its own VPN process<br/>(HEALTH_RESTART_VPN, on by default)"]
+  RV --> HS
+  V -- "verdict, either way" --> HC["Docker HEALTHCHECK:<br/>/gluetun-entrypoint healthcheck<br/>reports the verdict, takes no action"]
+  HC --> ST(["container health status"])
+
+  SP["gluetun-monitor probes your sites<br/>through the tunnel, every loop"] --> B{"FAIL_THRESHOLD<br/>consecutive failures?"}
+  B -- "no" --> DEP["check dependents"]
+  B -- "yes" --> RS["monitor restarts the gluetun CONTAINER<br/>(the only thing that triggers this)"]
+  RS --> W["wait_for_healthy() — readiness gate"]
+  ST --> W
+  W --> RVF["re-verify sites, then dependents"]
+```
+
+Two loops run independently, and they meet in exactly one place.
+
+**Gluetun heals itself, and the Docker healthcheck has nothing to do with it.** Gluetun runs an internal health server and, with `HEALTH_RESTART_VPN` (on by default), restarts its own VPN process when its checks fail. That loop reads `HEALTH_TARGET_ADDRESSES` / `HEALTH_ICMP_TARGET_IPS` directly — **not** the Docker healthcheck. Overriding the Docker healthcheck therefore suppresses nothing and enables nothing; `/gluetun-entrypoint healthcheck` is only a *client* that surfaces that same internal verdict to Docker. Replacing it replaces the report, not the behaviour.
+
+**The monitor never restarts gluetun because it is unhealthy.** The only thing that triggers a gluetun restart is `FAIL_THRESHOLD` consecutive failures of a **critical site probe**. Container health status is read in exactly one place: the readiness gate the monitor waits on *after* it has already restarted gluetun, bounded by [`HEALTHY_WAIT_TIMEOUT`](CONFIGURATION.md#healthy_wait_timeout). Unhealthy on its own causes no action at all.
+
+That single consumer is what makes the override harmful:
+
+- **It can fake-green the readiness gate.** An external probe reports on *that site's* reachability, which is not the same question gluetun is answering. It can read healthy while gluetun's own verdict is "broken, restarting the VPN" — so the monitor concludes its restart worked and moves on to the dependents on the strength of a signal gluetun disagrees with. This is the same failure class as [#137](https://github.com/csmarshall/gluetun-monitor/issues/137) and [#147](https://github.com/csmarshall/gluetun-monitor/issues/147): never count something as healthy on a measurement that didn't answer the question.
+- **A long `interval` or `start_period` is dead time on every restart.** The gate polls every 5 seconds. A 30-second `interval` plus a 30-second `start_period` means the transition to healthy cannot be *observed* for 30–60 seconds, so the monitor sits in the gate that much longer each time it restarts gluetun. Gluetun's own check is 5s/10s.
+- **It couples tunnel health to a third party.** If the site you picked has an outage, or geo-blocks the exit you rolled onto, gluetun reads unhealthy while the tunnel is fine.
+
+If gluetun has **no** healthcheck at all, that is handled rather than fatal: the monitor sees health `unknown`, settles briefly and proceeds instead of burning the full timeout and raising a false "cannot recover" ([#84](https://github.com/csmarshall/gluetun-monitor/issues/84)). The DNS-stability check that follows is the real readiness gate. But gluetun's own healthcheck is strictly better than none, and better than anything you would write by hand.
+
+> **One gluetun config note.** `HEALTH_TARGET_ADDRESS` (singular) is deprecated in favour of **`HEALTH_TARGET_ADDRESSES`** (plural) — gluetun logs a warning about it on every check. It is worth removing if you have it: the singular form takes one address, so a single unreachable target makes gluetun's *startup* check fail and restart the VPN in a tight loop. The plural default (`cloudflare.com:443,github.com:443`) does not have that failure mode.
+
 ## Docker Socket Proxy
 
 The recommended deployment uses a [Docker socket proxy](https://github.com/Tecnativa/docker-socket-proxy) to restrict which Docker API endpoints gluetun-monitor can access. Instead of mounting the Docker socket directly (which grants full API access), the proxy exposes only the specific capabilities needed:
