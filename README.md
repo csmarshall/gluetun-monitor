@@ -206,7 +206,7 @@ owned by the daemon, not the container, so:
 ## Requirements
 
 - Docker with API access (via [socket proxy](docs/ARCHITECTURE.md#docker-socket-proxy) or direct socket mount)
-- Gluetun container with a healthcheck configured
+- Gluetun container with a healthcheck configured — its own is ideal, and [shouldn't be overridden](docs/ARCHITECTURE.md#gluetuns-healthcheck--dont-override-it)
 - Dependent containers using `network_mode: "container:<gluetun>"`
 
 ## Security Considerations
