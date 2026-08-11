@@ -61,6 +61,10 @@ CI runs all three on every PR (`.github/workflows/ci.yml`), plus shellcheck and
 the legacy bats suite against `gluetun-monitor.sh`, plus a Docker build +
 container-start integration check.
 
+The runtime Python version is single-sourced from the Dockerfile's `FROM` line, so
+CI can never test against a version the image doesn't ship. Moving it to a new minor
+(3.14 → 3.15 → …) is a short checklist: [`docs/PYTHON-BUMP.md`](docs/PYTHON-BUMP.md).
+
 ## Testing strategy
 
 - **Unit tests** (`tests/test_*.py`) — each module against the `FakeDockerClient`

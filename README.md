@@ -54,6 +54,7 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:2
 | **[Compatibility](docs/COMPATIBILITY.md)** | What each capability your dependent ships unlocks — and what a `FROM scratch` container still gets |
 | **[Tenets](docs/TENETS.md)** and **[ADRs](docs/adr/)** | The design record: what the monitor will never do, and why each decision was made |
 | **[Versioning](docs/VERSIONING.md)** | Image tag policy and the release process |
+| **[Bumping the runtime Python](docs/PYTHON-BUMP.md)** | Maintainer runbook for the periodic base-image move (3.14 → 3.15 → …) |
 
 ## Features
 

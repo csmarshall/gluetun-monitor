@@ -19,7 +19,7 @@ retained only as a differential test oracle (see below).
    ```
 4. Make your change with tests, run the gate (below), open a PR.
 
-The runtime Python is whatever the **Dockerfile**'s `FROM python:X.Y-slim` declares (currently **3.14**) — the single source of truth that CI derives its test matrix, lock audit, and integration job from. `pyproject.toml` (`requires-python` / ruff `target-version`) sets the supported floor.
+The runtime Python is whatever the **Dockerfile**'s `FROM python:X.Y-slim` declares (currently **3.14**) — the single source of truth that CI derives its test matrix, lock audit, and integration job from. `pyproject.toml` (`requires-python`, ruff `target-version`, mypy `python_version`) sets the supported floor, and is deliberately *not* derived from it. Moving the runtime to a new minor is a short checklist: [docs/PYTHON-BUMP.md](docs/PYTHON-BUMP.md).
 
 ## The gate — run this before every PR
 
