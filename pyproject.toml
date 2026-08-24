@@ -18,7 +18,7 @@ dependencies = [
     # by the localhost-sink test #22), so patch/minor auto-merge on green; majors
     # still get a human.
     "docker==7.2.0",
-    "apprise==1.12.0",
+    "apprise==1.13.0",
 ]
 
 [project.urls]
