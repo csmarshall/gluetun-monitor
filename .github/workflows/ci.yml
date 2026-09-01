@@ -128,7 +128,7 @@ jobs:
         # Python version, invocation — is stripped), so it fails on real dependency
         # drift, not cosmetic header text.
         run: |
-          pip install pip-tools==7.5.3
+          pip install pip-tools==7.6.1
           cp requirements.lock /tmp/committed.lock
           pip-compile --quiet --generate-hashes --output-file=requirements.lock pyproject.toml
           if ! diff -u <(grep -v '^#' /tmp/committed.lock) <(grep -v '^#' requirements.lock); then
