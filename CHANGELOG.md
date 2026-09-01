@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.8](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.7...v2.6.8) (2026-08-31)
+
+
+### Fixed
+
+* **deps:** rebuild on updated python:3.14-slim base (sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5) ([c6541ce](https://github.com/csmarshall/gluetun-monitor/commit/c6541ce0eabf400edd3221fd3bcece822a30e533))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4) ([861c7cd](https://github.com/csmarshall/gluetun-monitor/commit/861c7cd6bf36063f4356972d8d447bf4fe252fcc))
+
+
+### Dependencies
+
+* bump mypy from 2.3.0 to 2.3.1 ([#172](https://github.com/csmarshall/gluetun-monitor/issues/172)) ([0015a01](https://github.com/csmarshall/gluetun-monitor/commit/0015a018b42b8ea1cefd798baa17e7ab16d2950a))
+* bump ruff from 0.16.2 to 0.16.3 ([#168](https://github.com/csmarshall/gluetun-monitor/issues/168)) ([5efe6c7](https://github.com/csmarshall/gluetun-monitor/commit/5efe6c7e6fa35045e62ef8850b637e909447a73f))
+* bump ruff from 0.16.3 to 0.16.4 ([#173](https://github.com/csmarshall/gluetun-monitor/issues/173)) ([e7ccead](https://github.com/csmarshall/gluetun-monitor/commit/e7ccead7be762cc4126ce1ddb68b986edb0dc8ca))
+
+
+### CI / tooling
+
+* bump docker/setup-buildx-action from 4.2.0 to 4.3.0 ([#170](https://github.com/csmarshall/gluetun-monitor/issues/170)) ([bb40425](https://github.com/csmarshall/gluetun-monitor/commit/bb40425a4f6ce97845bf6f45b0d79a78fe2f699d))
+
 ## [2.6.7](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.6...v2.6.7) (2026-08-10)
 
 
