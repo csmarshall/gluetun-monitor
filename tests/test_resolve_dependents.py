@@ -61,3 +61,31 @@ def test_remembered_but_gone_dependent_is_pruned() -> None:
 
     fake.remove("dep", volumes=False)  # disappears
     assert mon._resolve_dependents() == []  # pruned from the remembered set
+
+
+def test_remembered_dependent_reconfigured_off_gluetun_is_pruned() -> None:
+    """A remembered name whose container was recreated under plain bridge
+    networking (compose dropped ``network_mode: container:gluetun`` entirely) is
+    no longer a dependent, even though it still exists under the same name.
+
+    Existence alone can't distinguish this from the legitimate stale-id-stranded
+    case the remembered set exists for (ADR-0014) — only the current NetworkMode
+    can. Without this check the name would be phantom-managed forever, since
+    nothing else ever removes a name from ``known_dependents`` except the
+    container disappearing outright. Auto-discovery (the real deployment's mode)
+    is what actually exercises this: a manual ``DEPENDENT_CONTAINERS`` list is
+    taken at face value regardless of NetworkMode, by design.
+    """
+    fake = _CountingClient()
+    fake.add_container("gluetun", id=GLUETUN_ID)
+    fake.add_container("dep", network_mode=f"container:{GLUETUN_ID}")
+    mon = _mon(fake)  # default dependent_containers="auto"
+    assert mon._resolve_dependents() == ["dep"]  # dep now remembered
+
+    # Simulate a real recreate: old container gone, new one under the same name
+    # with unrelated (non-container-mode) networking. Auto-discovery no longer
+    # finds it (NetworkMode doesn't match gluetun), so this only reaches the
+    # remembered-set prune path being tested here.
+    fake.remove("dep", volumes=False)
+    fake.add_container("dep", network_mode="bridge")
+    assert mon._resolve_dependents() == []  # no longer a dependent, though it exists
