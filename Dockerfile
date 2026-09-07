@@ -7,7 +7,7 @@
 # python:3.14-slim is re-published (security patches) → a `fix:` commit → an
 # auto-merged patch release that rebuilds on the new base. Keep the human-readable
 # tag in the ref so it's obvious what major.minor this is.
-FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 # gosu lets the entrypoint drop privileges to PUID:PGID when the operator opts in
 # (LSIO-style). With no PUID/PGID the container runs as root — a drop-in match for
