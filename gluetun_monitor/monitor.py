@@ -719,7 +719,8 @@ class Monitor:
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
-        remembered set, pruned to containers that still exist, minus EXCLUDE.
+        remembered set, pruned to containers that still exist AND still plausibly
+        share gluetun's netns, minus EXCLUDE.
 
         A name that came from an explicit ``DEPENDENT_CONTAINERS`` list but does
         not exist is a likely misconfiguration — warn loudly (deduped) rather
@@ -740,14 +741,26 @@ class Monitor:
         self._known_dependents.update(
             name for name, exists in present.items() if exists and not is_parked_name(name)
         )
-        # Prune the remembered set to containers that still exist. Reuse the
-        # existence we already learned for the current names; only inspect a
-        # remembered name we haven't already checked this loop (e.g. one stranded
-        # by a gluetun recreate, so current-id discovery no longer surfaces it).
+        # Prune the remembered set to containers that still exist AND whose
+        # NetworkMode still looks like it could share gluetun's netns. Reuse the
+        # existence we already learned for the current names (those came from
+        # live discovery, so they're container-mode by construction — no need to
+        # re-inspect). For a remembered name NOT in this loop's discovery, only
+        # existing is not enough: it may be legitimately stranded on a stale
+        # gluetun id (keep — the id-continuity case this memory exists for), or
+        # it may have been reconfigured (e.g. its compose file dropped
+        # ``network_mode: container:gluetun`` entirely) to plain bridge/host/no
+        # networking at all, in which case it is simply no longer a dependent and
+        # must be dropped even though the container itself is still alive under
+        # the same name — the previous check ("does inspect() return non-None")
+        # could never tell these two cases apart, so a container that outlived
+        # its gluetun dependency stayed phantom-managed forever.
         existence = dict(present)
         for d in self._known_dependents:
-            if d not in existence:
-                existence[d] = self.client.inspect(d) is not None
+            if d in existence:
+                continue
+            info = self.client.inspect(d)
+            existence[d] = info is not None and info.network_mode.startswith("container:")
         self._known_dependents = {d for d in self._known_dependents if existence.get(d, False)}
         # Mirror the pruned remembered set into the durable memory (#97) so a
         # monitor restart resumes with exactly what this instance knew.
