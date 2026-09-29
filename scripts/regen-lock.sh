@@ -12,7 +12,7 @@
 set -euo pipefail
 unset TMOUT
 
-PIP_TOOLS_VERSION="7.5.3"   # keep in lock-step with .github/workflows/ci.yml lock-audit
+PIP_TOOLS_VERSION="7.6.1"   # keep in lock-step with .github/workflows/ci.yml lock-audit
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
