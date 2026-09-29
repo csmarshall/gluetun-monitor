@@ -167,6 +167,18 @@ class Config:
     dependent_advisory_window: int = 86400
     dependent_advisory_min_remediations: int = 5
 
+    # --- Per-dependent app-level (HTTP status) checks (ADR-0018) ---
+    # Optional rule file: "<container-name-regex> <url>[|timeout=N|tries=N|failures=N]"
+    # per line. Off by default (a missing file contributes nothing) — see
+    # app_checks.py. Catches a site that L7-blocks this specific VPN exit endpoint
+    # while the tunnel itself (ADR-0001/0006) is perfectly healthy.
+    app_checks_file: str = "/config/app-checks.conf"
+    # Consecutive-loop failures before a rule gates a restart; global default,
+    # overridable per rule via |failures=N. Defaults to FAIL_THRESHOLD so a single
+    # L7 blip doesn't roll the tunnel any more readily than a flaky root site does
+    # (Tenet 8), mirroring how DEPENDENT_CONTAINER_FAILURES defaults the same way.
+    dependent_app_check_failures: int = 2
+
     # --- Opt-in notification layer (issue #22, ADR-0010) ---
     # Comma-separated Apprise URLs (ntfy/Discord/Telegram/email/webhook/…).
     # Unset/empty = notifications disabled = today's log-only behavior (drop-in).
@@ -279,6 +291,12 @@ class Config:
                                                errors, minimum=1),
             dependent_advisory_min_remediations=_env_int(
                 "DEPENDENT_ADVISORY_MIN_REMEDIATIONS", 5, errors, minimum=1),
+            app_checks_file=os.environ.get("APP_CHECKS_FILE", "/config/app-checks.conf"),
+            # Defaults to FAIL_THRESHOLD (ADR-0018), same pattern as
+            # DEPENDENT_CONTAINER_FAILURES above.
+            dependent_app_check_failures=_env_int(
+                "DEPENDENT_APP_CHECK_FAILURES", fail_threshold, errors, minimum=1
+            ),
             apprise_urls=tuple(
                 u.strip() for u in os.environ.get("APPRISE_URLS", "").split(",") if u.strip()
             ),

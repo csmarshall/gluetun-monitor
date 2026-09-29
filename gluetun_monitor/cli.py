@@ -7,6 +7,7 @@ import signal
 import sys
 from types import FrameType
 
+from .app_checks import load_rules_report
 from .config import Config
 from .dependents import parse_csv_names
 from .docker_client import DockerClient, DockerPyClient
@@ -44,6 +45,16 @@ def check_prerequisites(client: DockerClient, config: Config, logger: Logger) ->
         logger.error(f"Cannot read sites config {config.config_file}: {exc}")
         return False
     warn_rejects(logger.warn, rejected)
+    # App-checks (ADR-0018) are opt-in and off by default — a missing/empty file
+    # is not an error, unlike sites.conf. Only bad *lines* are worth a startup
+    # warning (same forgiving+loud contract as sites.conf); OSError (e.g. a
+    # directory where a file was expected) is swallowed the same way a missing
+    # sites.conf is, since APP_CHECKS_FILE not existing at all is the common case.
+    try:
+        _, app_check_rejected = load_rules_report(config.app_checks_file)
+        warn_rejects(logger.warn, app_check_rejected)
+    except OSError as exc:
+        logger.warn(f"Cannot read app-checks config {config.app_checks_file}: {exc}")
     if not sites:
         logger.error(
             "No testable sites configured: provide URLs via the sites file "

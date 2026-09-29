@@ -138,6 +138,8 @@ services:
       # sed -i, many IDEs) writes a NEW inode and your edit is invisible until you
       # recreate — silently defeating the live reload. A directory mount resolves
       # sites.conf fresh on every read, so any editor's save is picked up live.
+      # Optional app-checks.conf (see app-checks.conf.example) lives in this same
+      # directory — off by default, no extra mount needed if you add one.
       - ./config:/config:ro
       # Persistent logs + stats (the monitor rotates the file inside this dir).
       # With PUID/PGID set above, the entrypoint chowns this mount for you — no

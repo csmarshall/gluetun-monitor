@@ -34,6 +34,8 @@ timeout model fits together. For a runnable starting point see
 | `ADVISORY_DOMINANCE` | `0.5` | Fraction of those restarts one site must cause to be flagged flaky |
 | `DEPENDENT_ADVISORY_WINDOW` | `86400` | Window (seconds) for the dependent-flapping advisory |
 | `DEPENDENT_ADVISORY_MIN_REMEDIATIONS` | `5` | Remediations of one dependent in the window before it's flagged as flapping |
+| [`APP_CHECKS_FILE`](#app-checks--per-dependent-http-status-checks) | `/config/app-checks.conf` | Optional rule file: `<container-name-regex> <url>` per line, checked from inside matching dependents. A 4xx/5xx (or no response) gates a Gluetun restart. Off by default (missing file = no-op) |
+| [`DEPENDENT_APP_CHECK_FAILURES`](#app-checks--per-dependent-http-status-checks) | *(= `FAIL_THRESHOLD`)* | Consecutive-loop failures before an app-check rule gates a restart; overridable per rule with `\|failures=N` |
 | `AUTO_RECREATE` | `1` | Recreate a dependent stranded by a Gluetun recreate (id changed). Set `0` to disable → such a dependent is reported FAILED instead |
 | `DNS_WAIT_TIMEOUT` | `30` | Max seconds to wait for Gluetun DNS to stabilize after a restart |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to include per-site/per-dependent detail lines |
@@ -360,6 +362,105 @@ Maximum seconds to wait for Gluetun to report "healthy" status after a restart. 
 If Gluetun doesn't become healthy within this timeout, the monitor logs an error but continues operating. If Gluetun has no healthcheck at all, the monitor detects that and settles briefly instead of burning the whole timeout.
 
 **Keep Gluetun's own healthcheck.** Replacing it with a hand-rolled probe both fake-greens this gate and makes it slower — see [Gluetun's healthcheck — don't override it](ARCHITECTURE.md#gluetuns-healthcheck--dont-override-it).
+
+## App checks — per-dependent HTTP status checks
+
+The root site test and the per-dependent viability pool both answer "does the
+tunnel work" — and both deliberately treat any HTTP response, even 401/403/5xx,
+as a pass (see [Site Test Success/Failure Logic](#site-test-successfailure-logic)
+above). That leaves one case uncovered: a VPN provider whose *specific exit
+endpoint* is blocked by a destination site at the application layer — geo-blocking
+or IP fingerprinting, say. The tunnel is up, DNS is fine, the site answers — with
+a 403, because it doesn't like *this* exit IP, not because anything is broken.
+The root test and viability pool correctly call that healthy; it isn't, for a
+dependent that specifically needs that site, and the one thing that plausibly
+fixes it — landing on a different exit endpoint — is a gluetun restart, not
+anything the dependent itself can do.
+
+```mermaid
+stateDiagram-v2
+  direction TB
+  [*] --> GatewayCheck
+  GatewayCheck: gateway check\nroot sites vs gluetun
+  AppCheck: app-check phase\nrules vs matched dependents
+  GatewayCheck --> AppCheck: gluetun probeable
+  GatewayCheck --> Unprobeable: every root probe failed to run
+  Unprobeable --> [*]: hold alerts, restart nothing
+
+  AppCheck --> Healthy: no root breach AND no rule breach
+  AppCheck --> Restart: root breach OR a rule crossed its threshold
+
+  Healthy --> DependentPhase
+  DependentPhase --> [*]
+
+  Restart --> RestartGluetun
+  RestartGluetun --> Reverify: restart succeeded
+  RestartGluetun --> Unrecovered: restart itself failed
+
+  Reverify: re-run root sites\nAND the triggering rule(s)
+  Reverify --> Recovered: both clear
+  Reverify --> Unrecovered: either still fails
+  Reverify --> ReverifyUnprobeable: gluetun unprobeable post-restart
+
+  Recovered --> DependentPhase
+  Unrecovered --> [*]: hold gluetun-unrecovered alert
+  ReverifyUnprobeable --> [*]: hold alerts, recovery unverified
+```
+
+App checks are an optional, off-by-default rule file: `APP_CHECKS_FILE`
+(default `/config/app-checks.conf`), one rule per line, pairing a
+**container-name regex** with a **URL** to fetch from inside every currently
+running dependent whose name matches:
+
+```bash
+# app-checks.conf
+# <container-name-regex><whitespace><url>[|timeout=N|tries=N|failures=N]
+^sonarr-.*$          https://provider-a.example/index.html
+^(radarr|lidarr)$    https://provider-b.example/index.html|timeout=15|failures=5
+```
+
+- **The separator is whitespace**, not `|` — deliberately different from the
+  per-URL tunables above. A container-name regex may legitimately contain `|`
+  (alternation, e.g. `^(radarr|lidarr)$`), which would collide with `sites.conf`'s
+  own `|` option separator. Docker container names never contain a space, so
+  splitting on the first run of whitespace is unambiguous no matter what the
+  regex looks like.
+- **A 4xx/5xx response (or no response at all) is a FAILURE** here — the
+  opposite of the root test's "any response is a pass." This is a deliberate,
+  narrow exception: the root test asks "does the path work at all," this asks
+  "does this specific site block this specific exit," which only a status code
+  can answer.
+- **Checked serially, per rule, stopping at the first real failure.** The
+  question is "can *any* matched container not reach this site" — once one has
+  failed, testing the rest adds nothing, and serial checking avoids hammering an
+  already-blocking site from every matched container in the same loop. A
+  container whose `docker exec` itself fails (no `wget`, container gone) is
+  skipped, not counted — that's a fault on the monitor's side, never evidence the
+  site is blocked.
+- **`|timeout=`/`|tries=`** work exactly as they do in `sites.conf` (same
+  parser, same caps). **`|failures=N`** overrides `DEPENDENT_APP_CHECK_FAILURES`
+  for that rule alone — a flakier provider can tolerate more consecutive misses
+  than a stricter one without a single global number forcing one behavior on
+  every rule. `|role=` parses (it's the same grammar) but has no effect here — an
+  app-check rule always gates a restart by construction — and is warned about if
+  set.
+- **A rule that just crossed its consecutive-failure threshold restarts
+  gluetun** through the exact same path a root-site breach does — one restart
+  mechanism, one re-verify, one notification, whichever triggered it. The restart
+  is re-verified against the **same rule** afterward, not just the root site set:
+  confirming the tunnel is up says nothing about whether the new exit actually
+  cleared the block that caused the restart.
+- **A rule matching zero currently-running dependents** is neither a pass nor a
+  failure — nothing to test that loop — but if that persists for several loops
+  it's a probable typo in the regex, and gets one warning rather than silently
+  checking nothing forever.
+- App checks are **not** folded into the persistent per-site stats or the
+  flaky-site advisory ([Site stats & flaky-site advisory](NOTIFICATIONS.md#site-stats--flaky-site-advisory))
+  — they aren't `sites.conf` entries and don't currently flow through that
+  sidecar. The monitor log is the record of what an app check did.
+- `APP_CHECKS_FILE` is **re-read live**, the same way `sites.conf` is — see
+  [Editing sites.conf live](#editing-sitesconf-live) for the directory-vs-single-file
+  bind-mount caveat, which applies identically here.
 
 ## Dependent Container Discovery
 
