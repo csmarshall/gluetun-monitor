@@ -61,6 +61,7 @@ docker pull ghcr.io/csmarshall/gluetun-monitor:2
 - **Multi-site health checking** - Tests connectivity to multiple endpoints simultaneously
 - **Parallel testing** - All sites tested concurrently for fast detection (bounded by single timeout)
 - **Dependent-aware health (#20)** - Measures each dependent directly (interface check + a per-container DNS/connectivity probe) instead of trusting the gateway; stops reporting healthy when a dependent is stranded
+- **Optional app-level checks** - Catches a site that L7-blocks this specific VPN exit while the tunnel itself is healthy: an [app-check rule](docs/CONFIGURATION.md#app-checks--per-dependent-http-status-checks) restarts Gluetun on a 4xx/5xx from inside the dependents that need that site
 - **Self-healing dependents** - Restarts a dependent that shares Gluetun's current namespace; **non-destructively recreates** (volumes preserved) one stranded by a Gluetun *recreate* (new container id)
 - **Auto-discovery** - Automatically finds containers using Gluetun's network, and remembers them across cycles so a dependent isn't lost when Gluetun's id changes
 - **Automatic recovery** - Restarts Gluetun on connectivity failure and re-verifies before touching dependents
@@ -118,6 +119,10 @@ mkdir -p config && cp sites.conf.example config/sites.conf
 `sites.conf` lives in a `./config/` directory that the compose file mounts as a
 **directory** (`./config:/config:ro`), not as a single file — see
 [Editing sites.conf live](docs/CONFIGURATION.md#editing-sitesconf-live) for why this matters.
+
+Optionally, also copy `app-checks.conf.example` to `config/app-checks.conf` if you
+want [per-dependent app-level checks](docs/CONFIGURATION.md#app-checks--per-dependent-http-status-checks)
+(off by default — most setups don't need this).
 
 ### 3. Configure
 

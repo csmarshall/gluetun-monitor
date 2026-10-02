@@ -1,0 +1,33 @@
+# Gluetun Monitor - optional per-dependent app-level (HTTP status) checks
+#
+# Off by default: this file is not required, and a missing/empty one is a no-op.
+# See docs/CONFIGURATION.md#app-checks--per-dependent-http-status-checks for the
+# full explanation. In short: the root site test (sites.conf) and the per-dependent
+# viability pool both treat ANY HTTP response — even 401/403/5xx — as a pass,
+# because their job is "does the tunnel work at all." That leaves one case
+# uncovered: a provider whose SPECIFIC exit endpoint is blocked by a destination
+# site (geo-blocking, IP fingerprinting) while the tunnel itself is perfectly
+# healthy. An app-check rule catches that: a 4xx/5xx here IS the failure signal,
+# checked from inside the containers that actually need that site.
+#
+# One rule per line:
+#   <container-name-regex><whitespace><url>[|timeout=N|tries=N|failures=N]
+#
+# - The separator is WHITESPACE, not "|" — unlike sites.conf, because a
+#   container-name regex may legitimately contain "|" for alternation
+#   (e.g. ^(radarr|lidarr)$), which would collide with sites.conf's own "|"
+#   option separator. Docker container names never contain a space, so this
+#   split is unambiguous.
+# - |timeout=/|tries= work exactly as in sites.conf (same per-request knobs).
+# - |failures=N overrides DEPENDENT_APP_CHECK_FAILURES (default = FAIL_THRESHOLD)
+#   for that rule alone — how many consecutive LOOPS it must fail before
+#   restarting Gluetun.
+# - A rule that breaches restarts Gluetun through the same path a root-site
+#   failure does, and is re-verified against the same rule afterward — not
+#   just the root site set — so a restart is never reported as "recovered"
+#   without confirming the new exit endpoint actually cleared the block.
+#
+# Examples (commented out — this file ships with nothing active):
+#
+# ^sonarr-.*$          https://provider-a.example/index.html
+# ^(radarr|lidarr)$    https://provider-b.example/index.html|timeout=15|failures=5
