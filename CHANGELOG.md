@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.7...v2.7.0) (2026-10-02)
+
+
+### Added
+
+* **monitor:** per-dependent app-level (HTTP status) checks (ADR-0018) ([#188](https://github.com/csmarshall/gluetun-monitor/issues/188)) ([bd7ccfc](https://github.com/csmarshall/gluetun-monitor/commit/bd7ccfc48b3dcce2d7b85d1d11de6b2a33c3a773))
+
+
+### Fixed
+
+* **ci:** bump pip-tools 7.5.3 -&gt; 7.6.1 for pip 26 compatibility ([#169](https://github.com/csmarshall/gluetun-monitor/issues/169)) ([1ed9d0b](https://github.com/csmarshall/gluetun-monitor/commit/1ed9d0b7913e5c82bbe81803deabf992faef8db2))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d) ([504f44b](https://github.com/csmarshall/gluetun-monitor/commit/504f44b8db4726c84e78c3b9034b93a814d3820d))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2) ([30165f1](https://github.com/csmarshall/gluetun-monitor/commit/30165f15952d4c01d3d8d5022f538c69ac6efd0f))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6) ([a7dfd28](https://github.com/csmarshall/gluetun-monitor/commit/a7dfd28c5302e192e855ab02bc560e486f5842ef))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5) ([c6541ce](https://github.com/csmarshall/gluetun-monitor/commit/c6541ce0eabf400edd3221fd3bcece822a30e533))
+* **deps:** rebuild on updated python:3.14-slim base (sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4) ([861c7cd](https://github.com/csmarshall/gluetun-monitor/commit/861c7cd6bf36063f4356972d8d447bf4fe252fcc))
+* drop a remembered dependent when its NetworkMode no longer shares gluetun's netns ([#174](https://github.com/csmarshall/gluetun-monitor/issues/174)) ([433d9b3](https://github.com/csmarshall/gluetun-monitor/commit/433d9b3425310f9ab91aa5a9ded08e88256c2abc))
+
+
+### Dependencies
+
+* bump apprise from 1.12.0 to 1.13.1 ([#178](https://github.com/csmarshall/gluetun-monitor/issues/178)) ([21db658](https://github.com/csmarshall/gluetun-monitor/commit/21db6589a7be2274441068ef2d6ae25869b433c8))
+* bump mypy from 2.3.0 to 2.3.1 ([#172](https://github.com/csmarshall/gluetun-monitor/issues/172)) ([0015a01](https://github.com/csmarshall/gluetun-monitor/commit/0015a018b42b8ea1cefd798baa17e7ab16d2950a))
+* bump ruff from 0.16.2 to 0.16.3 ([#168](https://github.com/csmarshall/gluetun-monitor/issues/168)) ([5efe6c7](https://github.com/csmarshall/gluetun-monitor/commit/5efe6c7e6fa35045e62ef8850b637e909447a73f))
+* bump ruff from 0.16.3 to 0.16.4 ([#173](https://github.com/csmarshall/gluetun-monitor/issues/173)) ([e7ccead](https://github.com/csmarshall/gluetun-monitor/commit/e7ccead7be762cc4126ce1ddb68b986edb0dc8ca))
+* bump ruff from 0.16.4 to 0.16.5 ([#175](https://github.com/csmarshall/gluetun-monitor/issues/175)) ([f2c93f5](https://github.com/csmarshall/gluetun-monitor/commit/f2c93f55bac747a2118c9e3fc235b84a47174deb))
+* bump ruff from 0.16.5 to 0.16.6 ([#179](https://github.com/csmarshall/gluetun-monitor/issues/179)) ([631b821](https://github.com/csmarshall/gluetun-monitor/commit/631b821cc7bc64ddb35cee70216561cf7e880b2d))
+* bump ruff from 0.16.6 to 0.16.7 ([#180](https://github.com/csmarshall/gluetun-monitor/issues/180)) ([00834b9](https://github.com/csmarshall/gluetun-monitor/commit/00834b9e2040ab0f5a89500ae4e2a9aa5bcb6513))
+* bump ruff from 0.16.7 to 0.16.8 ([#185](https://github.com/csmarshall/gluetun-monitor/issues/185)) ([50c9332](https://github.com/csmarshall/gluetun-monitor/commit/50c93329afeedb1d5d44e08f41898f0a462720ab))
+* bump ruff from 0.16.8 to 0.16.9 ([#187](https://github.com/csmarshall/gluetun-monitor/issues/187)) ([e6b5d0d](https://github.com/csmarshall/gluetun-monitor/commit/e6b5d0d3f7eaac5817a767bc0967a0da303d02f4))
+
+
+### CI / tooling
+
+* bump docker/build-push-action from 7.3.0 to 7.4.0 ([#184](https://github.com/csmarshall/gluetun-monitor/issues/184)) ([febd588](https://github.com/csmarshall/gluetun-monitor/commit/febd58848c6c62649191b1859dbc49cf196fd407))
+* bump docker/setup-buildx-action from 4.2.0 to 4.3.0 ([#170](https://github.com/csmarshall/gluetun-monitor/issues/170)) ([bb40425](https://github.com/csmarshall/gluetun-monitor/commit/bb40425a4f6ce97845bf6f45b0d79a78fe2f699d))
+* bump docker/setup-buildx-action from 4.3.0 to 4.4.1 ([#183](https://github.com/csmarshall/gluetun-monitor/issues/183)) ([cbdb28d](https://github.com/csmarshall/gluetun-monitor/commit/cbdb28d8c3bd1af8d209bd177e98f2a134d565fe))
+* bump docker/setup-qemu-action from 4.2.0 to 4.3.0 ([#177](https://github.com/csmarshall/gluetun-monitor/issues/177)) ([fa69452](https://github.com/csmarshall/gluetun-monitor/commit/fa694528f84636613b3717cc758dd288a51e02b9))
+* bump docker/setup-qemu-action from 4.3.0 to 4.4.0 ([#182](https://github.com/csmarshall/gluetun-monitor/issues/182)) ([a7c6eb9](https://github.com/csmarshall/gluetun-monitor/commit/a7c6eb9abb5a1b449947fb57780172391aea8198))
+
 ## [2.6.7](https://github.com/csmarshall/gluetun-monitor/compare/v2.6.6...v2.6.7) (2026-08-10)
 
 
