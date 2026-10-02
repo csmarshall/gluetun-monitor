@@ -25,9 +25,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# Integer per-URL option keys understood after the ``|`` separator. Both map onto
-# existing ``probe_site`` params, so honoring them needs no probe rework.
-_INT_OPTION_KEYS = ("timeout", "tries")
+# Integer per-URL option keys understood after the ``|`` separator. ``timeout``/
+# ``tries`` map onto existing ``probe_site`` params, so honoring them needs no probe
+# rework. ``failures`` (ADR-0018) is meaningless for a gluetun-tested site (root
+# critical/advisory sites gate on the global FAIL_THRESHOLD, never a per-site
+# count) — it exists here purely so app-checks.conf rules (app_checks.py) can reuse
+# this exact parser unchanged rather than a second near-duplicate one.
+_INT_OPTION_KEYS = ("timeout", "tries", "failures")
 
 # Per-URL role (#110): governs whether a site's failure gates a gluetun restart.
 # ``critical`` (the default) restarts as before; ``advisory`` is still probed and
@@ -47,7 +51,13 @@ _OPTION_KEYS = (*_INT_OPTION_KEYS, "role")
 # is a config mistake, warned about and skipped per the forgiving+loud contract.
 MAX_URL_TIMEOUT = 300
 MAX_URL_TRIES = 5
-_OPTION_CAPS = {"timeout": MAX_URL_TIMEOUT, "tries": MAX_URL_TRIES}
+# Ceiling for a per-rule |failures= override (ADR-0018): a consecutive-LOOP count,
+# not a request-retry count, so it doesn't need to share MAX_URL_TRIES' small
+# ceiling — but an unbounded value would let a typo (e.g. a stray extra zero)
+# silently defer a restart near-indefinitely, so it's still capped rather than
+# trusted verbatim.
+MAX_APP_CHECK_FAILURES = 20
+_OPTION_CAPS = {"timeout": MAX_URL_TIMEOUT, "tries": MAX_URL_TRIES, "failures": MAX_APP_CHECK_FAILURES}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +75,10 @@ class SiteSpec:
     tries: int | None = None
     # #110: "critical" (default) gates a restart on failure; "advisory" never does.
     role: str = DEFAULT_ROLE
+    # ADR-0018: per-rule override of DEPENDENT_APP_CHECK_FAILURES. Only meaningful
+    # on an app-checks.conf rule (app_checks.py); unused (but harmlessly parseable)
+    # on a gluetun-tested sites.conf entry, which always gates on FAIL_THRESHOLD.
+    failures: int | None = None
 
 
 def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
@@ -120,7 +134,13 @@ def parse_entry(raw: str) -> tuple[SiteSpec | None, list[str]]:
             continue
         values[key] = int(value)
     return (
-        SiteSpec(url, timeout=values.get("timeout"), tries=values.get("tries"), role=role),
+        SiteSpec(
+            url,
+            timeout=values.get("timeout"),
+            tries=values.get("tries"),
+            role=role,
+            failures=values.get("failures"),
+        ),
         warnings,
     )
 
