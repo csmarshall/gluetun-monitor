@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .alert_state import AlertState
+from .app_checks import AppCheckRule, load_rules_report
 from .connectivity import SiteResult, probe_site
 from .dependents import (
     classify_interfaces,
@@ -222,6 +223,19 @@ class Monitor:
         # `dependent-wedged:` alert persists in the alert sidecar and is picked
         # up via alerts.is_active, so no re-announce and no false resolve).
         self._wedges: dict[str, _WedgeTrack] = {}
+        # Per-dependent app-level checks (ADR-0018). Same per-key Counter class
+        # site_failures already uses, keyed by AppCheckRule.key so each rule tracks
+        # its own consecutive-failure streak independently.
+        self.app_check_failures = Counter()
+        self._app_check_rules: list[AppCheckRule] = []
+        # Last-seen rule set (key -> rule), for the "rules changed" live-reload log
+        # — None until the first load, mirroring _last_specs.
+        self._last_app_check_rules: dict[str, AppCheckRule] | None = None
+        self._last_app_check_rejects: set[tuple[str, str]] = set()
+        # Consecutive loops each rule has matched zero running dependents, and a
+        # dedup set so the "matches nothing" warning fires once, not every loop.
+        self._app_check_no_match_streak: dict[str, int] = {}
+        self._warned_app_check_no_match: set[str] = set()
 
     def _notify(self, tier: str, title: str, body: str, key: str) -> None:
         """Buffer a one-shot point event for this loop's rollup (ADR-0011)."""
@@ -534,6 +548,139 @@ class Monitor:
                 )
         return GatewayCheck(breached=failed, unprobeable=False)
 
+    # ----- app-check phase (ADR-0018) -----
+
+    def _load_app_check_rules(self) -> list[AppCheckRule]:
+        """Re-read ``APP_CHECKS_FILE`` this loop (live-reload, same discipline as
+        ``sites.conf``): log once on first load, log added/removed rules on any
+        change, and warn about newly-appeared bad lines (deduped, not re-warned
+        every loop a bad line persists — mirrors ``_warn_new_rejects``). A reload
+        that raises keeps the previous rule set rather than taking the check down
+        with it (#73's lesson, applied here too).
+        """
+        try:
+            rules, rejected = load_rules_report(self.config.app_checks_file)
+        except Exception as exc:
+            self.log.error(
+                f"Failed to reload app-checks config ({self.config.app_checks_file}): "
+                f"{exc} — keeping the previous {len(self._app_check_rules)} rule(s)"
+            )
+            return self._app_check_rules
+
+        current = {r.key: r for r in rules}
+        if self._last_app_check_rules is None:
+            if rules:
+                self.log.info(f"Loaded {len(rules)} app-check rule(s)")
+            self._last_app_check_rules = current
+        elif current.keys() != self._last_app_check_rules.keys():
+            added = sorted(current.keys() - self._last_app_check_rules.keys())
+            removed = sorted(self._last_app_check_rules.keys() - current.keys())
+            parts = []
+            if added:
+                parts.append(f"added {', '.join(added)}")
+            if removed:
+                parts.append(f"removed {', '.join(removed)}")
+            self.log.info(f"App-check rules changed: {'; '.join(parts)} (now {len(rules)})")
+            # A removed rule keeps no live counter/streak — a later re-add starts
+            # clean rather than resuming near a stale threshold (mirrors how a
+            # removed site's failure counter is discarded in check_gluetun_sites).
+            for key in removed:
+                self.app_check_failures.discard(key)
+                self._app_check_no_match_streak.pop(key, None)
+                self._warned_app_check_no_match.discard(key)
+            self._last_app_check_rules = current
+
+        new_rejects = set(rejected) - self._last_app_check_rejects
+        if new_rejects:
+            warn_rejects(self.log.warn, sorted(new_rejects))
+        self._last_app_check_rejects = set(rejected)
+        self._app_check_rules = rules
+        return rules
+
+    def _run_app_check_rule(self, rule: AppCheckRule, matched: list[str]) -> tuple[bool, str]:
+        """Serially probe ``rule.spec.url`` inside each of ``matched`` (sorted),
+        short-circuiting on the first REAL failure: the question is "can *any*
+        matched container not reach this site," so once one has failed the rest
+        add no information, and running serially (rather than the
+        ``MAX_PARALLEL_CHECKS``-bounded fan-out ADR-0006 uses for the viability
+        pool) naturally avoids hammering an already-blocking endpoint from every
+        matched container in the same loop (ADR-0018).
+
+        Reuses ``connectivity.probe_site`` unchanged — only the pass/fail read is
+        new: a 4xx/5xx (or no response at all) is a failure, a deliberate, scoped
+        narrowing of Tenet 3's "any response is a pass" (that tenet governs the
+        root/viability tests; this governs whether this specific site blocks this
+        specific exit). A container whose exec itself failed is skipped, not
+        counted — that is a fault on the monitor's own exec path, never evidence
+        the site is blocked (#137, Tenets 1 and 7).
+        """
+        timeout = rule.spec.timeout if rule.spec.timeout is not None else self.config.timeout
+        tries = rule.spec.tries if rule.spec.tries is not None else self.config.wget_tries
+        for name in matched:
+            result = probe_site(self.client, name, rule.spec.url, timeout, tries)
+            tag = f"app-check:{name}"
+            if result.exec_failed:
+                self.log.warn(
+                    f"[{tag}] could not run ({result.reason}) for {rule.spec.url} "
+                    f"— skipping, not counted"
+                )
+                continue
+            if result.http_code != "N/A" and int(result.http_code) < 400:
+                self.log.debug(f"[{tag}] ok: HTTP {result.http_code} ({rule.spec.url})")
+                continue
+            detail = f"HTTP {result.http_code}" if result.http_code != "N/A" else result.reason
+            self.log.warn(f"[{tag}] fail: {rule.spec.url} ({detail})")
+            return True, f"{name}: {detail}"
+        return False, ""
+
+    def check_dependent_app(self, dependents: list[str]) -> list[str]:
+        """Evaluate every ``app-checks.conf`` rule against the current dependent
+        set. Returns attribution strings for rules that just crossed their
+        consecutive-failure threshold — folded by the caller into the same
+        ``breached`` list ``check_gluetun_sites`` produces, so a breach here feeds
+        the SAME restart-and-reverify path, not a second one (ADR-0018).
+
+        A rule matching zero currently-running dependents is neither a pass nor a
+        failure this loop — nothing to test — but if that persists for
+        ``_UNPROBEABLE_ALERT_LOOPS`` consecutive loops it is a probable
+        misconfiguration (a typo'd regex), so it gets one deduped WARN, mirroring
+        ``_warned_missing``'s treatment of a ``DEPENDENT_CONTAINERS`` entry that
+        never resolves to a running container.
+        """
+        breached: list[str] = []
+        for rule in self._load_app_check_rules():
+            matched = sorted(d for d in dependents if rule.pattern.search(d))
+            if not matched:
+                streak = self._app_check_no_match_streak.get(rule.key, 0) + 1
+                self._app_check_no_match_streak[rule.key] = streak
+                if (
+                    streak >= _UNPROBEABLE_ALERT_LOOPS
+                    and rule.key not in self._warned_app_check_no_match
+                ):
+                    self.log.warn(
+                        f"app-check rule {rule.pattern_str!r} has matched no running "
+                        f"dependent for {streak} consecutive loops — check the regex "
+                        f"against APP_CHECKS_FILE={self.config.app_checks_file}"
+                    )
+                    self._warned_app_check_no_match.add(rule.key)
+                continue
+            self._app_check_no_match_streak.pop(rule.key, None)
+            self._warned_app_check_no_match.discard(rule.key)
+
+            failed, detail = self._run_app_check_rule(rule, matched)
+            threshold = (
+                rule.spec.failures
+                if rule.spec.failures is not None
+                else self.config.dependent_app_check_failures
+            )
+            if failed:
+                count = self.app_check_failures.fail(rule.key)
+                if count >= threshold:
+                    breached.append(f"app-check[{rule.pattern_str}] ({detail})")
+            else:
+                self.app_check_failures.reset(rule.key)
+        return breached
+
     # ----- dependent phase (nodes 6-19) -----
 
     def _probe_dependent(
@@ -719,7 +866,8 @@ class Monitor:
 
     def _resolve_dependents(self) -> list[str]:
         """Current dependent set: discovery (or manual list) unioned with the
-        remembered set, pruned to containers that still exist, minus EXCLUDE.
+        remembered set, pruned to containers that still exist AND still plausibly
+        share gluetun's netns, minus EXCLUDE.
 
         A name that came from an explicit ``DEPENDENT_CONTAINERS`` list but does
         not exist is a likely misconfiguration — warn loudly (deduped) rather
@@ -740,14 +888,26 @@ class Monitor:
         self._known_dependents.update(
             name for name, exists in present.items() if exists and not is_parked_name(name)
         )
-        # Prune the remembered set to containers that still exist. Reuse the
-        # existence we already learned for the current names; only inspect a
-        # remembered name we haven't already checked this loop (e.g. one stranded
-        # by a gluetun recreate, so current-id discovery no longer surfaces it).
+        # Prune the remembered set to containers that still exist AND whose
+        # NetworkMode still looks like it could share gluetun's netns. Reuse the
+        # existence we already learned for the current names (those came from
+        # live discovery, so they're container-mode by construction — no need to
+        # re-inspect). For a remembered name NOT in this loop's discovery, only
+        # existing is not enough: it may be legitimately stranded on a stale
+        # gluetun id (keep — the id-continuity case this memory exists for), or
+        # it may have been reconfigured (e.g. its compose file dropped
+        # ``network_mode: container:gluetun`` entirely) to plain bridge/host/no
+        # networking at all, in which case it is simply no longer a dependent and
+        # must be dropped even though the container itself is still alive under
+        # the same name — the previous check ("does inspect() return non-None")
+        # could never tell these two cases apart, so a container that outlived
+        # its gluetun dependency stayed phantom-managed forever.
         existence = dict(present)
         for d in self._known_dependents:
-            if d not in existence:
-                existence[d] = self.client.inspect(d) is not None
+            if d in existence:
+                continue
+            info = self.client.inspect(d)
+            existence[d] = info is not None and info.network_mode.startswith("container:")
         self._known_dependents = {d for d in self._known_dependents if existence.get(d, False)}
         # Mirror the pruned remembered set into the durable memory (#97) so a
         # monitor restart resumes with exactly what this instance knew.
@@ -755,9 +915,17 @@ class Monitor:
         excluded = set(parse_csv_names(self.config.exclude_containers))
         return sorted(self._known_dependents - excluded)
 
-    def run_dependent_phase(self, gluetun_id: str, sites: list[str]) -> None:
-        """Probe every dependent and remediate those that fail (nodes 6-19)."""
-        dependents = self._resolve_dependents()
+    def run_dependent_phase(
+        self, gluetun_id: str, sites: list[str], dependents: list[str] | None = None
+    ) -> None:
+        """Probe every dependent and remediate those that fail (nodes 6-19).
+
+        ``dependents`` lets a caller that already resolved the current set this
+        loop (the app-check pass, ADR-0018) pass it through instead of triggering
+        a second resolution; ``None`` (the default, and every existing caller
+        including tests) resolves it here exactly as before.
+        """
+        dependents = self._resolve_dependents() if dependents is None else dependents
         # A dependent that left the managed set (excluded or gone) gets its active
         # alert retired with a "no longer monitored" notice, not a "resolved" that
         # would imply it recovered (ADR-0012).
@@ -1167,7 +1335,14 @@ class Monitor:
             self.alerts.mark_incomplete()
             self._save_stats()
             return
-        breached = check.breached
+        # Resolved once per loop and threaded through to run_dependent_phase below,
+        # rather than resolved twice — the app-check pass (ADR-0018) needs the
+        # current dependent set too, and it must run whether or not gluetun's own
+        # root sites breached: a specific site can be L7-blocked at this exit
+        # endpoint while the tunnel itself is perfectly healthy.
+        dependents_now = self._resolve_dependents()
+        app_breached = self.check_dependent_app(dependents_now)
+        breached = check.breached + app_breached
         if not breached:
             # Keep the flaky-site advisory current on HEALTHY loops too (#75):
             # the lifecycle resolves any alert not re-reported each loop, so
@@ -1180,7 +1355,9 @@ class Monitor:
             # loop is sub-threshold ("not breached") even while the triggering site
             # is still down. That mechanical dip used to auto-resolve an active
             # gluetun-unrecovered alert — a false "recovered". Hold it until the
-            # sites that triggered it have OBSERVABLY cleared this loop.
+            # sites that triggered it have OBSERVABLY cleared this loop. Scoped to
+            # root sites only (ADR-0018 defers app-checks from stats/this alert —
+            # app_check_failures is its own self-sustaining consecutive signal).
             failing_now = {
                 url for url in sites
                 if self.site_failures.get(url) > 0 and self._role_of(url) != "advisory"
@@ -1188,16 +1365,19 @@ class Monitor:
             self._reconcile_unrecovered(failing_now)
             # Gluetun is up — proceed straight to the dependent phase (the #20 fix:
             # dependents are checked every loop, not only after a gluetun failure).
-            self.run_dependent_phase(gluetun.id, sites)
+            self.run_dependent_phase(gluetun.id, sites, dependents_now)
             self._save_stats()
             return
 
-        # Gluetun breached threshold: restart + re-verify before touching dependents.
+        # Gluetun breached threshold (root site(s) and/or an app-check rule):
+        # restart + re-verify before touching dependents.
         self.log.warn("Gluetun unhealthy → restarting")
-        # Attribute the restart to the breached site(s) and surface a flaky-site
+        # Attribute the restart to the breached root site(s) and surface a flaky-site
         # advisory if one site keeps causing them (ADR-0008). Persist now — a
-        # restart is an important, infrequent event worth not losing.
-        for site in breached:
+        # restart is an important, infrequent event worth not losing. Scoped to
+        # check.breached (real SiteSpec URLs): app-check rules aren't SiteSpecs and
+        # don't flow through SiteStatsStore (ADR-0018 — deliberately deferred).
+        for site in check.breached:
             self.stats.record_restart(site)
         self._emit_advisory()
         self._save_stats()
@@ -1209,7 +1389,7 @@ class Monitor:
                 "[DRY-RUN] would restart gluetun and re-verify before touching "
                 "dependents; skipping (observe-only)"
             )
-            self.run_dependent_phase(gluetun.id, sites)
+            self.run_dependent_phase(gluetun.id, sites, dependents_now)
             return
         self.stats.record_gluetun_restart()  # monitor-wide count of actual restarts
         self._notify(
@@ -1233,6 +1413,14 @@ class Monitor:
 
         # Re-verify without recording (so the loop counts one poll per site, not two).
         reverify = self.check_gluetun_sites(sites, record=False)
+        # Re-verification must cover whatever triggered this restart. If it was an
+        # app-check rule (a specific site L7-blocked at the OLD exit endpoint), only
+        # re-testing the root site set would confirm the tunnel is up without ever
+        # confirming the new exit actually cleared the block that caused the
+        # restart — declaring "recovered" there would be exactly the fake-green
+        # Tenet 7 forbids (ADR-0018). Skipped when gluetun itself is unprobeable
+        # below: nothing else is evaluated on that path either.
+        reverify_app_breached = [] if reverify.unprobeable else self.check_dependent_app(dependents_now)
         if reverify.unprobeable:
             # We restarted, but now nothing can be probed — we do NOT know whether it
             # recovered. An empty breach list here is absence of evidence, not proof of
@@ -1254,10 +1442,11 @@ class Monitor:
             self.alerts.mark_incomplete()  # dependents were never evaluated (#74)
             self._save_stats()
             return
-        reverify_breached = reverify.breached
-        # Restart effectiveness: did each site that triggered this restart recover?
-        still = set(reverify_breached)
-        for site in breached:
+        reverify_breached = reverify.breached + reverify_app_breached
+        # Restart effectiveness: did each root site that triggered this restart
+        # recover? (Scoped to check.breached — see the stats note above.)
+        still = set(reverify.breached)
+        for site in check.breached:
             self.stats.record_restart_outcome(site, cleared=site not in still)
         if reverify_breached:
             self.log.warn("Connectivity still failing after restart; leaving dependents untouched")
@@ -1270,6 +1459,7 @@ class Monitor:
             )
             self._unrecovered_sites = set(reverify_breached)  # #106: hold until these clear
             self.site_failures.reset_all()
+            self.app_check_failures.reset_all()  # in-memory only (ADR-0006 Tenet 9) — same posture
             self.alerts.mark_incomplete()  # dependents left untouched = unevaluated (#74)
             self._save_stats()  # persist restart-outcome attribution before the early return (#88)
             return
@@ -1283,9 +1473,10 @@ class Monitor:
         )
         self._unrecovered_sites = set()  # #106: observed recovery — let the alert resolve
         self.site_failures.reset_all()
+        self.app_check_failures.reset_all()  # in-memory only (ADR-0006 Tenet 9) — same posture
         # Re-inspect: a restart keeps the same id, but be robust if it was recreated.
         gluetun = self.client.inspect(self.config.gluetun_container) or gluetun
-        self.run_dependent_phase(gluetun.id, sites)
+        self.run_dependent_phase(gluetun.id, sites, dependents_now)
         self._save_stats()
 
     def _reconcile_unrecovered(self, failing_now: set[str]) -> None:

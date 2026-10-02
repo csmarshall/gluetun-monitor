@@ -46,3 +46,4 @@ Format: [`_template.md`](_template.md). Status ∈ Proposed | Accepted | Superse
 | [0015](0015-per-site-role.md) | Per-site role (`\|role=critical\|advisory`, default critical) — advisory sites are probed but never gate a restart; explicit operator opt-out, not auto-quarantine | Accepted |
 | [0016](0016-wedge-escalation-and-backoff.md) | Escalate a wedged dependent — distinct alert + runbook, capped remediation backoff (#98); a bounded Tenet-9 carve-out for a provably-futile repeat | Accepted |
 | [0017](0017-incurious-monitor.md) | The monitor is incurious — validates *structure*, not content (neither yours nor ours): a published capability contract, honest degradation, and therefore no telemetry (#36 foreclosed) | Accepted |
+| [0018](0018-dependent-app-check.md) | Per-dependent app-level (HTTP status) checks — a `<regex> <url>` rule file, run from inside matched dependents, gates a gluetun restart on a 4xx/5xx (L7 block at the exit endpoint) | Proposed |
