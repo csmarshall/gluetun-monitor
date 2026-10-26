@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.7.2...v2.7.3) (2026-10-26)
+
+
+### Fixed
+
+* **deps:** rebuild on updated python:3.14-slim base (sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8) ([9bf9e76](https://github.com/csmarshall/gluetun-monitor/commit/9bf9e76fa0446b7d8fd0710b5a490d22b3048d07))
+
+
+### Dependencies
+
+* bump ruff from 0.16.10 to 0.17.0 ([#195](https://github.com/csmarshall/gluetun-monitor/issues/195)) ([abf9cce](https://github.com/csmarshall/gluetun-monitor/commit/abf9ccee4c9ec975b12f56cf350dda47185780b0))
+* bump ruff from 0.17.0 to 0.17.1 ([#196](https://github.com/csmarshall/gluetun-monitor/issues/196)) ([e77c164](https://github.com/csmarshall/gluetun-monitor/commit/e77c164413321473664fc0fd311896a852a99b66))
+
 ## [2.7.2](https://github.com/csmarshall/gluetun-monitor/compare/v2.7.1...v2.7.2) (2026-10-12)
 
 
