@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.4](https://github.com/csmarshall/gluetun-monitor/compare/v2.7.3...v2.7.4) (2026-11-02)
+
+
+### Fixed
+
+* **deps:** rebuild on updated python:3.14-slim base (sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8) ([9c24dfa](https://github.com/csmarshall/gluetun-monitor/commit/9c24dfa1da7825ed0fd3abe5b900c9b119c550cc))
+
+
+### Dependencies
+
+* bump ruff from 0.17.1 to 0.17.2 ([#200](https://github.com/csmarshall/gluetun-monitor/issues/200)) ([e88fa25](https://github.com/csmarshall/gluetun-monitor/commit/e88fa258dd57dfb66ff79eb76da45ddc0621b845))
+
+
+### CI / tooling
+
+* bump actions/setup-python from 7.0.0 to 7.1.0 ([#198](https://github.com/csmarshall/gluetun-monitor/issues/198)) ([18c5cc2](https://github.com/csmarshall/gluetun-monitor/commit/18c5cc2455dcacb892a5beba176ba93e44b735d6))
+* bump docker/login-action from 4.6.0 to 4.7.0 ([#199](https://github.com/csmarshall/gluetun-monitor/issues/199)) ([6785367](https://github.com/csmarshall/gluetun-monitor/commit/67853676bb4356bf0485ac6b8f008142abcb44fd))
+
 ## [2.7.3](https://github.com/csmarshall/gluetun-monitor/compare/v2.7.2...v2.7.3) (2026-10-26)
 
 
